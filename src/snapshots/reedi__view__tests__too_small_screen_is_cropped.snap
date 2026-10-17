@@ -1,0 +1,12 @@
+---
+source: src/view.rs
+expression: "render(50, 8).backend()"
+---
+"3f9a2c1 config: rename scroll_off to scrolloff Ali"
+"                                                  "
+"The option is named `scrolloff` in vim, using the "
+"easier to find. `usize` avoids casts when computin"
+"                                                  "
+"src/config.rs                                     "
+"──────────────────────────────────────────────────"
+" Review                                           "

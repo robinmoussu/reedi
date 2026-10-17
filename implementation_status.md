@@ -11,26 +11,26 @@ future modification needed for next versions. Most notably dependencies should n
 between version, just added.
 - If the terminal is too small to fit the whole layout, it is cropped (ignore this non-usecase)
 
-version 0.0.x: general structure
+version 0.0.0: general structure
 ----------------------------
 
-- [ ] Display only realistic fake Rust fixed values for a single fake commit, but with real logic to
+- [x] Display only realistic fake Rust fixed values for a single fake commit, but with real logic to
   fill them (real data model, and real rendering, only the data is fake):
-   - [ ] $hash
-   - [ ] $commit_subject
-   - [ ] $author
-   - [ ] $date (using `dd/mm/yyyy` format)
-   - [ ] extra header field (tags, branches, what `git log --pretty='%d'` generate). Use `(HEAD ->
+   - [x] $hash
+   - [x] $commit_subject
+   - [x] $author
+   - [x] $date (using `dd/mm/yyyy` format)
+   - [x] extra header field (tags, branches, what `git log --pretty='%d'` generate). Use `(HEAD ->
          main, tag: v1.0, origin/main)` for the fake data.
-   - [ ] $commit_message_body
-   - [ ] 2 chunks, same file (both half with fake line numbers), fake file name
-- [ ] status bar display the current mode (`Review` only for the moment)
-- [ ] Chunks do not have any diff logic, nor line wrapping support the fake data is short enough
+   - [x] $commit_message_body
+   - [x] 2 chunks, same file (both half with fake line numbers), fake file name
+- [x] status bar display the current mode (`Review` only for the moment)
+- [x] Chunks do not have any diff logic, nor line wrapping support the fake data is short enough
    with no unpaired lines
-- [ ] no cursor yet
-- [ ] No semantic/diff syntax highlighting yet (nor extra symbol like `+/-` on the diff), but other
+- [x] no cursor yet
+- [x] No semantic/diff syntax highlighting yet (nor extra symbol like `+/-` on the diff), but other
   colored element are colored (using git default colors)
-- [ ] display the screen, crop if too big, wait for any key to be pressed, then exit
+- [x] display the screen, crop if too big, wait for any key to be pressed, then exit
 
 version 0.0.x: diff and syntax support
 ------------------------------------

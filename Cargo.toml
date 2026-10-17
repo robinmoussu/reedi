@@ -1,0 +1,13 @@
+[package]
+name = "reedi"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+jiff = "0.2.38"
+ratatui = "0.30.2"
+
+[dev-dependencies]
+insta = "1.49.0"
