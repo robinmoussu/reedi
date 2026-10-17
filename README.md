@@ -7,11 +7,12 @@ reedi
 - Commits are displayed (with their diff) in topological order (oldest first).
 - The general interface is the same than `delta`, but commits messages, autho, date and hunks are
   editable.
-- All chunks have syntax and diff-aware coloration, just like what `delta` does
+- All chunks have syntax and diff-aware coloration (including word-level diff), just like what
+  `delta` does
 - When saving all changes are applied, as-if an interactive rebase was done (note: maybe using `jj`
   instead of `git rebase` would lead to a better UX).
 - In review mode the closest editable area is highlighted and the cursor visible (if the cursor is
-    on an editable area, this one, otherwise the next one)
+  on an editable area, this one, otherwise the next one)
 - In visual mode (selection) the current selection is highlighted
 - If the terminal size change, the UI is updated automatically
 - If available, the kitty terminal protocol is used
@@ -44,6 +45,8 @@ $hash $commit_subject $author $date ($tags, $branches)
 
 $commit_message_body
 
+$file
+───────────────────────────────────────────────────────────────────────────────
 │ $line │ $before                       │ $line │ $after
 │ $line │ $before                       │ $line │ $after
 │ $line │ $before                       │ $line │ $after
@@ -80,12 +83,21 @@ Areas
   characters, like CJK and emoji, are mesured at their real display width)
 - A status bar display the current mode and each mode has an accent color for the background of the
   name of the current mode (`Review`: blue, `Edit`: light green, `Search`: honey, `Comment`: dark
-  green, `Command`: mango, `Selection`: purple)
+  green, `Command`: mango, `Selection`: purple, `Move`: dark red)
 
 Expected implementation
 =======================
 
 The software is mainly a lib, with a slim binary who only read the config an command line options.
+
+Syntax highlighting
+-------------------
+
+- The language is detected from the file name like `delta`: if the path has an extension or the
+  file name is longer than 4 bytes, the whole file name then the extension are looked up as an
+  extension. The content of the file is never inspected. If nothing matches, the file is plain text
+  (no highlighting).
+- Themes are the defaults of `delta`: `Monokai Extended` (dark) and `GitHub` (light).
 
 Interactivity
 -------------
@@ -101,13 +113,20 @@ Saving and applying modifications:
   confirmation dialog
 - The default mode is the review mode
 
+Cursor:
+
+- When starting the application, the cursor is on the first line
+- Cursor can go on every lines (logic-line, a wrapped long line count as 2 lines or more)
+- The position of the cursor is made visible by highlighting the background of the current line
+  (with a dim gray color)
 - `$commit_subject`, `$author` and `$date` are on the same line. `right` and `left` is the only way
-  to edit `$author` and `$date`, since the cursor is line-based (except for this line).
-  `j`/`k` do not stop on `$date` and reset to `$commit_subject` each time they leave the line
-  containing the subject.
-- The position of the cursor is made visible by highlighting the background of: `$autor`, `$date`, a
-  dim background on a non-editable area, the line number if one a patch (both left + right half line
-  numbers)
+  to edit `$author` and `$date`, since the cursor is line-based. `right`/`left` Can therefore select
+  which of those 3 field is active, and is highlighted when the cursor is on those lines. `j`/`k` do
+  not stop on `$date` and `$author` (unless there is line wrapping) and reset to `$commit_subject`
+  each time they leave and go back the line containing the subject.
+- When resizing, the line of the cursor doesn’t move (cursor screen position stay the same). If
+  wrapping split the line in 2, the cursor stays on the first line. If wrapping merge 2 lines and
+  cursor was on the second the merge line goes at the position of the cursor.
 
 Review mode:
 
@@ -115,12 +134,13 @@ Review mode:
   always 5 extra lines on top/bottom (unless the beggining/end of the file is reached)
 - `tab`/`shift+tab` or `left`/`right` move the cursor to the next/previous editable area (this does include
     `commit_subject`, `author` and `date` that are on the same line)
+- `g`/`G` move the cursor to first/last line
 - `J`/`K` or `ctrl+up`/`ctrl+down` jumps to the next/previous commit
-- `m`/`M` jumps to the next/prevous merge conflict
+- `[`/`]` jumps to the next/prevous merge conflict
 
 - `ctrl+e`/`ctrl+y` move the screen one line down/up (and move the cursor if it would have gone
   closer to 5 lines of the top/bottom)
-- `ctrl+d`/`ctrl+u` move the half a screen down/up (and move the cursor like `ctrl+e`/`ctrl+y`)
+- `d`/`u` move the half a screen down/up (and may move the cursor like `ctrl+e`/`ctrl+y`)
 
 - `enter` edit the current editable area (or the next one if on a line with only non-editable
     elements
@@ -134,15 +154,20 @@ Review mode:
 - `ctrl+l` clear the screen including all search results
 
 - `ctrl+z` put the application in the background
-- `q` quit after a confirmation dialog if the currently saved state doesn’t match the current state
+- `q`/`ctrl+c` quit after a confirmation dialog if the currently saved state doesn’t match the
+  current state
 - `Q` undo all changes (after a confirmation dialog) and quit
 - `w` or `ctrl+s` save the current git state (by default the state when opening `reedi`)
 - `ctrl+r` undo all changes and restore the saved git state after a confirmation dialog
 
-- `v` starts visual mode
+- `v` starts visual mode (available only on a chunk diff)
 - maintaining `shift` and pressing `up`/`down` or `j`/`k` select those lines (like what the visual
   mode does), and when `shift` is released comment mode is openned on those lines. Same behavior
   with click+drag with the mouse
+
+- `m` start move move (available only on a chunk diff). The moved span is all modified lines of the
+  current chunk
+- In visual mode, `m` start move mode, and the span are the selected lines
 
 - `b`/`e` adds lines at the beggining/end of the current chunk (possibly merging it with adjacent
 - `space` toggle between expanding all chunks of the current file and restoring their default state
@@ -224,8 +249,13 @@ Merge conflicts:
 
 - Merge conflicts are displayed with the `<<</===/>>>` chunks, and are expected to be fixed
 - A merge conflict indicator is displayed in the status bar
-- `m`/`M` jumps to the next/prevous merge conflict
+- `[`/`]` jumps to the next/prevous merge conflict
 - TODO: maybe using `jj` would help for merge conflicts
+
+Move mode:
+
+- `k`/`j` and `up`/`down` move the current span to the previous/next commit
+- in move mode, all files/chunks are hidden, except for the current span and its surrounding context
 
 Terminal protocol:
 - Use kitty protocol by default, with a fallback for non-kitty-aware terminals
