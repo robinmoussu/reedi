@@ -1205,10 +1205,11 @@ dependencies = [
 
 [[package]]
 name = "reedi"
-version = "0.0.0"
+version = "0.0.1"
 dependencies = [
  "insta",
  "jiff",
+ "nix 0.31.3",
  "ratatui",
 ]
 

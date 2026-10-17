@@ -53,18 +53,18 @@ version 0.0.0: general structure
   colored element are colored (using git default colors)
 - [x] display the screen, crop if too big, wait for any key to be pressed, then exit
 
-version 0.0.x: minimal interactivity
+version 0.0.1: minimal interactivity
 ----------------------------------
 
-- [ ] add cursor (no editable-area highlight support)
-- [ ] fake data update:
-   - [ ] Add a second (older) commit with 2 modified files and 1+3 chunks
-- [ ] Review mode
-   - [ ] scrolling works if all the text doesn’t fit in a single screen
-   - [ ] `j`/`k` and `up`/`down`
-   - [ ] `q`/`ctrl+c` exit (no confirmation)
-   - [ ] `ctrl+z` put the application in the background
-   - [ ] all other keys are inactive
+- [x] add cursor (no editable-area highlight support)
+- [x] fake data update:
+   - [x] Add a second (older) commit with 2 modified files and 1+3 chunks
+- [x] Review mode
+   - [x] scrolling works if all the text doesn’t fit in a single screen
+   - [x] `j`/`k` and `up`/`down`
+   - [x] `q`/`ctrl+c` exit (no confirmation)
+   - [x] `ctrl+z` put the application in the background
+   - [x] all other keys are inactive
 
 version 0.0.x: line wrapping
 --------------------------
