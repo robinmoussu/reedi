@@ -36,6 +36,22 @@ pub struct FileDiff {
     pub chunks: Vec<Chunk>,
 }
 
+impl FileDiff {
+    /// Whether a version of the file mixes line endings (with and without a carriage return), or
+    /// whether the before and after versions use different line endings.
+    ///
+    /// Only the lines of the chunks are known, so they are the only ones compared.
+    pub fn has_inconsistent_line_endings(&self) -> bool {
+        let mut crlf = self
+            .chunks
+            .iter()
+            .flat_map(|chunk| chunk.before.lines.iter().chain(&chunk.after.lines))
+            .map(|line| line.ends_with('\r'));
+        crlf.next()
+            .is_some_and(|first| crlf.any(|crlf| crlf != first))
+    }
+}
+
 /// A contiguous range of modified lines.
 ///
 /// The `n`-th line of `before` is displayed next to the `n`-th line of `after`.
@@ -84,6 +100,38 @@ mod tests {
             first_line,
             lines: vec![String::new(); len],
         }
+    }
+
+    fn file(before: &[&str], after: &[&str]) -> FileDiff {
+        let side = |lines: &[&str]| Side {
+            first_line: 1,
+            lines: lines.iter().map(|line| line.to_string()).collect(),
+        };
+        FileDiff {
+            path: "a".to_string(),
+            chunks: vec![Chunk {
+                before: side(before),
+                after: side(after),
+            }],
+        }
+    }
+
+    #[test]
+    fn same_line_endings_are_consistent() {
+        assert!(!file(&["a", "b"], &["a", "c"]).has_inconsistent_line_endings());
+        assert!(!file(&["a\r", "b\r"], &["a\r", "c\r"]).has_inconsistent_line_endings());
+        assert!(!file(&[], &[]).has_inconsistent_line_endings());
+    }
+
+    #[test]
+    fn mixed_line_endings_are_inconsistent() {
+        assert!(file(&["a\r", "b"], &["a\r", "b\r"]).has_inconsistent_line_endings());
+        assert!(file(&["a", "b"], &["a", "b\r"]).has_inconsistent_line_endings());
+    }
+
+    #[test]
+    fn different_line_endings_between_versions_are_inconsistent() {
+        assert!(file(&["a", "b"], &["a\r", "b\r"]).has_inconsistent_line_endings());
     }
 
     #[test]

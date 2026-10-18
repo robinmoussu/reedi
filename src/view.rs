@@ -12,7 +12,11 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Widget;
+use unicode_width::UnicodeWidthStr;
 
+use crate::invisible;
+use crate::invisible::FinalCr;
+use crate::invisible::Kind;
 use crate::model::Chunk;
 use crate::model::Commit;
 use crate::model::Decoration;
@@ -36,6 +40,20 @@ const TAG: Style = Style::new().fg(Color::Yellow).bold();
 const FILE: Style = Style::new().fg(Color::Blue);
 const LINE_NUMBER: Style = Style::new().fg(Color::Blue);
 const COMMIT_SEPARATOR: Style = Style::new().fg(Color::Red);
+
+/// Replacement of a tab that is not part of the trailing whitespace.
+const TAB: Style = Style::new().fg(Color::DarkGray);
+/// Replacements of the trailing whitespace, including the tabs.
+const TRAILING_WHITESPACE: Style = Style::new().fg(Color::Red).bold();
+/// Replacements of the other invisible characters.
+const INVISIBLE: Style = Style::new().fg(Color::Red).bold();
+
+/// Put after the first character of each row and after the last character of each column.
+///
+/// Terminals reordering bidirectional text do it for the whole row. Without it, the punctuation
+/// and numbers next to a right-to-left text (like Persian) would be moved with it, even from
+/// another column, and a row starting with a right-to-left text may be displayed right-to-left.
+const LEFT_TO_RIGHT_MARK: char = '\u{200e}';
 
 /// Background of the row of the cursor.
 const CURSOR: Style = Style::new().bg(Color::Indexed(235));
@@ -84,6 +102,9 @@ impl Row<'_> {
         match self {
             Row::Text(line) => {
                 buf.set_line(area.x, area.y, line, area.width);
+                if area.width > 0 {
+                    mark_left_to_right(buf, area.x, area.y);
+                }
             }
             Row::Rule(style) => {
                 let rule = "─".repeat(area.width.into());
@@ -94,26 +115,81 @@ impl Row<'_> {
                 let right_width = area.width - left_width;
                 buf.set_line(area.x, area.y, left, left_width);
                 buf.set_line(area.x + left_width, area.y, right, right_width);
+                if left_width > 0 {
+                    mark_left_to_right(buf, area.x, area.y);
+                    mark_left_to_right(buf, area.x + left_width - 1, area.y);
+                }
             }
         }
+    }
+}
+
+/// Spans displaying `text` with `style`, with its invisible characters replaced. The style of
+/// each replacement is `style`, patched with the style of its kind.
+///
+/// A carriage return ending `text` is replaced if `final_cr` is [`FinalCr::Shown`], and hidden
+/// otherwise.
+fn reveal(text: &str, style: Style, final_cr: FinalCr) -> Vec<Span<'_>> {
+    invisible::display(text, final_cr)
+        .into_iter()
+        .map(|piece| {
+            let kind = match piece.kind {
+                Kind::Text => Style::new(),
+                Kind::Tab => TAB,
+                Kind::TrailingWhitespace => TRAILING_WHITESPACE,
+                Kind::Replacement => INVISIBLE,
+            };
+            Span::styled(piece.text, style.patch(kind))
+        })
+        .collect()
+}
+
+/// A line displaying `text` with `style`, with its invisible characters replaced.
+fn revealed_line(text: &str, style: Style) -> Line<'_> {
+    Line::from(reveal(text, style, FinalCr::Shown))
+}
+
+/// Put `LEFT_TO_RIGHT_MARK` after the character displayed at `x`, `y`, if it is in `buf`.
+///
+/// Terminals attach a zero-width character to the cell before the cursor, and the cursor jumps
+/// over the cells that are not modified. So the mark is appended to the symbol of the cell of the
+/// character, which is then always written right before it.
+fn mark_left_to_right(buf: &mut Buffer, x: u16, y: u16) {
+    // The cells covered by a wide character are never written, its own cell is the one before.
+    let covered = x > buf.area.x
+        && buf
+            .cell((x - 1, y))
+            .is_some_and(|cell| cell.symbol().width() > 1);
+    let x = if covered { x - 1 } else { x };
+    if let Some(cell) = buf.cell_mut((x, y)) {
+        let symbol = format!("{}{LEFT_TO_RIGHT_MARK}", cell.symbol());
+        cell.set_symbol(&symbol);
     }
 }
 
 fn single_decoration_spans(decoration: &Decoration) -> Vec<Span<'_>> {
     match decoration {
         Decoration::Head(None) => vec![Span::styled("HEAD", HEAD)],
-        Decoration::Head(Some(branch)) => vec![
+        Decoration::Head(Some(branch)) => [
             Span::styled("HEAD", HEAD),
             Span::styled(" -> ", DECORATION_PUNCTUATION),
-            Span::styled(branch.as_str(), LOCAL_BRANCH),
-        ],
-        Decoration::LocalBranch(branch) => vec![Span::styled(branch.as_str(), LOCAL_BRANCH)],
-        Decoration::RemoteBranch(branch) => vec![Span::styled(branch.as_str(), REMOTE_BRANCH)],
-        Decoration::Tag(tag) => vec![Span::styled("tag: ", TAG), Span::styled(tag.as_str(), TAG)],
+        ]
+        .into_iter()
+        .chain(reveal(branch, LOCAL_BRANCH, FinalCr::Shown))
+        .collect(),
+        Decoration::LocalBranch(branch) => reveal(branch, LOCAL_BRANCH, FinalCr::Shown),
+        Decoration::RemoteBranch(branch) => reveal(branch, REMOTE_BRANCH, FinalCr::Shown),
+        Decoration::Tag(tag) => iter::once(Span::styled("tag: ", TAG))
+            .chain(reveal(tag, TAG, FinalCr::Shown))
+            .collect(),
     }
 }
 
+/// ` ($decorations)`, or nothing if there are no decorations.
 fn decoration_spans(decorations: &[Decoration]) -> Vec<Span<'_>> {
+    if decorations.is_empty() {
+        return Vec::new();
+    }
     let decorations = decorations.iter().enumerate().flat_map(|(i, decoration)| {
         let separator = (i > 0).then(|| Span::styled(", ", DECORATION_PUNCTUATION));
         separator
@@ -127,47 +203,53 @@ fn decoration_spans(decorations: &[Decoration]) -> Vec<Span<'_>> {
 }
 
 /// `$hash $commit_subject $author $date ($tags, $branches)`
+///
+/// The invisible characters of each field (except the date, which has none) are replaced, the
+/// trailing whitespace being the one ending the field.
 fn header(commit: &Commit) -> Line<'_> {
-    let mut spans = vec![
-        Span::styled(commit.hash.as_str(), HASH),
-        Span::raw(" "),
-        Span::raw(commit.subject.as_str()),
-        Span::raw(" "),
-        Span::styled(commit.author.as_str(), AUTHOR),
-        Span::raw(" "),
-        Span::styled(commit.date.strftime(DATE_FORMAT).to_string(), DATE),
-    ];
-    if !commit.decorations.is_empty() {
-        spans.extend(decoration_spans(&commit.decorations));
-    }
+    let date = commit.date.strftime(DATE_FORMAT).to_string();
+    let spans: Vec<_> = reveal(&commit.hash, HASH, FinalCr::Shown)
+        .into_iter()
+        .chain(iter::once(Span::raw(" ")))
+        .chain(reveal(&commit.subject, Style::new(), FinalCr::Shown))
+        .chain(iter::once(Span::raw(" ")))
+        .chain(reveal(&commit.author, AUTHOR, FinalCr::Shown))
+        .chain(iter::once(Span::raw(" ")))
+        .chain(iter::once(Span::styled(date, DATE)))
+        .chain(decoration_spans(&commit.decorations))
+        .collect();
     Line::from(spans)
 }
 
 /// `│ $line │ $code` for the `index`-th line of `side`.
-fn half_line(side: &Side, index: usize, width: usize) -> Line<'_> {
+///
+/// A carriage return ending `$code` is replaced if `final_cr` is [`FinalCr::Shown`], and hidden
+/// otherwise.
+fn half_line(side: &Side, index: usize, width: usize, final_cr: FinalCr) -> Line<'_> {
     let number = side.line_number(index);
-    Line::from(vec![
-        Span::styled(format!("│ {number:>width$} │ "), LINE_NUMBER),
-        Span::raw(side.lines[index].as_str()),
-    ])
+    let number = Span::styled(format!("│ {number:>width$} │ "), LINE_NUMBER);
+    let code = reveal(&side.lines[index], Style::new(), final_cr);
+    Line::from(iter::once(number).chain(code).collect::<Vec<_>>())
 }
 
-fn chunk_rows(chunk: &Chunk) -> impl Iterator<Item = Row<'_>> {
+fn chunk_rows(chunk: &Chunk, final_cr: FinalCr) -> impl Iterator<Item = Row<'_>> {
     let width = chunk.line_number_width();
     (0..chunk.before.lines.len()).map(move |index| Row::Split {
-        left: half_line(&chunk.before, index, width),
-        right: half_line(&chunk.after, index, width),
+        left: half_line(&chunk.before, index, width, final_cr),
+        right: half_line(&chunk.after, index, width, final_cr),
     })
 }
 
 fn file_rows(file: &FileDiff) -> Vec<Row<'_>> {
-    let mut rows = vec![
-        Row::Text(Line::styled(file.path.as_str(), FILE)),
-        Row::Rule(FILE),
-    ];
+    let final_cr = if file.has_inconsistent_line_endings() {
+        FinalCr::Shown
+    } else {
+        FinalCr::Hidden
+    };
+    let mut rows = vec![Row::Text(revealed_line(&file.path, FILE)), Row::Rule(FILE)];
     rows.extend(file.chunks.iter().enumerate().flat_map(|(i, chunk)| {
         let separator = (i > 0).then(Row::blank);
-        separator.into_iter().chain(chunk_rows(chunk))
+        separator.into_iter().chain(chunk_rows(chunk, final_cr))
     }));
     rows
 }
@@ -177,7 +259,13 @@ pub fn commit_rows(commit: &Commit) -> Vec<Row<'_>> {
     let mut rows = vec![Row::Text(header(commit))];
     if !commit.body.is_empty() {
         rows.push(Row::blank());
-        rows.extend(commit.body.lines().map(|line| Row::Text(Line::raw(line))));
+        // Unlike `str::lines`, a carriage return ending a line is kept, to be displayed.
+        rows.extend(
+            commit
+                .body
+                .split_terminator('\n')
+                .map(|line| Row::Text(revealed_line(line, Style::new()))),
+        );
     }
     rows.extend(
         commit
@@ -252,6 +340,7 @@ pub fn draw(frame: &mut Frame, rows: &[Row], viewport: &mut Viewport, mode: Mode
 #[cfg(test)]
 mod tests {
     use ratatui::Terminal;
+    use ratatui::backend::Backend;
     use ratatui::backend::TestBackend;
 
     use super::*;
@@ -262,7 +351,40 @@ mod tests {
         fake::commits().pop().unwrap()
     }
 
-    fn render(width: u16, height: u16, viewport: Viewport) -> Terminal<TestBackend> {
+    /// The fake commit with all kinds of invisible characters.
+    fn invisible() -> Commit {
+        fake::commits().remove(0)
+    }
+
+    fn text_of_row(row: &Row) -> (String, String) {
+        match row {
+            Row::Text(line) => (text(line), String::new()),
+            Row::Split { left, right } => (text(left), text(right)),
+            Row::Rule(_) => (String::new(), String::new()),
+        }
+    }
+
+    /// The style of the first span of `line` whose content is `content`.
+    fn style_in(line: &Line, content: &str) -> Style {
+        line.spans
+            .iter()
+            .find(|span| span.content == content)
+            .unwrap()
+            .style
+    }
+
+    /// `buffer`, without the left-to-right marks, which are invisible in the snapshots.
+    fn without_left_to_right_marks(buffer: &Buffer) -> Buffer {
+        let mut buffer = buffer.clone();
+        buffer.content.iter_mut().for_each(|cell| {
+            let symbol = cell.symbol().replace(LEFT_TO_RIGHT_MARK, "");
+            cell.set_symbol(&symbol);
+        });
+        buffer
+    }
+
+    /// The screen displaying the fake commits, without the left-to-right marks.
+    fn render(width: u16, height: u16, viewport: Viewport) -> TestBackend {
         let commits = fake::commits();
         let rows = rows(&commits);
         let mut viewport = viewport;
@@ -270,7 +392,14 @@ mod tests {
         terminal
             .draw(|frame| draw(frame, &rows, &mut viewport, Mode::Review))
             .unwrap();
-        terminal
+        let buffer = without_left_to_right_marks(terminal.backend().buffer());
+        let mut backend = TestBackend::new(width, height);
+        let cells = buffer.content.iter().enumerate().map(|(i, cell)| {
+            let (x, y) = (i % usize::from(width), i / usize::from(width));
+            (x as u16, y as u16, cell)
+        });
+        backend.draw(cells).unwrap();
+        backend
     }
 
     fn text(line: &Line) -> String {
@@ -282,12 +411,12 @@ mod tests {
 
     #[test]
     fn full_screen() {
-        insta::assert_snapshot!(render(110, 26, Viewport::default()).backend());
+        insta::assert_snapshot!(render(110, 26, Viewport::default()));
     }
 
     #[test]
     fn too_small_screen_is_cropped() {
-        insta::assert_snapshot!(render(50, 8, Viewport::default()).backend());
+        insta::assert_snapshot!(render(50, 8, Viewport::default()));
     }
 
     #[test]
@@ -297,7 +426,16 @@ mod tests {
             cursor: len - 1,
             top: 0,
         };
-        insta::assert_snapshot!(render(110, 26, viewport).backend());
+        insta::assert_snapshot!(render(110, 26, viewport));
+    }
+
+    #[test]
+    fn invisible_characters_after_the_first_screen() {
+        let viewport = Viewport {
+            cursor: 30,
+            top: 20,
+        };
+        insta::assert_snapshot!(render(110, 26, viewport));
     }
 
     #[test]
@@ -312,8 +450,8 @@ mod tests {
     #[test]
     fn cursor_row_is_highlighted() {
         let viewport = Viewport { cursor: 2, top: 0 };
-        let terminal = render(110, 26, viewport);
-        let buffer = terminal.backend().buffer();
+        let backend = render(110, 26, viewport);
+        let buffer = backend.buffer();
         assert!((0..110).all(|x| buffer[(x, 2)].bg == Color::Indexed(235)));
         assert!((0..110).all(|x| buffer[(x, 1)].bg == Color::Reset));
         assert!((0..110).all(|x| buffer[(x, 3)].bg == Color::Reset));
@@ -325,8 +463,8 @@ mod tests {
             cursor: 30,
             top: 20,
         };
-        let terminal = render(110, 26, viewport);
-        let buffer = terminal.backend().buffer();
+        let backend = render(110, 26, viewport);
+        let buffer = backend.buffer();
         assert_eq!(buffer[(0, 10)].bg, Color::Indexed(235));
         assert_eq!(buffer[(0, 9)].bg, Color::Reset);
     }
@@ -381,7 +519,7 @@ mod tests {
         commit.body.clear();
         let rows = commit_rows(&commit);
         assert_eq!(rows[1], Row::blank());
-        assert_eq!(rows[2], Row::Text(Line::styled("src/config.rs", FILE)));
+        assert_eq!(rows[2], Row::Text(revealed_line("src/config.rs", FILE)));
     }
 
     #[test]
@@ -393,13 +531,54 @@ mod tests {
         let area = Rect::new(0, 0, 21, 1);
         let mut buf = Buffer::empty(area);
         row.render(area, &mut buf);
-        assert_eq!(buf, Buffer::with_lines(["LLLLLLLLLLRRRRRRRRRRR"]));
+        assert_eq!(
+            without_left_to_right_marks(&buf),
+            Buffer::with_lines(["LLLLLLLLLLRRRRRRRRRRR"])
+        );
+    }
+
+    #[test]
+    fn rows_and_columns_have_a_left_to_right_mark() {
+        let area = Rect::new(0, 0, 21, 1);
+        let symbols = |row: Row| {
+            let mut buf = Buffer::empty(area);
+            row.render(area, &mut buf);
+            buf.content
+                .iter()
+                .map(|cell| cell.symbol().to_string())
+                .collect::<Vec<_>>()
+        };
+        let split = symbols(Row::Split {
+            left: Line::raw("L"),
+            right: Line::raw("R"),
+        });
+        assert_eq!(split[0], "L\u{200e}");
+        assert_eq!(split[9], " \u{200e}");
+        assert_eq!(split[1], " ");
+        assert_eq!(split[10], "R");
+        let text = symbols(Row::Text(Line::raw("T")));
+        assert_eq!(text[0], "T\u{200e}");
+        assert_eq!(text[9], " ");
+    }
+
+    #[test]
+    fn left_to_right_mark_is_after_a_wide_character_ending_a_column() {
+        let area = Rect::new(0, 0, 20, 1);
+        let mut buf = Buffer::empty(area);
+        // `日` is 2 columns wide, on the last 2 columns of the left half.
+        let row = Row::Split {
+            left: Line::raw("LLLLLLLL日"),
+            right: Line::raw("R"),
+        };
+        row.render(area, &mut buf);
+        assert_eq!(buf[(8, 0)].symbol(), "日\u{200e}");
+        assert_eq!(buf[(9, 0)].symbol(), " ");
     }
 
     #[test]
     fn line_numbers_are_aligned_per_chunk() {
         let commit = newest();
-        let rows: Vec<_> = chunk_rows(&commit.files[0].chunks[1]).collect();
+        let rows: Vec<_> = chunk_rows(&commit.files[0].chunks[1], FinalCr::Hidden).collect();
         let Row::Split { left, right } = &rows[0] else {
             panic!("chunk rows are split");
         };
@@ -419,6 +598,7 @@ mod tests {
             viewport: Viewport::default(),
         }
         .render(area, &mut buffer);
+        let buffer = without_left_to_right_marks(&buffer);
         // File name, then the rule below it.
         assert_eq!(buffer[(0, 5)].symbol(), "s");
         assert_eq!(buffer[(0, 5)].fg, Color::Blue);
@@ -431,10 +611,94 @@ mod tests {
 
     #[test]
     fn status_bar_displays_the_mode() {
-        let terminal = render(110, 26, Viewport::default());
-        let buffer = terminal.backend().buffer();
+        let backend = render(110, 26, Viewport::default());
+        let buffer = backend.buffer();
         let status_bar: String = (0..8).map(|x| buffer[(x, 25)].symbol()).collect();
         assert_eq!(status_bar, " Review ");
         assert_eq!(buffer[(1, 25)].bg, Mode::Review.accent());
+    }
+
+    #[test]
+    fn invisible_characters_of_the_header_are_replaced_per_field() {
+        let mut commit = invisible();
+        commit.decorations = vec![Decoration::LocalBranch("fix\u{200b} ".to_string())];
+        let header = header(&commit);
+        assert_eq!(
+            text(&header),
+            "c7e05b9 lint: add fixtures for⌁ invisible characters∙ Zoé⍽Durand 05/10/2026 (fix⌁∙)"
+        );
+        assert_eq!(style_in(&header, "⍽"), AUTHOR.patch(INVISIBLE));
+        assert_eq!(style_in(&header, "⌁"), LOCAL_BRANCH.patch(INVISIBLE));
+        assert_eq!(
+            style_in(&header, "∙"),
+            LOCAL_BRANCH.patch(TRAILING_WHITESPACE)
+        );
+    }
+
+    #[test]
+    fn replacements_are_bold_red_and_tabs_dim_gray() {
+        let commit = invisible();
+        let rows = commit_rows(&commit);
+        let Row::Text(body) = &rows[2] else {
+            panic!("the body is not split");
+        };
+        assert_eq!(style_in(body, "⍽"), INVISIBLE);
+        assert_eq!(style_in(body, "∙"), TRAILING_WHITESPACE);
+        let makefile = file_rows(&commit.files[2]);
+        let Row::Split { right, .. } = &makefile[6] else {
+            panic!("chunk rows are split");
+        };
+        assert_eq!(text(right), "│ 5 │ ⇥   cc $(CFLAGS) -o app main.c");
+        assert_eq!(style_in(right, "⇥   "), TAB);
+        let Row::Split { right, .. } = &makefile[3] else {
+            panic!("chunk rows are split");
+        };
+        // A trailing tab is trailing whitespace.
+        assert_eq!(text(right), "│ 2 │ all: build⇥ ");
+        assert_eq!(style_in(right, "⇥ "), TRAILING_WHITESPACE);
+    }
+
+    #[test]
+    fn tab_stops_are_counted_from_the_beginning_of_the_code() {
+        let commit = invisible();
+        let makefile = file_rows(&commit.files[2]);
+        // `CFLAGS` is 6 columns wide, the next tab stop is at column 8.
+        assert_eq!(text_of_row(&makefile[2]).1, "│ 1 │ CFLAGS⇥ = -O2");
+    }
+
+    #[test]
+    fn carriage_returns_are_hidden_when_line_endings_are_consistent() {
+        let commit = invisible();
+        let emoji = file_rows(&commit.files[1]);
+        let (left, right) = text_of_row(&emoji[6]);
+        assert_eq!(left, "│ 7 │ const JOINED: &str = \"ab\";");
+        assert_eq!(right, "│ 7 │ const JOINED: &str = \"a⌁b⌁\";");
+    }
+
+    #[test]
+    fn carriage_returns_are_shown_when_line_endings_are_inconsistent() {
+        let commit = invisible();
+        let script = file_rows(&commit.files[3]);
+        let (left, right) = text_of_row(&script[4]);
+        assert_eq!(left, "│ 3 │ exit /b 0␍");
+        assert_eq!(right, "│ 3 │ exit /b 0");
+    }
+
+    #[test]
+    fn carriage_returns_of_the_body_are_shown() {
+        let commit = invisible();
+        let rows = commit_rows(&commit);
+        assert_eq!(
+            text_of_row(&rows[3]).0,
+            "The batch script now always uses CRLF line endings.␍"
+        );
+    }
+
+    #[test]
+    fn invisible_characters_of_the_file_name_are_replaced() {
+        let mut commit = invisible();
+        commit.files[0].path = "a\u{a0}b".to_string();
+        let rows = commit_rows(&commit);
+        assert_eq!(text_of_row(&rows[5]).0, "a⍽b");
     }
 }

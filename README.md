@@ -18,6 +18,8 @@ reedi
 - If available, the kitty terminal protocol is used
 - Like less, it uses the alternate screen
 - Only support utf-8, if data is invalid an error message describing the issue is shown
+- Non-latin scripts are expected to be properly supported (best effort, I don’t read them,
+  especially right-to-left scripts, but it’s a goal)
 
 ```
 $hash $commit_subject $author $date ($tags, $branches)
@@ -131,6 +133,9 @@ Cursor:
 
 Review mode:
 
+- Invisible characters are displayed with a replacements character (trailing whitespace are always
+  displayed, even if the line is wrapped)
+
 - `j`/`k` or `up`/`down` move the cursor one line. The screen automatically move so that there is
   always 5 extra lines on top/bottom (unless the beggining/end of the file is reached)
 - `tab`/`shift+tab` or `left`/`right` move the cursor to the next/previous editable area (this does include
@@ -209,6 +214,8 @@ Search mode:
   it should be doubled
 - search is incremental, highlight all results, and automatically move the screen to the
   next/previous match (if it was started with `/` or `?`)
+- Search ignore invisible characters replacement
+
 - `enter` save the current search pattern and return to review mode
 - `escape` doesn’t save the current search pattern, move back the cursor and screen position to what
   it was before the search
@@ -230,6 +237,9 @@ Command mode:
 
 Edit mode (embeded editor):
 
+- Invisible characters are displayed normally (no replacements character)
+- Right-to-left text is reordered and joined by the terminal. The cursor moves in memory order, and
+  is displayed on the character it is on
 - Copy interact with the system clipboard. In non-vim mode, `ctrl+c` copy
 - Each editable area has a separate undo tree
 - This undo tree is associated with the patch id of the associated commit, and thus re-loaded
@@ -261,6 +271,10 @@ Move mode:
 
 Terminal protocol:
 - Use kitty protocol by default, with a fallback for non-kitty-aware terminals
+- A left-to-right mark (U+200E) is put after the first character of each row and after the last
+  character of each column. Terminals reordering bidirectional text do it for the whole row, so
+  without it, the punctuation and numbers next to a right-to-left text (like Persian) would be moved
+  with it, even from another column
 
 Settings
 --------
@@ -276,6 +290,27 @@ Settings
 - embedded editor style can be set to vim (default) / emacs / standard / helix
 - tab width is 4 spaces by default
 - theme has light and dark variant (terminal theme by default, dark otherwise)
+- each invisible character replacements can be configured. Default:
+    - tab: `⇥`, followed by spaces up to the next tab stop
+    - trailing space: `∙`
+    - non-ASCII spaces (U+00A0, U+1680, U+2000–U+200A, U+202F, U+205F, U+3000): `⍽`
+    - control characters (U+0000–U+001F), except tab and line feed: their control picture, from `␀`
+      to `␟` (U+2400 + their code)
+    - carriage return: `␍`, only if a version of a file mixes line endings, or if the before and
+      after versions of a file use different line endings
+    - delete (U+007F): `␡`
+    - line separators (U+2028, U+0085) and paragraph separator (U+2029): `␤`
+    - bidirectional text controls (U+202A–U+202E, U+2066–U+2069, U+200E, U+200F, U+061C): `⇄`
+    - zero-width characters (U+200B, U+200D, U+2060, U+FEFF), soft hyphen (U+00AD), U+180E, U+034F,
+      variation selectors (U+FE00–U+FE0F, U+E0100–U+E01EF) and tag characters (U+E0000–U+E007F):
+      `⌁`. The zero-width joiner (U+200D), variation selectors and tag characters are kept when they
+      are inside a grapheme cluster (what is displayed as a single character) that starts with an
+      emoji. The zero-width non-joiner (U+200C) is never replaced
+    - any other invisible character (control characters U+0080–U+009F, Hangul fillers U+115F,
+      U+1160, U+3164 and U+FFA0, and the other characters with the Unicode property
+      `Default_Ignorable_Code_Point`): `⍰`
+    - ZWNJ is not replaced (and thus not colored)
+- color of each invisible character replacements category can be configured (see colorscheme for default)
 
 Colorscheme
 -----------
@@ -285,4 +320,7 @@ The colorscheme follows the current git colorscheme used by delta.
   colorscheme that would make sense)
 - `$hash`, `$author`, `$date`, $tags and `$branche` uses git coloration
 - `$file` and the line just below share the same color (blue)
-
+- Replacements characters of invisible characters:
+    - non-trailing tab: dim gray
+    - trailing whitespace (including whitespace-only lines): bold red
+    - all other invisible characters: bold red

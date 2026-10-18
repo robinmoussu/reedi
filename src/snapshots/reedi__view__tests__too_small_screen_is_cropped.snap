@@ -2,11 +2,11 @@
 source: src/view.rs
 expression: "render(50, 8, Viewport::default()).backend()"
 ---
-"8d41e07 search: rename pattern to query Bruno Lefe"
+"c7e05b9 lint: add fixtures for⌁ invisible characte"
 "                                                  "
-"`query` is the name used in the status bar.       "
+"Most fixtures were pasted from a web page, hence t"
+"The batch script now always uses CRLF line endings"
 "                                                  "
-"src/app.rs                                        "
+"tests/fixtures/lookalike.rs                       "
 "──────────────────────────────────────────────────"
-"│ 42 │         KeyCode::E│ 42 │         KeyCode::E"
 " Review                                           "

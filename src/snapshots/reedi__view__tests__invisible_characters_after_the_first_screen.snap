@@ -1,0 +1,30 @@
+---
+source: src/view.rs
+expression: "render(110, 26, viewport)"
+---
+"──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+"│ 3 │ const FAMILY: &str = "👪";                       │ 3 │ const FAMILY: &str = "👨‍👩‍👧";                       " Hidden by multi-width symbols: [(29, " "), (84, " ")]
+"│ 4 │ const HEART: &str = "❤";                         │ 4 │ const HEART: &str = "❤️";                        " Hidden by multi-width symbols: [(83, " ")]
+"│ 5 │ const FLAG: &str = "🏴";                         │ 5 │ const FLAG: &str = "🏴󠁧󠁢󠁳󠁣󠁴󠁿";                         " Hidden by multi-width symbols: [(27, " "), (82, " ")]
+"│ 6 │ const PERSIAN: &str = "من میخواهم این جملهی طولان│ 6 │ const PERSIAN: &str = "من می‌خواهم این جمله‌ی طولان"
+"│ 7 │ const JOINED: &str = "ab";                       │ 7 │ const JOINED: &str = "a⌁b⌁";                     "
+"                                                                                                              "
+"Makefile                                                                                                      "
+"──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+"│ 1 │ CFLAGS = -O2                                     │ 1 │ CFLAGS⇥ = -O2                                    "
+"│ 2 │ all: build∙                                      │ 2 │ all: build⇥                                      "
+"│ 3 │                                                  │ 3 │ ∙∙⇥ ∙                                            "
+"│ 4 │ build:                                           │ 4 │ build:                                           "
+"│ 5 │ ⇥   cc $(CFLAGS) -o app main.c                   │ 5 │ ⇥   cc $(CFLAGS) -o app main.c                   "
+"                                                                                                              "
+"scripts/build.bat                                                                                             "
+"──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+"│ 1 │ @echo off␍                                       │ 1 │ @echo off␍                                       "
+"│ 2 │ cl /O2 main.c␍                                   │ 2 │ cl /O2 /utf-8 main.c␍                            "
+"│ 3 │ exit /b 0␍                                       │ 3 │ exit /b 0                                        "
+"                                                                                                              "
+"tests/fixtures/rtl.txt                                                                                        "
+"──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+"│ 1 │ سلام دنیا                                        │ 1 │ سلام دنیای زیبا                                  "
+"                                                                                                              "
+" Review                                                                                                       "

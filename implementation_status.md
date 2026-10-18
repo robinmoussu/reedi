@@ -66,25 +66,39 @@ version 0.0.1: minimal interactivity
    - [x] `ctrl+z` put the application in the background
    - [x] all other keys are inactive
 
+version 0.0.2: invisible characters
+---------------------------------
+
+- [x] fake data update:
+   - [x] an older commit with all invisible characters combination in between normal text
+   - [x] a line made only of right-to-left text
+- [x] add support for invisible characters
+   - [x] tabs are expanded up to 4 spaces (the first char being its replacement char), so that it
+     align with columns that are multiple of 4
+   - [x] a left-to-right mark is put after the first character of each row and after the last
+     character of each column
+
 version 0.0.x: line wrapping
 --------------------------
 
 - [ ] fake data update:
    - [ ] long lines on both side (including a word longer than half the screen)
-   - [ ] an addition-only and a deletion-only block of lines (unpaired lines)
-   - [ ] a line with wide characters (CJK and emoji) and a line with a tab
-   - [ ] a second file in another language (shell)
-   - [ ] an added, a deleted, a renamed and a binary file, and a file without newline at its end
+   - [ ] a line with wide characters (CJK and emoji)
 - [ ] line wrapping support (both left and right side)
    - [ ] the `↵` marker is at the right edge of each line that continues on the next row
    - [ ] on continuation rows, the line number column is displayed (`│     │`) without number
    - [ ] if one side wraps on more rows than the other, the shorter side is padded with blank rows
-   - [ ] tabs are expanded to 4 spaces before measuring the width of a line
    - [ ] the header and the commit message are wrapped too
+   - [ ] RTL scripts are properly wrapped
+   - [ ] Trailing whitespace are properly highlighted, wrapped, and not hidden
 
 version 0.0.x: diff and syntax support
 ------------------------------------
 
+- [ ] fake data update:
+   - [ ] an addition-only and a deletion-only block of lines (unpaired lines)
+   - [ ] a second file in another language (shell)
+   - [ ] an added, a deleted, a renamed and a binary file, and a file without newline at its end
 - [ ] real diff support
    - [ ] removed and added lines are paired like `delta`
    - [ ] unpaired lines have a blank filler on the other side, with `│` borders and an empty line

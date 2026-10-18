@@ -23,9 +23,143 @@ fn date(year: i16, month: i8, day: i8, hour: i8, minute: i8, second: i8) -> Zone
         .expect("the fake date is valid")
 }
 
-/// Two commits, in topological order (oldest first).
+/// Three commits, in topological order (oldest first).
 pub fn commits() -> Vec<Commit> {
-    vec![search_rename(), scrolloff_rename()]
+    vec![invisible_characters(), search_rename(), scrolloff_rename()]
+}
+
+/// A commit with all kinds of invisible characters, in all the areas: subject, author, body, code
+/// with consistent and inconsistent line endings.
+fn invisible_characters() -> Commit {
+    Commit {
+        hash: "c7e05b9".to_string(),
+        subject: "lint: add fixtures for\u{200b} invisible characters ".to_string(),
+        author: "Zoé\u{a0}Durand".to_string(),
+        date: date(2026, 10, 5, 17, 3, 51),
+        decorations: Vec::new(),
+        body: "Most fixtures were pasted from a web page, hence the no-break spaces\u{a0}! \n\
+               The batch script now always uses CRLF line endings.\r"
+            .to_string(),
+        files: vec![
+            FileDiff {
+                path: "tests/fixtures/lookalike.rs".to_string(),
+                chunks: vec![Chunk {
+                    before: Side {
+                        first_line: 1,
+                        lines: lines(&[
+                            "\u{feff}//! Strings that look alike.",
+                            "const ADMIN: &str = \"admin\";",
+                            "const USER: &str = \"user\";",
+                            "const SPACES: &str = \"a b c d\";",
+                            "const RED: &str = \"red\";",
+                            "const BELL: &str = \"\";",
+                            "const LINES: &str = \"a b c d\";",
+                            "let filler = is_admin;",
+                            "let word = \"abcd\";",
+                            "/* admins only */",
+                            "// Looks good",
+                        ]),
+                    },
+                    after: Side {
+                        first_line: 1,
+                        lines: lines(&[
+                            "\u{feff}//! Strings that look alike.",
+                            "const ADMIN: &str = \"ad\u{200b}min\";",
+                            "const USER: &str = \"us\u{ad}er\";",
+                            "const SPACES: &str = \"a\u{a0}b\u{2009}c\u{3000}d\";",
+                            "const RED: &str = \"\u{1b}[31mred\u{1b}[0m\";",
+                            "const BELL: &str = \"\u{7}\u{0}\u{7f}\u{9b}\";",
+                            "const LINES: &str = \"a\u{2028}b\u{2029}c\u{85}d\";",
+                            "let \u{3164} = is_admin;",
+                            "let word = \"a\u{2060}b\u{180e}c\u{34f}d\";",
+                            "/*\u{202e} } \u{2066}if is_admin\u{2069} \u{2066} admins only */",
+                            // The tag characters spell `Ignore`.
+                            "// Looks good\u{e0049}\u{e0067}\u{e006e}\u{e006f}\u{e0072}\u{e0065}",
+                        ]),
+                    },
+                }],
+            },
+            FileDiff {
+                path: "tests/fixtures/emoji.rs".to_string(),
+                // Only CRLF line endings, so the carriage returns are hidden.
+                chunks: vec![Chunk {
+                    before: Side {
+                        first_line: 3,
+                        lines: lines(&[
+                            "const FAMILY: &str = \"👪\";\r",
+                            "const HEART: &str = \"❤\";\r",
+                            "const FLAG: &str = \"🏴\";\r",
+                            "const PERSIAN: &str = \"من میخواهم این جملهی طولانی را در چند سطر ببینم\";\r",
+                            "const JOINED: &str = \"ab\";\r",
+                        ]),
+                    },
+                    after: Side {
+                        first_line: 3,
+                        lines: lines(&[
+                            "const FAMILY: &str = \"👨\u{200d}👩\u{200d}👧\";\r",
+                            "const HEART: &str = \"❤\u{fe0f}\";\r",
+                            "const FLAG: &str = \"🏴\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}\";\r",
+                            "const PERSIAN: &str = \"من می\u{200c}خواهم این جمله\u{200c}ی طولانی را در چند سطر ببینم\";\r",
+                            "const JOINED: &str = \"a\u{200d}b\u{fe0f}\";\r",
+                        ]),
+                    },
+                }],
+            },
+            FileDiff {
+                path: "Makefile".to_string(),
+                chunks: vec![Chunk {
+                    before: Side {
+                        first_line: 1,
+                        lines: lines(&[
+                            "CFLAGS = -O2",
+                            "all: build ",
+                            "",
+                            "build:",
+                            "\tcc $(CFLAGS) -o app main.c",
+                        ]),
+                    },
+                    after: Side {
+                        first_line: 1,
+                        lines: lines(&[
+                            "CFLAGS\t= -O2",
+                            "all: build\t",
+                            "  \t ",
+                            "build:",
+                            "\tcc $(CFLAGS) -o app main.c",
+                        ]),
+                    },
+                }],
+            },
+            FileDiff {
+                path: "scripts/build.bat".to_string(),
+                // The last line has no carriage return, so all of them are displayed.
+                chunks: vec![Chunk {
+                    before: Side {
+                        first_line: 1,
+                        lines: lines(&["@echo off\r", "cl /O2 main.c\r", "exit /b 0\r"]),
+                    },
+                    after: Side {
+                        first_line: 1,
+                        lines: lines(&["@echo off\r", "cl /O2 /utf-8 main.c\r", "exit /b 0"]),
+                    },
+                }],
+            },
+            FileDiff {
+                path: "tests/fixtures/rtl.txt".to_string(),
+                // Only right-to-left characters.
+                chunks: vec![Chunk {
+                    before: Side {
+                        first_line: 1,
+                        lines: lines(&["سلام دنیا"]),
+                    },
+                    after: Side {
+                        first_line: 1,
+                        lines: lines(&["سلام دنیای زیبا"]),
+                    },
+                }],
+            },
+        ],
+    }
 }
 
 /// A commit modifying one chunk of a file and three chunks of another one.
