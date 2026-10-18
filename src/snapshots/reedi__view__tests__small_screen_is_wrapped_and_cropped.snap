@@ -1,0 +1,12 @@
+---
+source: src/view.rs
+expression: "render(50, 8, Viewport::default())"
+---
+"b0d4e2a view: wrap the lines too wide for the     "
+"screen instead of cropping them at its edge Chloé "
+"Bernard 01/10/2026 (tag: v0.2, origin/line-       "
+"wrapping)                                         "
+"                                                  "
+"Long lines used to be cropped at the edge of the  "
+"screen, hiding their end, which is often where the"
+" Review                                           "

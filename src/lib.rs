@@ -6,5 +6,6 @@ pub mod invisible;
 pub mod model;
 pub mod view;
 pub mod viewport;
+pub mod wrap;
 
 pub use app::run;

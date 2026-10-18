@@ -9,7 +9,8 @@ whichever make the more sense).
 - each version should be as simple as possible to implement what is required, but keep in mind the
 future modification needed for next versions. Most notably dependencies should not be changed
 between version, just added.
-- If the terminal is too small to fit the whole layout, it is cropped (ignore this non-usecase)
+- If the terminal is too small to fit the whole layout, it is cropped (ignore this non-usecase),
+  except for the text areas too narrow to be wrapped (see "Line wrapping" in the README)
 
 Diff model
 ----------
@@ -78,19 +79,55 @@ version 0.0.2: invisible characters
    - [x] a left-to-right mark is put after the first character of each row and after the last
      character of each column
 
-version 0.0.x: line wrapping
+version 0.0.3: line wrapping
 --------------------------
 
-- [ ] fake data update:
-   - [ ] long lines on both side (including a word longer than half the screen)
-   - [ ] a line with wide characters (CJK and emoji)
-- [ ] line wrapping support (both left and right side)
-   - [ ] the `↵` marker is at the right edge of each line that continues on the next row
-   - [ ] on continuation rows, the line number column is displayed (`│     │`) without number
-   - [ ] if one side wraps on more rows than the other, the shorter side is padded with blank rows
-   - [ ] the header and the commit message are wrapped too
-   - [ ] RTL scripts are properly wrapped
-   - [ ] Trailing whitespace are properly highlighted, wrapped, and not hidden
+- [x] fake data update, in a new oldest commit, whose lines are wrapped in the 110 columns wide
+  snapshots:
+   - [x] long lines on both side (including a word wider than its text area, so that it is split)
+   - [x] a line with tab at multiple places to validate that tab alignment is valid
+   - [x] a line with wide characters (CJK and emoji)
+   - [x] a line starting with right-to-left text, and ending with left-to-right script
+   - [x] a line starting with left-to-right, and ending with right-to-left text script
+   - [x] a line made only of right-to-left text, long enough to be wrapped
+   - [x] a line with multiple trailing spaces
+   - [x] a line with multiple trailing tab
+   - [x] a line with multiple trailing spaces and trailing tab
+   - [x] a line with multiple spaces in the middle, at a break
+   - [x] a line with a tab followed by multiple spaces, at a break
+- [x] line wrapping support (both left and right side)
+   - [x] the `↵` marker is in the last column of each half, on each row followed by a continuation
+     row
+   - [x] on continuation rows, the line number column (`│    │`) is displayed without number
+   - [x] if one side wraps on more rows than the other, the shorter side is padded with rows
+     displaying only the line number column without number
+   - [x] the header, the commit message and the file names are wrapped too (without `↵` marker)
+   - [ ] RTL scripts are broken in memory order and reordered by the terminal (validated manually
+     using the fake data, the right-to-left part of a text area can be displayed on either side)
+   - [x] a tab that is the last character before a break is displayed as `⇥` alone
+   - [x] Trailing whitespace are highlighted, wrapped, and not hidden
+   - [x] dimmed ∙ on spaces before a break, except if it is the only space or U+2800 around the
+     break, which is then not displayed (unless trailing)
+   - [x] spaces that don't fit are moved to the next row
+   - [x] a tab after a break are shown normally (⇥ plus padding)
+   - [x] U+2800 at the end or at the beginning of a row because of a wrap is displayed as a dimmed
+     `∙`, except if it is the only space or U+2800 around the break, which is then not displayed
+     (unless trailing)
+   - [x] a trailing U+2800 is part of the trailing whitespace (bold red `∙`), even without wrap
+   - [x] in the header, tab stops are counted from the start of the row (not from the start of each
+     field)
+   - [x] in the header, the spaces between the fields are never replaced, even next to a break
+   - [x] break opportunities are computed on the original text, and the replacement character of
+     the last character before a break stays on the row before the break if it fits
+- [x] a text area too narrow to display a grapheme cluster of its line:
+   - [x] in a diff, a clear error message is displayed in place of the chunk
+   - [x] elsewhere, `reedi` exits with a clear error message
+   - [x] if the error message displayed in place of the chunk cannot be displayed, `reedi` exits with
+     a clear error message
+- [x] the cursor moves row by row
+- [x] when the width of the screen changes, the cursor stays at the same screen position, on the
+  row displaying the character that was the first of its row (the one of the right half of a diff
+  if it displayed text on that row, otherwise the one of the left half)
 
 version 0.0.x: diff and syntax support
 ------------------------------------

@@ -24,6 +24,13 @@ impl Viewport {
         self.cursor = self.cursor.saturating_sub(1);
     }
 
+    /// Move the cursor to the row `cursor`, keeping it at the same screen position (unless the
+    /// screen would have to start before the first row).
+    pub fn move_cursor(&mut self, cursor: usize) {
+        self.top = (self.top + cursor).saturating_sub(self.cursor);
+        self.cursor = cursor;
+    }
+
     /// Scroll as little as possible so that the screen, `height` rows tall, displays `SCROLLOFF`
     /// rows above and below the cursor (unless the first or last of `len` rows is reached), and no
     /// empty space after the last row.
@@ -136,6 +143,34 @@ mod tests {
         viewport.scroll(100, 20);
         // Rows 26 to 45 are displayed, the cursor is 5 rows above the bottom.
         assert_eq!(viewport.top, 26);
+    }
+
+    #[test]
+    fn moved_cursor_stays_at_the_same_screen_position() {
+        let mut viewport = viewport(30, 20);
+        viewport.move_cursor(40);
+        assert_eq!(
+            viewport,
+            Viewport {
+                cursor: 40,
+                top: 30
+            }
+        );
+        viewport.move_cursor(35);
+        assert_eq!(
+            viewport,
+            Viewport {
+                cursor: 35,
+                top: 25
+            }
+        );
+    }
+
+    #[test]
+    fn moved_cursor_cannot_go_above_the_first_row() {
+        let mut viewport = viewport(30, 20);
+        viewport.move_cursor(5);
+        assert_eq!(viewport, Viewport { cursor: 5, top: 0 });
     }
 
     #[test]

@@ -3,6 +3,8 @@ reedi
 
 `reedi` is a review editor
 
+> Current implentation status is described in `implementation_status.md`
+
 - It is a TUI tool to review unpushed commits.
 - Commits are displayed (with their diff) in topological order (oldest first).
 - The general interface is the same than `delta`, but commits messages, author, date and hunks are
@@ -86,9 +88,7 @@ Areas
 - Editable areas can either be modified using the embeded editor that can use vim (and ideally
   ibm/emacs/helix) style keybinding, or using an external editor (`$VISUAL`, or `EDITOR as
   fallback`).
-- The diffs splits the screen 50/50 (right bigger if odd), and long line are wrapped at word
-  boundary (without line number for the wraped part) and wrapped lines have a `↵` marker (note: wide
-  characters, like CJK and emoji, are mesured at their real display width)
+- The diffs splits the screen 50/50 (right bigger if odd)
 - A status bar display the current mode and each mode has an accent color for the background of the
   name of the current mode (`Review`: blue, `Edit`: light green, `Search`: honey, `Comment`: dark
   green, `Command`: mango, `Selection`: purple, `Move`: dark red)
@@ -123,18 +123,22 @@ Saving and applying modifications:
 
 Cursor:
 
-- When starting the application, the cursor is on the first line
-- Cursor can go on every lines (logic-line, a wrapped long line count as 2 lines or more)
-- The position of the cursor is made visible by highlighting the background of the current line
+- When starting the application, the cursor is on the first row
+- The cursor moves row by row: a line displayed on several rows (see "Line wrapping") counts as
+  several rows
+- The position of the cursor is made visible by highlighting the background of the current row
   (with a dim gray color)
 - `$commit_subject`, `$author` and `$date` are on the same line. `right` and `left` is the only way
-  to edit `$author` and `$date`, since the cursor is line-based. `right`/`left` Can therefore select
+  to edit `$author` and `$date`, since the cursor is row-based. `right`/`left` Can therefore select
   which of those 3 field is active, and is highlighted when the cursor is on those lines. `j`/`k` do
   not stop on `$date` and `$author` (unless there is line wrapping) and reset to `$commit_subject`
   each time they leave and go back the line containing the subject.
-- When resizing, the line of the cursor doesn’t move (cursor screen position stay the same). If
-  wrapping split the line in 2, the cursor stays on the first line. If wrapping merge 2 lines and
-  cursor was on the second the merge line goes at the position of the cursor.
+- When resizing, the cursor screen position stays the same. The cursor goes on the row displaying
+  the character that was the first of its row: the one of the right half of a diff if this half
+  displayed text on that row, otherwise the one of the left half. For example if a line was
+  displayed on one row and is now split in 2, the cursor stays on the first one, and if a line was
+  displayed on 2 rows, now merged, and the cursor was on the second one, the merged row goes at the
+  position of the cursor.
 
 Review mode:
 
@@ -142,8 +146,8 @@ Review mode:
   displayed, even if the line is wrapped)
 - TODO: how is non-linear history displayed
 
-- `j`/`k` or `up`/`down` move the cursor one line. The screen automatically move so that there is
-  always 5 extra lines on top/bottom (unless the beggining/end of the file is reached)
+- `j`/`k` or `up`/`down` move the cursor one row. The screen automatically move so that there is
+  always 5 extra rows on top/bottom (unless the beggining/end of the file is reached)
 - `tab`/`shift+tab` or `left`/`right` move the cursor to the next/previous editable area (this does include
     `commit_subject`, `author` and `date` that are on the same line)
 - `g`/`G` move the cursor to first/last line
@@ -282,6 +286,67 @@ Terminal protocol:
   without it, the punctuation and numbers next to a right-to-left text (like Persian) would be moved
   with it, even from another column
 
+Line wrapping
+-------------
+
+The text area of a row is the columns of that row in which the text of a line is displayed. For the
+header, the commit message and the file names, it is the whole row. In a diff, there is one text
+area per half: the columns after its line number column, up to (excluding) the column reserved for
+the `↵` marker.
+
+A line too wide for its text area is displayed on several rows. A continuation row is a row
+displaying the part of a line that did not fit on the previous row.
+
+- Lines are broken at the break opportunities of the Unicode line breaking algorithm (UAX #14), as
+  late as possible: for example at spaces and after a hyphen, but not between `.` and a letter. A
+  word (the text between two break opportunities) wider than the text area is split after its last
+  grapheme cluster that fits.
+- Break opportunities are computed on the original text, not on the displayed text (in which the
+  invisible characters are replaced). The replacement character of the last character before a
+  break is displayed at the end of the row before the break if it fits.
+- Widths are display widths: wide characters (like CJK and emoji) count for 2 columns. A wide
+  character that does not fit at the end of a row goes to the next row, and the rest of the row
+  is left blank.
+- Whitespaces that break a line:
+    - the spaces and U+2800 around a break are the ones ending the row before it and starting the
+      row after it. If there is only one, it is not displayed (its column is left blank), unless it
+      is a trailing space
+    - otherwise, spaces before a break are displayed with the replacement character. Spaces that
+      do not fit the row are moved to the next row (and are displayed as plain space like usual
+      unless they are also trailing spaces)
+    - U+2800 (braille pattern blank) can be part of the trailing whitespace, like spaces. When it is
+      not, it is displayed with the replacement character when it is at the end or at the beginning
+      of a row because of a wrap (unless it is the only space or U+2800 around that break), and
+      displayed normally elsewhere
+    - tabs that are the last character before the break, are displayed as `⇥` alone (without spaces
+      up to the next tab stop). After a break they are displayed with the replacement character as
+      usual (in all case `⇥` is displayed)
+    - the replacement characters of non-trailing spaces, U+2800 and tabs use the dimmed whitespace
+      color, and those of trailing spaces, U+2800 and tabs always use the trailing whitespace color
+      (including before a break)
+    - other whitespaces are replaced and highlighted normally
+- Tab stops are counted from the start of the text area
+- Continuation rows start at the first column of the text area: the indentation of the line is not
+  repeated.
+- In a diff:
+    - the last column of each half is always reserved for the `↵` marker, which is displayed on
+      each row followed by a continuation row of the same line
+    - continuation rows display the line number column without number (`│    │`, as wide as the
+      line number column of the chunk)
+    - if one side of a line wraps on more rows than the other, the shorter side is padded with rows
+      displaying only the line number column without number
+- The header, the commit message and the file names are wrapped the same way, but without `↵`
+  marker. The header can be broken inside any field (like the subject, or between `tag:` and the
+  tag name), each part keeping the color of its field. The spaces between the fields are never
+  replaced (nor colored as dimmed or trailing whitespace), even next to a break.
+- Right-to-left text is broken in memory order, like any other text, and then reordered by the
+  terminal (see the beginning of this document). The right-to-left part of a text area can thus be
+  displayed on either side of its left-to-right part. Rows are still left-aligned.
+- A text area too narrow to display a grapheme cluster of its line (0 column, or 1 column for a wide
+  character) cannot be wrapped. In a diff, a clear error message is displayed in place of the
+  chunk. Elsewhere, or if this error message cannot be displayed either, `reedi` exits with a clear
+  error message.
+
 Settings
 --------
 
@@ -298,7 +363,11 @@ Settings
 - theme has light and dark variant (terminal theme by default, dark otherwise)
 - each invisible character replacements can be configured. Default:
     - tab: `⇥`, followed by spaces up to the next tab stop
-    - trailing space: `∙`
+    - space, when trailing or before a wrapping break: `∙`
+    - U+2800, braille pattern blank, when trailing or before or after a wrapping break: `∙`
+    - U+2800, other position: no replacement
+    - note: unless it is trailing, the only space or U+2800 around a wrapping break is not displayed
+      (its column is left blank), whatever its replacement
     - non-ASCII spaces (U+00A0, U+1680, U+2000–U+200A, U+202F, U+205F, U+3000): `⍽`
     - control characters (U+0000–U+001F), except tab and line feed: their control picture, from `␀`
       to `␟` (U+2400 + their code)
@@ -316,7 +385,10 @@ Settings
       U+1160, U+3164 and U+FFA0, and the other characters with the Unicode property
       `Default_Ignorable_Code_Point`): `⍰`
     - ZWNJ is not replaced (and thus not colored)
-- color of each invisible character replacements category can be configured (see colorscheme for default)
+- color of each invisible character replacements category:
+    - dimmed whitespace: dim gray
+    - trailing whitespace: bold red
+    - all other invisible characters: bold red
 - current mode accent color:
     - Review: blue
     - Edit: light green
@@ -335,7 +407,9 @@ The colorscheme follows the current git colorscheme used by delta.
 - `$hash`, `$author`, `$date`, $tags and `$branche` uses git coloration
 - `$file` and the line just below share the same color (blue)
 - The `↵` marker of wrapped lines has the same color as `$line` (blue)
-- Replacements characters of invisible characters:
-    - non-trailing tab: dim gray
-    - trailing whitespace (including whitespace-only lines): bold red
-    - all other invisible characters: bold red
+- Replacements characters of invisible characters have 3 catégories:
+    - dimmed whitespace: non-trailing spaces before a line wrap, non-trailing U+2800 at the end or
+      at the beginning of a row because of a line wrap (except the only space or U+2800 around a
+      line wrap, which is not displayed), and non-trailing tabs (including before a line wrap)
+    - trailing whitespace (including U+2800, whitespace-only lines, and before a line wrap)
+    - all other invisible characters
