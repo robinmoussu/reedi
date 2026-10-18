@@ -128,7 +128,7 @@ version 0.0.x: minimal editing
 --------------------------
 
 - [ ] status bar displays the current mode (`Review` and `Edit`)
-- [ ] line wrapping support (both left and right side, including when editing for the right side)
+- [ ] line wrapping support when editing the right side
 - [ ] Review mode
    - [ ] `enter` enters edit mode (with the embedded editor) in the current (or next) editable area
       - [ ] $author

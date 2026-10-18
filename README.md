@@ -5,7 +5,7 @@ reedi
 
 - It is a TUI tool to review unpushed commits.
 - Commits are displayed (with their diff) in topological order (oldest first).
-- The general interface is the same than `delta`, but commits messages, autho, date and hunks are
+- The general interface is the same than `delta`, but commits messages, author, date and hunks are
   editable.
 - All chunks have syntax and diff-aware coloration (including word-level diff), just like what
   `delta` does
@@ -19,7 +19,12 @@ reedi
 - Like less, it uses the alternate screen
 - Only support utf-8, if data is invalid an error message describing the issue is shown
 - Non-latin scripts are expected to be properly supported (best effort, I don’t read them,
-  especially right-to-left scripts, but it’s a goal)
+  especially right-to-left scripts, but it’s a goal). For RTL scripts, it is expected than a
+  terminal that support bidirectional algorithm is used (like GNOME VTE or Konsole).
+- Supports `.gitattributes`
+- Binary file only show a message if they differ. Non-valid utf8 files are treated the same.
+- Likewise commit message, author name and other metadate must be valid utf8 or are replaced by an
+  error message.
 
 ```
 $hash $commit_subject $author $date ($tags, $branches)
@@ -112,7 +117,7 @@ Saving and applying modifications:
 - It is always possible to undo all changes and restore the last saved state
 - All modifications are immediately applied when leaving an editable area (but this state is not
   saved)
-- When exiting `reedi`, if the saved state and the curring git state don’t match, there is a
+- When exiting `reedi`, if the saved state and the current git state don’t match, there is a
   confirmation dialog
 - The default mode is the review mode
 
@@ -135,6 +140,7 @@ Review mode:
 
 - Invisible characters are displayed with a replacements character (trailing whitespace are always
   displayed, even if the line is wrapped)
+- TODO: how is non-linear history displayed
 
 - `j`/`k` or `up`/`down` move the cursor one line. The screen automatically move so that there is
   always 5 extra lines on top/bottom (unless the beggining/end of the file is reached)
@@ -311,6 +317,14 @@ Settings
       `Default_Ignorable_Code_Point`): `⍰`
     - ZWNJ is not replaced (and thus not colored)
 - color of each invisible character replacements category can be configured (see colorscheme for default)
+- current mode accent color:
+    - Review: blue
+    - Edit: light green
+    - Search: honey
+    - Comment: dark green
+    - Command: mango
+    - Selection: purple
+    - Move: dark red
 
 Colorscheme
 -----------
@@ -320,6 +334,7 @@ The colorscheme follows the current git colorscheme used by delta.
   colorscheme that would make sense)
 - `$hash`, `$author`, `$date`, $tags and `$branche` uses git coloration
 - `$file` and the line just below share the same color (blue)
+- The `↵` marker of wrapped lines has the same color as `$line` (blue)
 - Replacements characters of invisible characters:
     - non-trailing tab: dim gray
     - trailing whitespace (including whitespace-only lines): bold red
