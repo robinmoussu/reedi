@@ -17,6 +17,7 @@ reedi
 - If the terminal size change, the UI is updated automatically
 - If available, the kitty terminal protocol is used
 - Like less, it uses the alternate screen
+- Only support utf-8, if data is invalid an error message describing the issue is shown
 
 ```
 $hash $commit_subject $author $date ($tags, $branches)
@@ -229,6 +230,7 @@ Command mode:
 
 Edit mode (embeded editor):
 
+- Copy interact with the system clipboard. In non-vim mode, `ctrl+c` copy
 - Each editable area has a separate undo tree
 - This undo tree is associated with the patch id of the associated commit, and thus re-loaded
   automatically between sessions
