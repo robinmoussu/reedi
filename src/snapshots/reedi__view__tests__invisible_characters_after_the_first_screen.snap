@@ -6,7 +6,8 @@ expression: "render(110, 26, viewport)"
 "│ 3 │ const FAMILY: &str = "👪";                       │ 3 │ const FAMILY: &str = "👨‍👩‍👧";                       " Hidden by multi-width symbols: [(29, " "), (84, " ")]
 "│ 4 │ const HEART: &str = "❤";                         │ 4 │ const HEART: &str = "❤️";                        " Hidden by multi-width symbols: [(83, " ")]
 "│ 5 │ const FLAG: &str = "🏴";                         │ 5 │ const FLAG: &str = "🏴󠁧󠁢󠁳󠁣󠁴󠁿";                         " Hidden by multi-width symbols: [(27, " "), (82, " ")]
-"│ 6 │ const PERSIAN: &str = "من میخواهم این جملهی طولان│ 6 │ const PERSIAN: &str = "من می‌خواهم این جمله‌ی طولان"
+"│ 6 │ const PERSIAN: &str = "من میخواهم این جملهی     ↵│ 6 │ const PERSIAN: &str = "من می‌خواهم این جمله‌ی     ↵"
+"│   │ طولانی را در چند سطر ببینم";                     │   │ طولانی را در چند سطر ببینم";                     "
 "│ 7 │ const JOINED: &str = "ab";                       │ 7 │ const JOINED: &str = "a⌁b⌁";                     "
 "                                                                                                              "
 "Makefile                                                                                                      "
@@ -26,5 +27,4 @@ expression: "render(110, 26, viewport)"
 "tests/fixtures/rtl.txt                                                                                        "
 "──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
 "│ 1 │ سلام دنیا                                        │ 1 │ سلام دنیای زیبا                                  "
-"                                                                                                              "
 " Review                                                                                                       "

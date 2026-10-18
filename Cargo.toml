@@ -1,12 +1,13 @@
 [package]
 name = "reedi"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 rust-version = "1.99"
 license = "GPL-3.0-or-later"
 
 [dependencies]
 icu_properties = "2.3.0"
+icu_segmenter = "2.3.0"
 jiff = "0.2.38"
 nix = { version = "0.31.3", features = ["signal"] }
 ratatui = "0.30.2"
