@@ -2,6 +2,7 @@
 
 use std::iter;
 
+use gix::bstr::ByteSlice;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
@@ -19,8 +20,13 @@ use crate::invisible::Kind;
 use crate::model::Chunk;
 use crate::model::Commit;
 use crate::model::Decoration;
+use crate::model::DiffLine;
+use crate::model::FileChange;
+use crate::model::FileContentType;
 use crate::model::FileDiff;
-use crate::model::Side;
+use crate::model::LineKind;
+use crate::model::LineNumbers;
+use crate::pairing;
 use crate::viewport::Viewport;
 use crate::wrap;
 use crate::wrap::Segment;
@@ -40,9 +46,22 @@ const REMOTE_BRANCH: Style = Style::new().fg(Color::Red).bold();
 const TAG: Style = Style::new().fg(Color::Yellow).bold();
 
 const FILE: Style = Style::new().fg(Color::Blue);
-const LINE_NUMBER: Style = Style::new().fg(Color::Blue);
+// The line number column never has the background of the modified lines.
+/// The borders of the line number column.
+const LINE_NUMBER: Style = Style::new().fg(Color::Blue).bg(Color::Reset);
+// Colors used by `delta` by default for the line numbers.
+const REMOVED_LINE_NUMBER: Style = Style::new().fg(Color::Indexed(88)).bg(Color::Reset);
+const ADDED_LINE_NUMBER: Style = Style::new().fg(Color::Indexed(28)).bg(Color::Reset);
+const UNCHANGED_LINE_NUMBER: Style = Style::new()
+    .fg(Color::Rgb(0x44, 0x44, 0x44))
+    .bg(Color::Reset);
+/// The `↵` marker of the wrapped lines of the diffs.
+const MARKER: Style = Style::new().fg(Color::Blue);
+// Backgrounds used by `delta` by default for the modified lines.
+const REMOVED_BACKGROUND: Color = Color::Rgb(0x3f, 0x00, 0x01);
+const ADDED_BACKGROUND: Color = Color::Rgb(0x00, 0x28, 0x00);
 const COMMIT_SEPARATOR: Style = Style::new().fg(Color::Red);
-const ERROR: Style = Style::new().fg(Color::Red).bold();
+const ERROR: Style = Style::new().fg(Color::LightRed).bold();
 
 /// Replacements of the tabs, and of the spaces and U+2800 next to a break, that are not part of
 /// the trailing whitespace.
@@ -55,6 +74,10 @@ const INVISIBLE: Style = Style::new().fg(Color::Red).bold();
 /// Displayed in the last column of each half of a diff row followed by a continuation row of the
 /// same line.
 const WRAP_MARKER: &str = "↵";
+
+/// Displayed below the last rows of a chunk, in the half of the version of the file that doesn't
+/// end with a newline, if the other version does.
+const MISSING_NEWLINE: &str = "\\ No newline at end of file";
 
 /// Displayed in place of a chunk whose lines cannot be wrapped.
 const CHUNK_TOO_NARROW: &str = "This chunk cannot be displayed: the terminal is too narrow.";
@@ -177,7 +200,7 @@ impl Row {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         match &self.content {
             Content::Text(line) => {
-                buf.set_line(area.x, area.y, line, area.width);
+                set_line(buf, area.x, area.y, line, area.width);
                 if area.width > 0 {
                     mark_left_to_right(buf, area.x, area.y);
                 }
@@ -189,14 +212,24 @@ impl Row {
             Content::Split { left, right } => {
                 let left_width = area.width / 2;
                 let right_width = area.width - left_width;
-                buf.set_line(area.x, area.y, left, left_width);
-                buf.set_line(area.x + left_width, area.y, right, right_width);
+                set_line(buf, area.x, area.y, left, left_width);
+                set_line(buf, area.x + left_width, area.y, right, right_width);
                 if left_width > 0 {
                     mark_left_to_right(buf, area.x, area.y);
                     mark_left_to_right(buf, area.x + left_width - 1, area.y);
                 }
             }
         }
+    }
+}
+
+/// Render `line` at `x`, `y`, cropped to `width` columns. The columns after its end (up to `width`)
+/// have the background of the style of `line`, if any.
+fn set_line(buf: &mut Buffer, x: u16, y: u16, line: &Line, width: u16) {
+    let (end, _) = buf.set_line(x, y, line, width);
+    if let Some(background) = line.style.bg {
+        let rest = Rect::new(end, y, (x + width).saturating_sub(end), 1);
+        buf.set_style(rest.intersection(buf.area), Style::new().bg(background));
     }
 }
 
@@ -364,28 +397,72 @@ fn header_parts(commit: &Commit) -> Vec<Part> {
     .collect()
 }
 
-/// The line number column of a diff row: `│ $line │ `, or `│     │ ` without `number`.
-fn number_column(number: Option<usize>, width: usize) -> Span<'static> {
-    let number = number.map(|number| number.to_string()).unwrap_or_default();
-    Span::styled(format!("│ {number:>width$} │ "), LINE_NUMBER)
+/// The line number column of a diff row: `│ $line │ `, with `$line` displayed with its style, or
+/// `│     │ ` without `number`.
+fn number_column(number: Option<(usize, Style)>, width: usize) -> Vec<Span<'static>> {
+    match number {
+        Some((number, style)) => vec![
+            Span::styled("│ ", LINE_NUMBER),
+            Span::styled(format!("{number:>width$}"), style),
+            Span::styled(" │ ", LINE_NUMBER),
+        ],
+        None => vec![Span::styled(format!("│ {:width$} │ ", ""), LINE_NUMBER)],
+    }
 }
 
-/// The rows displaying the `index`-th line of `side` in a half of a split row, `width` columns
-/// wide, with the position of their first character. The line number column is `number_width`
-/// wide.
+/// A half of a row displaying only the line number column, without number.
+fn filler(number_width: usize) -> Line<'static> {
+    Line::from(number_column(None, number_width))
+}
+
+/// The background of a line of `kind`, if it is modified.
+fn line_background(kind: LineKind) -> Option<Color> {
+    match kind {
+        LineKind::Unchanged => None,
+        LineKind::Removed => Some(REMOVED_BACKGROUND),
+        LineKind::Added => Some(ADDED_BACKGROUND),
+    }
+}
+
+/// The kind of the line of `chunk` that is the last one of a version of the file not ending with a
+/// newline, while the other version does (see [`Chunk::shows_missing_newline`]), if any.
+fn missing_newline_kind(chunk: &Chunk) -> Option<LineKind> {
+    (0..chunk.lines.len())
+        .find(|&index| chunk.shows_missing_newline(index))
+        .map(|index| chunk.lines[index].kind)
+}
+
+/// The style of the number of a line of `kind`.
+fn line_number_style(kind: LineKind) -> Style {
+    match kind {
+        LineKind::Unchanged => UNCHANGED_LINE_NUMBER,
+        LineKind::Removed => REMOVED_LINE_NUMBER,
+        LineKind::Added => ADDED_LINE_NUMBER,
+    }
+}
+
+/// The rows displaying `line` (whose line number in its version of the file is `line_number`) in a
+/// half of a split row, `width` columns wide, with the position of their first character. The line
+/// number column is `number_width` wide.
+///
+/// If the line is modified, its text area (up to the end of the half) has the background of its
+/// kind.
 ///
 /// A carriage return ending the line is replaced if `final_cr` is [`FinalCr::Shown`], and hidden
 /// otherwise.
 fn half_rows(
-    side: &Side,
-    index: usize,
+    line: &DiffLine,
+    line_number: usize,
     number_width: usize,
     width: usize,
     final_cr: FinalCr,
 ) -> Result<Vec<(usize, Line<'static>)>, TooNarrow> {
-    // `│ `, the number, ` │ `, then the text area, then the column of the marker.
-    let text_width = width.saturating_sub(number_width + 6);
-    let code = Part::content(&side.lines[index], Style::new());
+    let text_width = text_width(width, number_width);
+    let background = match line_background(line.kind) {
+        Some(background) => Style::new().bg(background),
+        None => Style::new(),
+    };
+    let code = Part::content(&line.text, background);
     let rows = wrapped(&[code], final_cr, text_width)?;
     let last = rows.len() - 1;
     Ok(rows
@@ -393,25 +470,77 @@ fn half_rows(
         .enumerate()
         .map(|(i, (start, columns_count, spans))| {
             let number = if i == 0 {
-                Some(side.line_number(index))
+                Some((line_number, line_number_style(line.kind)))
             } else {
                 None
             };
             let marker = if i < last {
                 vec![
                     Span::raw(" ".repeat(text_width.saturating_sub(columns_count))),
-                    Span::styled(WRAP_MARKER, LINE_NUMBER),
+                    Span::styled(WRAP_MARKER, MARKER),
                 ]
             } else {
                 Vec::new()
             };
-            let spans: Vec<_> = iter::once(number_column(number, number_width))
+            let spans: Vec<_> = number_column(number, number_width)
+                .into_iter()
                 .chain(spans)
                 .chain(marker)
+                .collect();
+            (start, Line::from(spans).style(background))
+        })
+        .collect())
+}
+
+/// The rows displaying `MISSING_NEWLINE` in a half of a split row, `width` columns wide, with the
+/// position of their first character. The line number column is `number_width` wide.
+fn missing_newline_rows(
+    number_width: usize,
+    width: usize,
+) -> Result<Vec<(usize, Line<'static>)>, TooNarrow> {
+    let message = Part::markup(MISSING_NEWLINE, ERROR);
+    let rows = wrapped(&[message], FinalCr::Shown, text_width(width, number_width))?;
+    Ok(rows
+        .into_iter()
+        .map(|(start, _, spans)| {
+            let spans: Vec<_> = number_column(None, number_width)
+                .into_iter()
+                .chain(spans)
                 .collect();
             (start, Line::from(spans))
         })
         .collect())
+}
+
+/// Width of the text area of a half of a split row, `width` columns wide, whose line number column
+/// is `number_width` wide.
+fn text_width(width: usize, number_width: usize) -> usize {
+    // `│ `, the number, ` │ `, then the text area, then the column of the marker.
+    width.saturating_sub(number_width + 6)
+}
+
+/// `$file`, with a label if the file is not only modified (like `delta`), and a suffix if it has
+/// no chunks because of its content.
+fn file_parts(file: &FileDiff) -> Vec<Part> {
+    // Invalid UTF-8 is replaced by `�`.
+    let path = Part::content(&file.path.to_str_lossy(), FILE);
+    let name = match &file.change {
+        FileChange::Modified => vec![path],
+        FileChange::Added => vec![Part::markup("added: ", FILE), path],
+        FileChange::Deleted => vec![Part::markup("removed: ", FILE), path],
+        FileChange::Renamed { from } => vec![
+            Part::markup("renamed: ", FILE),
+            Part::content(&from.to_str_lossy(), FILE),
+            Part::markup(" ⟶   ", FILE),
+            path,
+        ],
+    };
+    let suffix = match file.content {
+        FileContentType::Text => None,
+        FileContentType::Binary => Some(Part::markup(" (binary file)", FILE)),
+        FileContentType::InvalidUtf8 => Some(Part::markup(" (invalid utf-8 content)", ERROR)),
+    };
+    name.into_iter().chain(suffix).collect()
 }
 
 /// The rows being built. `line` counts the lines added so far (a wrapped line is added as several
@@ -469,7 +598,9 @@ impl Rows {
     /// A carriage return ending a line is replaced if `final_cr` is [`FinalCr::Shown`], and
     /// hidden otherwise.
     fn chunk(&mut self, chunk: &Chunk, final_cr: FinalCr) -> Result<(), TooNarrow> {
-        let len = chunk.before.lines.len();
+        // Each pair of lines displayed side by side is a line (see `Row::line`), and so is
+        // `MISSING_NEWLINE`.
+        let len = pairing::pairs(chunk).len() + usize::from(missing_newline_kind(chunk).is_some());
         match self.chunk_rows(chunk, final_cr) {
             Ok(rows) => {
                 self.rows.extend(rows);
@@ -484,40 +615,70 @@ impl Rows {
         Ok(())
     }
 
-    /// The rows displaying the lines of `chunk`. If one half of a line has more rows than the
-    /// other, the other one is padded with rows displaying only the line number column.
+    /// The rows displaying the lines of `chunk`, the removed and added lines being paired like
+    /// `delta` does. If one half of a pair has more rows than the other, or has no line, the other
+    /// one is padded with rows displaying only the line number column.
+    ///
+    /// If a version of the file doesn't end with a newline, but the other one does, they are
+    /// followed by `MISSING_NEWLINE`, in the half of this version.
     fn chunk_rows(&self, chunk: &Chunk, final_cr: FinalCr) -> Result<Vec<Row>, TooNarrow> {
         let number_width = chunk.line_number_width();
+        let numbers = chunk.line_numbers();
         let left_width = usize::from(self.width / 2);
         let right_width = usize::from(self.width) - left_width;
-        let lines = (0..chunk.before.lines.len()).map(|index| {
-            let left = half_rows(&chunk.before, index, number_width, left_width, final_cr)?;
-            let right = half_rows(&chunk.after, index, number_width, right_width, final_cr)?;
-            let len = left.len().max(right.len());
-            let padded = |rows: Vec<(usize, Line<'static>)>| {
-                rows.into_iter()
-                    .map(|(start, line)| (Some(start), line))
-                    .chain(iter::repeat_with(|| {
-                        (None, Line::from(number_column(None, number_width)))
-                    }))
-                    .take(len)
-            };
-            let line = self.line + index;
-            Ok(padded(left)
-                .zip(padded(right))
-                .map(|((left_start, left), (right_start, right))| Row {
-                    content: Content::Split { left, right },
-                    line,
-                    start: Start::Split {
-                        left: left_start,
-                        right: right_start,
-                    },
-                })
-                .collect::<Vec<_>>())
-        });
-        lines
-            .collect::<Result<Vec<_>, _>>()
-            .map(|lines| lines.into_iter().flatten().collect())
+        let half = |index: Option<usize>, number: fn(&LineNumbers) -> Option<usize>, width| {
+            index.map_or(Ok(Vec::new()), |index| {
+                half_rows(
+                    &chunk.lines[index],
+                    number(&numbers[index]).expect("the line is in this version"),
+                    number_width,
+                    width,
+                    final_cr,
+                )
+            })
+        };
+        let mut lines = pairing::pairs(chunk)
+            .into_iter()
+            .map(|pair| {
+                let left = half(pair.before, |numbers| numbers.before, left_width)?;
+                let right = half(pair.after, |numbers| numbers.after, right_width)?;
+                Ok((left, right))
+            })
+            .collect::<Result<Vec<_>, TooNarrow>>()?;
+        match missing_newline_kind(chunk) {
+            Some(LineKind::Removed) => {
+                lines.push((missing_newline_rows(number_width, left_width)?, Vec::new()));
+            }
+            Some(LineKind::Added) => {
+                lines.push((Vec::new(), missing_newline_rows(number_width, right_width)?));
+            }
+            Some(LineKind::Unchanged) | None => {}
+        }
+        Ok(lines
+            .into_iter()
+            .enumerate()
+            .flat_map(|(index, (left, right))| {
+                let len = left.len().max(right.len());
+                let padded = |rows: Vec<(usize, Line<'static>)>| {
+                    rows.into_iter()
+                        .map(|(start, line)| (Some(start), line))
+                        .chain(iter::repeat_with(|| (None, filler(number_width))))
+                        .take(len)
+                };
+                let line = self.line + index;
+                padded(left)
+                    .zip(padded(right))
+                    .map(move |((left_start, left), (right_start, right))| Row {
+                        content: Content::Split { left, right },
+                        line,
+                        start: Start::Split {
+                            left: left_start,
+                            right: right_start,
+                        },
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect())
     }
 
     fn file(&mut self, file: &FileDiff) -> Result<(), TooNarrow> {
@@ -527,7 +688,7 @@ impl Rows {
             FinalCr::Hidden
         };
         self.blank();
-        self.text(&[Part::content(&file.path, FILE)])?;
+        self.text(&file_parts(file))?;
         self.rule(FILE);
         file.chunks.iter().enumerate().try_for_each(|(i, chunk)| {
             if i > 0 {
@@ -626,27 +787,30 @@ mod tests {
     use ratatui::backend::TestBackend;
 
     use super::*;
-    use crate::fake;
-
-    /// The most recent fake commit.
-    fn newest() -> Commit {
-        fake::commits().pop().unwrap()
-    }
-
-    /// The fake commit with long lines.
-    fn wrapping() -> Commit {
-        fake::commits().remove(0)
-    }
-
-    /// The fake commit with all kinds of invisible characters.
-    fn invisible() -> Commit {
-        fake::commits().remove(1)
-    }
+    use crate::fake::FakeCommit;
 
     fn commit_rows(commit: &Commit, width: u16) -> Vec<Row> {
         let mut rows = Rows::new(width);
         rows.commit(commit).unwrap();
         rows.rows
+    }
+
+    /// Index of the first row of the fake commit `commit`, on a screen `width` columns wide.
+    fn first_row(commit: &Commit, width: u16) -> usize {
+        FakeCommit::all()
+            .iter()
+            .take_while(|other| other.hash != commit.hash)
+            .map(|other| commit_rows(other, width).len())
+            .sum()
+    }
+
+    /// A viewport whose first row is the first row of the fake `commit`.
+    fn viewport_at(commit: &Commit, width: u16) -> Viewport {
+        let top = first_row(commit, width);
+        Viewport {
+            cursor: top + 5,
+            top,
+        }
     }
 
     /// The rows of `file`, starting with the blank row above the file name.
@@ -717,7 +881,7 @@ mod tests {
 
     /// The screen displaying the fake commits, without the left-to-right marks.
     fn render(width: u16, height: u16, viewport: Viewport) -> TestBackend {
-        let commits = fake::commits();
+        let commits = FakeCommit::all();
         let rows = rows(&commits, width).unwrap();
         let mut viewport = viewport;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -746,7 +910,7 @@ mod tests {
 
     #[test]
     fn scrolled_to_the_end() {
-        let len = rows(&fake::commits(), 110).unwrap().len();
+        let len = rows(&FakeCommit::all(), 110).unwrap().len();
         let viewport = Viewport {
             cursor: len - 1,
             top: 0,
@@ -755,18 +919,34 @@ mod tests {
     }
 
     #[test]
+    fn all_kinds_of_file_changes_are_displayed() {
+        let commit = FakeCommit::FileChanges.commit();
+        let height = commit_rows(&commit, 110).len() + 1;
+        let viewport = viewport_at(&commit, 110);
+        insta::assert_snapshot!(render(110, height as u16, viewport));
+    }
+
+    #[test]
     fn long_lines_are_wrapped() {
-        insta::assert_snapshot!(render(110, 60, Viewport::default()));
+        insta::assert_snapshot!(render(
+            110,
+            60,
+            viewport_at(&FakeCommit::LineWrapping.commit(), 110)
+        ));
     }
 
     #[test]
     fn long_lines_are_wrapped_on_a_narrow_screen() {
-        insta::assert_snapshot!(render(70, 80, Viewport::default()));
+        insta::assert_snapshot!(render(
+            70,
+            80,
+            viewport_at(&FakeCommit::LineWrapping.commit(), 70)
+        ));
     }
 
     #[test]
     fn invisible_characters_after_the_first_screen() {
-        let start = commit_rows(&wrapping(), 110).len();
+        let start = first_row(&FakeCommit::InvisibleCharacters.commit(), 110);
         let viewport = Viewport {
             cursor: start + 30,
             top: start + 20,
@@ -776,7 +956,7 @@ mod tests {
 
     #[test]
     fn rows_of_all_commits_are_displayed_one_after_the_other() {
-        let commits = fake::commits();
+        let commits = FakeCommit::all();
         let all_rows: Vec<_> = rows(&commits, 110)
             .unwrap()
             .into_iter()
@@ -792,7 +972,7 @@ mod tests {
 
     #[test]
     fn lines_are_numbered_consecutively() {
-        let rows = rows(&fake::commits(), 110).unwrap();
+        let rows = rows(&FakeCommit::all(), 110).unwrap();
         assert_eq!(rows[0].line, 0);
         assert!(
             rows.windows(2)
@@ -824,7 +1004,7 @@ mod tests {
 
     #[test]
     fn header_is_colored_like_git() {
-        let commit = newest();
+        let commit = FakeCommit::newest();
         let header = header(&commit);
         assert_eq!(
             text(&header),
@@ -843,7 +1023,7 @@ mod tests {
 
     #[test]
     fn decorations_are_omitted_when_empty() {
-        let mut commit = newest();
+        let mut commit = FakeCommit::newest();
         commit.decorations.clear();
         assert!(text(&header(&commit)).ends_with("12/10/2026"));
     }
@@ -863,7 +1043,7 @@ mod tests {
 
     #[test]
     fn body_is_omitted_when_empty() {
-        let mut commit = newest();
+        let mut commit = FakeCommit::newest();
         commit.body.clear();
         let rows = commit_rows(&commit, 110);
         assert_eq!(rows[1].content, Content::Text(Line::default()));
@@ -925,27 +1105,33 @@ mod tests {
 
     #[test]
     fn line_numbers_are_aligned_per_chunk() {
-        let commit = newest();
+        let commit = FakeCommit::newest();
         let rows = Rows::new(110)
             .chunk_rows(&commit.files[0].chunks[1], FinalCr::Hidden)
             .unwrap();
         let Content::Split { left, right } = &rows[0].content else {
             panic!("chunk rows are split");
         };
-        assert_eq!(text(left), "│  97 │ impl Default for Config {");
-        assert_eq!(text(right), "│  97 │ impl Default for Config {");
+        assert_eq!(text(left), "│  98 │     fn default() -> Self {");
+        assert_eq!(text(right), "│  98 │     fn default() -> Self {");
         assert_eq!(left.spans[0].style, LINE_NUMBER);
     }
 
-    /// A chunk of a single line, whose left half is wider than its right half.
+    /// A chunk replacing the line `before` by the line `after`, displayed side by side if they are
+    /// similar enough.
     fn chunk(before: &str, after: &str) -> Chunk {
-        let side = |line: &str| Side {
-            first_line: 1,
-            lines: vec![line.to_string()],
+        let line = |kind, text: &str| DiffLine {
+            kind,
+            text: text.to_string(),
+            missing_newline: false,
         };
         Chunk {
-            before: side(before),
-            after: side(after),
+            before_first_line: 1,
+            after_first_line: 1,
+            lines: vec![
+                line(LineKind::Removed, before),
+                line(LineKind::Added, after),
+            ],
         }
     }
 
@@ -954,13 +1140,13 @@ mod tests {
         // Each half is 12 columns wide: 6 for the line number column, 5 for the text, and 1 for
         // the marker.
         let rows = Rows::new(24)
-            .chunk_rows(&chunk("aaaa bbbb cccc", "dd"), FinalCr::Hidden)
+            .chunk_rows(&chunk("aaaa bbbb cccc", "aaaa"), FinalCr::Hidden)
             .unwrap();
         let texts: Vec<_> = rows.iter().map(text_of_row).collect();
         assert_eq!(
             texts,
             [
-                ("│ 1 │ aaaa ↵".to_string(), "│ 1 │ dd".to_string()),
+                ("│ 1 │ aaaa ↵".to_string(), "│ 1 │ aaaa".to_string()),
                 ("│   │ bbbb ↵".to_string(), "│   │ ".to_string()),
                 ("│   │ cccc".to_string(), "│   │ ".to_string()),
             ]
@@ -968,7 +1154,7 @@ mod tests {
         let Content::Split { left, .. } = &rows[0].content else {
             panic!("chunk rows are split");
         };
-        assert_eq!(style_in(left, WRAP_MARKER), LINE_NUMBER);
+        assert_eq!(style_in(left, WRAP_MARKER), MARKER);
         let area = Rect::new(0, 0, 24, 1);
         let mut buf = Buffer::empty(area);
         rows[0].render(area, &mut buf);
@@ -980,7 +1166,7 @@ mod tests {
     #[test]
     fn marker_is_in_the_last_column_of_the_right_half() {
         let rows = Rows::new(24)
-            .chunk_rows(&chunk("a", "aaaa bbbb"), FinalCr::Hidden)
+            .chunk_rows(&chunk("aaaa", "aaaa bbbb"), FinalCr::Hidden)
             .unwrap();
         let area = Rect::new(0, 0, 24, 1);
         let mut buf = Buffer::empty(area);
@@ -989,9 +1175,268 @@ mod tests {
     }
 
     #[test]
+    fn unpaired_lines_have_a_filler_on_the_other_side() {
+        let rows = Rows::new(24)
+            .chunk_rows(&chunk("aaaa", "bbbb"), FinalCr::Hidden)
+            .unwrap();
+        let texts: Vec<_> = rows.iter().map(text_of_row).collect();
+        assert_eq!(
+            texts,
+            [
+                ("│ 1 │ aaaa".to_string(), "│   │ ".to_string()),
+                ("│   │ ".to_string(), "│ 1 │ bbbb".to_string()),
+            ]
+        );
+        let starts: Vec<_> = rows.iter().map(|row| (row.line, row.start)).collect();
+        assert_eq!(
+            starts,
+            [
+                (
+                    0,
+                    Start::Split {
+                        left: Some(0),
+                        right: None
+                    }
+                ),
+                (
+                    1,
+                    Start::Split {
+                        left: None,
+                        right: Some(0)
+                    }
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn line_numbers_are_colored_like_delta() {
+        let mut chunk = chunk("aaaa bbbb", "aaaa");
+        chunk.lines.insert(
+            0,
+            DiffLine {
+                kind: LineKind::Unchanged,
+                text: "z".to_string(),
+                missing_newline: false,
+            },
+        );
+        let rows = Rows::new(40).chunk_rows(&chunk, FinalCr::Hidden).unwrap();
+        let halves = |row: &Row| match &row.content {
+            Content::Split { left, right } => (left.clone(), right.clone()),
+            _ => panic!("chunk rows are split"),
+        };
+        let (left, right) = halves(&rows[0]);
+        assert_eq!(style_in(&left, "1"), UNCHANGED_LINE_NUMBER);
+        assert_eq!(style_in(&right, "1"), UNCHANGED_LINE_NUMBER);
+        let (left, right) = halves(&rows[1]);
+        assert_eq!(style_in(&left, "2"), REMOVED_LINE_NUMBER);
+        assert_eq!(style_in(&right, "2"), ADDED_LINE_NUMBER);
+        // The borders keep their color.
+        assert_eq!(style_in(&left, "│ "), LINE_NUMBER);
+        assert_eq!(style_in(&left, " │ "), LINE_NUMBER);
+    }
+
+    /// The background colors of the cells of `row`, rendered `width` columns wide.
+    fn backgrounds(row: &Row, width: u16) -> Vec<Color> {
+        let area = Rect::new(0, 0, width, 1);
+        let mut buf = Buffer::empty(area);
+        row.render(area, &mut buf);
+        buf.content.iter().map(|cell| cell.bg).collect()
+    }
+
+    #[test]
+    fn modified_lines_have_a_red_or_green_background_up_to_the_end_of_their_half() {
+        // Each half is 20 columns wide: 6 for the line number column, 13 for the text, and 1 for
+        // the marker.
+        let rows = Rows::new(40)
+            .chunk_rows(&chunk("aaaa bbbb cccc dddd", "aaaa bbbb"), FinalCr::Hidden)
+            .unwrap();
+        let first = backgrounds(&rows[0], 40);
+        assert!(first[..6].iter().all(|bg| *bg == Color::Reset));
+        assert!(first[6..20].iter().all(|bg| *bg == REMOVED_BACKGROUND));
+        assert!(first[20..26].iter().all(|bg| *bg == Color::Reset));
+        assert!(first[26..].iter().all(|bg| *bg == ADDED_BACKGROUND));
+        // The continuation row of the removed line, and the padding of the added line.
+        let second = backgrounds(&rows[1], 40);
+        assert!(second[..6].iter().all(|bg| *bg == Color::Reset));
+        assert!(second[6..20].iter().all(|bg| *bg == REMOVED_BACKGROUND));
+        assert!(second[20..].iter().all(|bg| *bg == Color::Reset));
+    }
+
+    #[test]
+    fn replacements_of_modified_lines_keep_their_background() {
+        let rows = Rows::new(40)
+            .chunk_rows(&chunk("a b", "a\u{a0}b"), FinalCr::Hidden)
+            .unwrap();
+        let Content::Split { right, .. } = &rows[0].content else {
+            panic!("chunk rows are split");
+        };
+        assert_eq!(style_in(right, "⍽").bg, Some(ADDED_BACKGROUND));
+        assert_eq!(style_in(right, "⍽").fg, INVISIBLE.fg);
+    }
+
+    #[test]
+    fn unchanged_lines_and_fillers_have_no_background() {
+        let mut chunk = chunk("aaaa", "bbbb");
+        chunk.lines.insert(
+            0,
+            DiffLine {
+                kind: LineKind::Unchanged,
+                text: "z".to_string(),
+                missing_newline: false,
+            },
+        );
+        let rows = Rows::new(40).chunk_rows(&chunk, FinalCr::Hidden).unwrap();
+        assert!(
+            backgrounds(&rows[0], 40)
+                .iter()
+                .all(|bg| *bg == Color::Reset)
+        );
+        // The removed line is unpaired, so the right half is a filler.
+        assert!(
+            backgrounds(&rows[1], 40)[20..]
+                .iter()
+                .all(|bg| *bg == Color::Reset)
+        );
+    }
+
+    #[test]
+    fn missing_newline_is_displayed_below_the_last_rows_of_both_halves() {
+        // Each half is 40 columns wide: the right line is wrapped, not the left one.
+        let mut chunk = chunk("aaaa bbbb cccc", "aaaa bbbb cccc dddd eeee ffff gggg hhhh");
+        chunk.lines[0].missing_newline = true;
+        let rows = Rows::new(80).chunk_rows(&chunk, FinalCr::Hidden).unwrap();
+        let texts: Vec<_> = rows.iter().map(text_of_row).collect();
+        assert_eq!(
+            texts,
+            [
+                (
+                    "│ 1 │ aaaa bbbb cccc".to_string(),
+                    "│ 1 │ aaaa bbbb cccc dddd eeee ffff    ↵".to_string()
+                ),
+                ("│   │ ".to_string(), "│   │ gggg hhhh".to_string()),
+                (
+                    "│   │ \\ No newline at end of file".to_string(),
+                    "│   │ ".to_string()
+                ),
+            ]
+        );
+        let Content::Split { left, .. } = &rows[2].content else {
+            panic!("chunk rows are split");
+        };
+        assert_eq!(style_in(left, MISSING_NEWLINE), ERROR);
+        // It is a line of its own.
+        assert_eq!(rows[2].line, rows[1].line + 1);
+        assert_eq!(
+            rows[2].start,
+            Start::Split {
+                left: Some(0),
+                right: None
+            }
+        );
+    }
+
+    #[test]
+    fn missing_newline_is_displayed_below_the_lines_added_after_it() {
+        let mut chunk = chunk("aaaa", "aaaa");
+        chunk.lines[0].missing_newline = true;
+        chunk.lines.push(DiffLine {
+            kind: LineKind::Added,
+            text: "bbbb".to_string(),
+            missing_newline: false,
+        });
+        let rows = Rows::new(80).chunk_rows(&chunk, FinalCr::Hidden).unwrap();
+        let texts: Vec<_> = rows.iter().map(text_of_row).collect();
+        assert_eq!(
+            texts,
+            [
+                ("│ 1 │ aaaa".to_string(), "│ 1 │ aaaa".to_string()),
+                ("│   │ ".to_string(), "│ 2 │ bbbb".to_string()),
+                (
+                    "│   │ \\ No newline at end of file".to_string(),
+                    "│   │ ".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_newline_is_counted_as_a_line_when_the_chunk_is_too_narrow() {
+        let mut chunk = chunk("aaaa", "aaaa");
+        chunk.lines[0].missing_newline = true;
+        let mut rows = Rows::new(12);
+        rows.chunk(&chunk, FinalCr::Hidden).unwrap();
+        // The pair of lines, and the line displaying `MISSING_NEWLINE`.
+        assert_eq!(rows.line, 2);
+    }
+
+    #[test]
+    fn error_color_is_bold_bright_red() {
+        assert_eq!(ERROR, Style::new().fg(Color::LightRed).bold());
+    }
+
+    #[test]
+    fn invalid_utf8_suffix_has_the_error_color() {
+        let file = FileDiff {
+            path: "a".into(),
+            change: FileChange::Modified,
+            content: FileContentType::InvalidUtf8,
+            chunks: Vec::new(),
+        };
+        let Content::Text(name) = &file_rows(&file, 110)[1].content else {
+            panic!("the file name is not split");
+        };
+        assert_eq!(style_in(name, "a"), FILE);
+        assert_eq!(style_in(name, " (invalid utf-8 content)"), ERROR);
+    }
+
+    #[test]
+    fn file_name_has_a_label_and_a_suffix_like_delta() {
+        let name = |change, content| {
+            let file = FileDiff {
+                path: "b".into(),
+                change,
+                content,
+                chunks: Vec::new(),
+            };
+            text_of_row(&file_rows(&file, 110)[1]).0
+        };
+        let renamed = FileChange::Renamed { from: "a".into() };
+        assert_eq!(name(FileChange::Modified, FileContentType::Text), "b");
+        assert_eq!(name(FileChange::Added, FileContentType::Text), "added: b");
+        assert_eq!(
+            name(FileChange::Deleted, FileContentType::Text),
+            "removed: b"
+        );
+        assert_eq!(name(renamed, FileContentType::Text), "renamed: a ⟶   b");
+        assert_eq!(
+            name(FileChange::Modified, FileContentType::Binary),
+            "b (binary file)"
+        );
+        assert_eq!(
+            name(FileChange::Added, FileContentType::InvalidUtf8),
+            "added: b (invalid utf-8 content)"
+        );
+    }
+
+    #[test]
+    fn invalid_utf8_of_the_file_names_is_replaced() {
+        let file = FileDiff {
+            path: b"caf\xe9.txt".into(),
+            change: FileChange::Renamed {
+                from: b"\xff.txt".into(),
+            },
+            content: FileContentType::Text,
+            chunks: Vec::new(),
+        };
+        let name = text_of_row(&file_rows(&file, 110)[1]).0;
+        assert_eq!(name, "renamed: \u{fffd}.txt ⟶   caf\u{fffd}.txt");
+    }
+
+    #[test]
     fn rows_of_a_diff_line_start_at_their_first_character() {
         let rows = Rows::new(24)
-            .chunk_rows(&chunk("aaaa bbbb cccc", "dd"), FinalCr::Hidden)
+            .chunk_rows(&chunk("aaaa bbbb cccc", "aaaa"), FinalCr::Hidden)
             .unwrap();
         let starts: Vec<_> = rows.iter().map(|row| row.start).collect();
         assert_eq!(
@@ -1016,7 +1461,7 @@ mod tests {
 
     #[test]
     fn header_body_and_file_names_are_wrapped_without_marker() {
-        let rows = commit_rows(&wrapping(), 110);
+        let rows = commit_rows(&FakeCommit::LineWrapping.commit(), 110);
         let (header, continuation) = (text_of_row(&rows[0]).0, text_of_row(&rows[1]).0);
         assert_eq!(
             header,
@@ -1027,8 +1472,8 @@ mod tests {
         assert_eq!((rows[0].line, rows[1].line), (0, 0));
         // The first line of the body.
         assert_eq!(rows[3].line, rows[4].line);
-        let mut commit = newest();
-        commit.files[0].path = "src/a/very/long/path/to/the/config.rs".to_string();
+        let mut commit = FakeCommit::newest();
+        commit.files[0].path = "src/a/very/long/path/to/the/config.rs".into();
         let rows = commit_rows(&commit, 20);
         let names: Vec<_> = rows
             .iter()
@@ -1044,7 +1489,7 @@ mod tests {
 
     #[test]
     fn header_is_broken_inside_a_field_keeping_its_style() {
-        let rows = commit_rows(&newest(), 93);
+        let rows = commit_rows(&FakeCommit::newest(), 93);
         let (first, second) = (&rows[0].content, &rows[1].content);
         let (Content::Text(first), Content::Text(second)) = (first, second) else {
             panic!("the header is not split");
@@ -1058,7 +1503,7 @@ mod tests {
 
     #[test]
     fn tab_stops_of_the_header_are_counted_from_the_start_of_the_row() {
-        let mut commit = invisible();
+        let mut commit = FakeCommit::InvisibleCharacters.commit();
         commit.subject = "xy".to_string();
         commit.author = "a\tb".to_string();
         // The tab is at column 12.
@@ -1067,7 +1512,7 @@ mod tests {
 
     #[test]
     fn chunk_too_narrow_is_replaced_by_an_error_message() {
-        let commit = newest();
+        let commit = FakeCommit::newest();
         // The text area of each half has no column.
         let rows = commit_rows(&commit, 12);
         assert!(
@@ -1089,7 +1534,7 @@ mod tests {
 
     #[test]
     fn chunk_too_narrow_for_the_error_message_is_an_error() {
-        let commit = newest();
+        let commit = FakeCommit::newest();
         let error = Rows::new(0)
             .chunk(&commit.files[0].chunks[0], FinalCr::Hidden)
             .unwrap_err();
@@ -1098,7 +1543,7 @@ mod tests {
 
     #[test]
     fn text_area_too_narrow_outside_of_a_chunk_is_an_error() {
-        let mut commit = newest();
+        let mut commit = FakeCommit::newest();
         commit.author = "日本".to_string();
         let error = rows(&[commit], 1).unwrap_err();
         assert_eq!(
@@ -1108,13 +1553,13 @@ mod tests {
                 cluster: "日".to_string()
             }
         );
-        assert!(rows(&fake::commits(), 0).is_err());
+        assert!(rows(&FakeCommit::all(), 0).is_err());
     }
 
     #[test]
     fn anchor_is_on_the_right_half_if_it_displays_text() {
         let rows = Rows::new(24)
-            .chunk_rows(&chunk("aaaa bbbb", "cccc dddd"), FinalCr::Hidden)
+            .chunk_rows(&chunk("aaaa bbbb", "aaaa dddd"), FinalCr::Hidden)
             .unwrap();
         assert_eq!(
             rows[1].anchor(),
@@ -1125,7 +1570,7 @@ mod tests {
             }
         );
         let rows = Rows::new(24)
-            .chunk_rows(&chunk("aaaa bbbb", "dd"), FinalCr::Hidden)
+            .chunk_rows(&chunk("aaaa bbbb", "aaaa"), FinalCr::Hidden)
             .unwrap();
         assert_eq!(
             rows[1].anchor(),
@@ -1139,7 +1584,7 @@ mod tests {
 
     #[test]
     fn find_returns_the_row_displaying_the_first_character_of_a_row() {
-        let commits = fake::commits();
+        let commits = FakeCommit::all();
         let wide = rows(&commits, 110).unwrap();
         let narrow = rows(&commits, 60).unwrap();
         narrow.iter().for_each(|row| {
@@ -1165,7 +1610,7 @@ mod tests {
 
     #[test]
     fn find_returns_the_next_line_when_the_line_is_not_displayed() {
-        let commit = newest();
+        let commit = FakeCommit::newest();
         let wide = commit_rows(&commit, 110);
         let narrow = commit_rows(&commit, 12);
         let code = wide
@@ -1178,9 +1623,9 @@ mod tests {
 
     #[test]
     fn rules_and_file_name_are_colored() {
-        let commit = newest();
+        let commit = FakeCommit::newest();
         let rows = commit_rows(&commit, 110);
-        let area = Rect::new(0, 0, 110, 22);
+        let area = Rect::new(0, 0, 110, 26);
         let mut buffer = Buffer::empty(area);
         RowsView {
             rows: &rows,
@@ -1194,8 +1639,8 @@ mod tests {
         assert_eq!(buffer[(109, 6)].symbol(), "─");
         assert_eq!(buffer[(109, 6)].fg, Color::Blue);
         // Separator below the commit.
-        assert_eq!(buffer[(109, 21)].symbol(), "─");
-        assert_eq!(buffer[(109, 21)].fg, Color::Red);
+        assert_eq!(buffer[(109, 25)].symbol(), "─");
+        assert_eq!(buffer[(109, 25)].fg, Color::Red);
     }
 
     #[test]
@@ -1209,7 +1654,7 @@ mod tests {
 
     #[test]
     fn invisible_characters_of_the_header_are_replaced_per_field() {
-        let mut commit = invisible();
+        let mut commit = FakeCommit::InvisibleCharacters.commit();
         commit.decorations = vec![Decoration::LocalBranch("fix\u{200b} ".to_string())];
         let header = header(&commit);
         assert_eq!(
@@ -1226,7 +1671,7 @@ mod tests {
 
     #[test]
     fn replacements_are_bold_red_and_tabs_dim_gray() {
-        let commit = invisible();
+        let commit = FakeCommit::InvisibleCharacters.commit();
         let rows = commit_rows(&commit, 110);
         let Content::Text(body) = &rows[2].content else {
             panic!("the body is not split");
@@ -1244,12 +1689,15 @@ mod tests {
         };
         // A trailing tab is trailing whitespace.
         assert_eq!(text(right), "│ 2 │ all: build⇥ ");
-        assert_eq!(style_in(right, "⇥ "), TRAILING_WHITESPACE);
+        assert_eq!(
+            style_in(right, "⇥ "),
+            TRAILING_WHITESPACE.bg(ADDED_BACKGROUND)
+        );
     }
 
     #[test]
     fn tab_stops_are_counted_from_the_beginning_of_the_code() {
-        let commit = invisible();
+        let commit = FakeCommit::InvisibleCharacters.commit();
         let makefile = file_rows(&commit.files[2], 110);
         // `CFLAGS` is 6 columns wide, the next tab stop is at column 8.
         assert_eq!(text_of_row(&makefile[3]).1, "│ 1 │ CFLAGS⇥ = -O2");
@@ -1257,7 +1705,7 @@ mod tests {
 
     #[test]
     fn carriage_returns_are_hidden_when_line_endings_are_consistent() {
-        let commit = invisible();
+        let commit = FakeCommit::InvisibleCharacters.commit();
         let emoji = file_rows(&commit.files[1], 110);
         let (left, right) = row_starting_with(&emoji, "│ 7 │");
         assert_eq!(left, "│ 7 │ const JOINED: &str = \"ab\";");
@@ -1266,7 +1714,7 @@ mod tests {
 
     #[test]
     fn carriage_returns_are_shown_when_line_endings_are_inconsistent() {
-        let commit = invisible();
+        let commit = FakeCommit::InvisibleCharacters.commit();
         let script = file_rows(&commit.files[3], 110);
         let (left, right) = row_starting_with(&script, "│ 3 │");
         assert_eq!(left, "│ 3 │ exit /b 0␍");
@@ -1275,7 +1723,7 @@ mod tests {
 
     #[test]
     fn carriage_returns_of_the_body_are_shown() {
-        let commit = invisible();
+        let commit = FakeCommit::InvisibleCharacters.commit();
         let rows = commit_rows(&commit, 110);
         assert_eq!(
             text_of_row(&rows[3]).0,
@@ -1285,8 +1733,8 @@ mod tests {
 
     #[test]
     fn invisible_characters_of_the_file_name_are_replaced() {
-        let mut commit = invisible();
-        commit.files[0].path = "a\u{a0}b".to_string();
+        let mut commit = FakeCommit::InvisibleCharacters.commit();
+        commit.files[0].path = "a\u{a0}b".into();
         let rows = commit_rows(&commit, 110);
         assert_eq!(text_of_row(&rows[5]).0, "a⍽b");
     }
