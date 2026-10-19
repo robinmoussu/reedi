@@ -13,7 +13,7 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal;
 use ratatui::crossterm::terminal::EnterAlternateScreen;
 
-use crate::fake;
+use crate::fake::FakeCommit;
 use crate::model::Commit;
 use crate::view;
 use crate::view::Mode;
@@ -36,7 +36,7 @@ enum Action {
 /// Fails if a text area outside of the chunks is too narrow to display a grapheme cluster of its
 /// line.
 pub fn run() -> io::Result<()> {
-    let commits = fake::commits();
+    let commits = FakeCommit::all();
     let mut rows = Vec::new();
     let mut width = None;
     let mut viewport = Viewport::default();
@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn cursor_moves_row_by_row() {
-        let commits = fake::commits();
+        let commits = FakeCommit::all();
         let rows = view::rows(&commits, 110).unwrap();
         let mut viewport = Viewport::default();
         viewport.down(rows.len());
@@ -196,14 +196,14 @@ mod tests {
     #[test]
     fn first_rows_keep_the_cursor_on_the_first_row() {
         let mut viewport = Viewport::default();
-        let rows = rewrap(&fake::commits(), &[], &mut viewport, 110).unwrap();
+        let rows = rewrap(&FakeCommit::all(), &[], &mut viewport, 110).unwrap();
         assert!(!rows.is_empty());
         assert_eq!(viewport, Viewport::default());
     }
 
     #[test]
     fn rewrapping_keeps_the_cursor_on_the_first_character_of_its_row() {
-        let commits = fake::commits();
+        let commits = FakeCommit::all();
         let narrow = view::rows(&commits, 60).unwrap();
         // The second row of the first line of the body (the header is the line 0, then a blank
         // line).
@@ -228,6 +228,6 @@ mod tests {
     // CHUNK_TOO_NARROW message
     fn rewrapping_to_a_too_narrow_screen_is_an_error() {
         let mut viewport = Viewport::default();
-        assert!(rewrap(&fake::commits(), &[], &mut viewport, 0).is_err());
+        assert!(rewrap(&FakeCommit::all(), &[], &mut viewport, 0).is_err());
     }
 }

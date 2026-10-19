@@ -389,6 +389,7 @@ Settings
     - dimmed whitespace: dim gray
     - trailing whitespace: bold red
     - all other invisible characters: bold red
+- error color: bold bright red
 - current mode accent color:
     - Review: blue
     - Edit: light green
@@ -397,6 +398,7 @@ Settings
     - Command: mango
     - Selection: purple
     - Move: dark red
+- number of context lines: 3 by default
 
 Colorscheme
 -----------

@@ -79,7 +79,7 @@ version 0.0.2: invisible characters
    - [x] a left-to-right mark is put after the first character of each row and after the last
      character of each column
 
-version 0.0.3: line wrapping
+version 0.0.x: line wrapping
 --------------------------
 
 - [x] fake data update, in a new oldest commit, whose lines are wrapped in the 110 columns wide
@@ -129,25 +129,58 @@ version 0.0.3: line wrapping
   row displaying the character that was the first of its row (the one of the right half of a diff
   if it displayed text on that row, otherwise the one of the left half)
 
-version 0.0.x: diff and syntax support
-------------------------------------
+version 0.0.4: diff-aware internal architecture
+---------------------------------------------
 
-- [ ] fake data update:
-   - [ ] an addition-only and a deletion-only block of lines (unpaired lines)
-   - [ ] a second file in another language (shell)
-   - [ ] an added, a deleted, a renamed and a binary file, and a file without newline at its end
-- [ ] real diff support
-   - [ ] removed and added lines are paired like `delta`
-   - [ ] unpaired lines have a blank filler on the other side, with `│` borders and an empty line
+- [x] fake data update (new oldest commit):
+   - [x] full fake files are now used. The diff is computed automatically. Commits stay independent.
+     Fake commit information contains the summary, body, author, email, date
+   - [x] an addition-only and a deletion-only block of lines (unpaired lines)
+   - [x] another file in another language (shell)
+   - [x] an added, a deleted and a renamed file, and a file without newline at its end
+   - [x] renames are declared explicitly in the fake data (old path → new path), not detected
+   - [x] two very short files: a binary file (containing a NUL byte), and a file that is not valid
+     UTF-8
+   - [x] the fake data already knows which files are binary (in the future it will come from git
+     and `.gitattributes`)
+   - [x] a file with a missing newline in the before state and not after
+- [x] real diff support
+   - [x] the diff is computed with `gix` (its blob diff, `imara-diff`), which will also be used for
+     the word-level diff and to access git
+   - [x] removed and added lines are paired like `delta`
+   - [x] line numbers colors: red/green for modified lines, grey for unmodified lines (like `delta`)
+   - [x] line content colors: red/green background for modified lines (unlike `delta` where sometime
+         the background is not present)
+   - [x] unpaired lines have a blank filler on the other side, with `│` borders and an empty line
          number column, like `delta`
+   - [x] added, deleted, binary file changed and renamed files use the same kind of display than
+         `delta`
+   - [x] binary files only display their file name, as `$file (binary file)` (like `delta`), with no
+         chunks
+   - [x] whether a file is valid UTF-8 is checked by `reedi`. Files that are not only display their
+         file name, as `$file (invalid utf-8 content)` (with the error color), with no chunks
+   - [x] if only one side is missing the newline at the end of the file, the last lines are paired,
+         and the half missing it has an extra row below the last line of both side, displaying `\ No
+         newline at end of file` in the error color, with an empty line number column
+   - [x] added/deleted files still use the 50/50 split, with an empty side (like unpaired lines)
+
+version 0.0.x: theming
+--------------------
+
+- [ ] read theme preference (light/dark/none) from config file (using XDG conventions)
+- [ ] if preference is unset, detect terminal color theme (with `terminal-colorsaurus`, like
+      `delta`, dark if it cannot be detected) to choose between the light and dark theme
+- [ ] architecture is ready to use different colorscheme
+- [ ] snapshoot testing use the `none` theme, that only use black and white
+- [ ] dedicated unit tests testing for color validate both light and dark themes
+
+version 0.0.x: word-diff and syntax support
+-----------------------------------------
+
+- [ ] full diff support:
+   - [ ] modified lines have their background: solid red/green (always active unlike `delta`)
    - [ ] word-level diff, like `delta`
-   - [ ] colors like `delta` (red/green), no `+`/`-` markers
-   - [ ] 3 lines of context
-   - [ ] added, deleted, renamed and binary files, and files without newline at their end, are
-         displayed exactly like `delta`
-- [ ] syntax support (without the saved parsing states, which are only needed for editing)
-- [ ] detect terminal color theme (with `terminal-colorsaurus`, like `delta`, dark if it cannot be
-      detected) to choose between the light and dark theme
+- [ ] syntax support
 
 version 0.0.x: minimal interactivity (second part)
 ------------------------------------------------

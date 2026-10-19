@@ -3,6 +3,8 @@ source: src/view.rs
 expression: "render(110, 26, viewport)"
 ---
 "──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+"│ 1 │ //! Emoji made of several characters.            │ 1 │ //! Emoji made of several characters.            "
+"│ 2 │                                                  │ 2 │                                                  "
 "│ 3 │ const FAMILY: &str = "👪";                       │ 3 │ const FAMILY: &str = "👨‍👩‍👧";                       " Hidden by multi-width symbols: [(29, " "), (84, " ")]
 "│ 4 │ const HEART: &str = "❤";                         │ 4 │ const HEART: &str = "❤️";                        " Hidden by multi-width symbols: [(83, " ")]
 "│ 5 │ const FLAG: &str = "🏴";                         │ 5 │ const FLAG: &str = "🏴󠁧󠁢󠁳󠁣󠁴󠁿";                         " Hidden by multi-width symbols: [(27, " "), (82, " ")]
@@ -25,6 +27,4 @@ expression: "render(110, 26, viewport)"
 "│ 3 │ exit /b 0␍                                       │ 3 │ exit /b 0                                        "
 "                                                                                                              "
 "tests/fixtures/rtl.txt                                                                                        "
-"──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
-"│ 1 │ سلام دنیا                                        │ 1 │ سلام دنیای زیبا                                  "
 " Review                                                                                                       "

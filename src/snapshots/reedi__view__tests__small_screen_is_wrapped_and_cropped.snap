@@ -2,11 +2,11 @@
 source: src/view.rs
 expression: "render(50, 8, Viewport::default())"
 ---
-"b0d4e2a view: wrap the lines too wide for the     "
-"screen instead of cropping them at its edge Chloé "
-"Bernard 01/10/2026 (tag: v0.2, origin/line-       "
-"wrapping)                                         "
+"5e2b9d4 release: install with a shell script      "
+"instead of the Makefile, and check the downloaded "
+"archive Noah Petit 28/09/2026                     "
 "                                                  "
-"Long lines used to be cropped at the edge of the  "
-"screen, hiding their end, which is often where the"
+"The Makefile only worked with GNU make, a POSIX   "
+"shell script works everywhere.                    "
+"The archive is now checked before being installed."
 " Review                                           "

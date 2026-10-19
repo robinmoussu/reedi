@@ -1,9 +1,11 @@
 //! `reedi` is a review editor: a TUI to review (and edit) unpushed commits.
 
 mod app;
+pub mod diff;
 pub mod fake;
 pub mod invisible;
 pub mod model;
+pub mod pairing;
 pub mod view;
 pub mod viewport;
 pub mod wrap;
