@@ -105,7 +105,10 @@ Syntax highlighting
   file name is longer than 4 bytes, the whole file name then the extension are looked up as an
   extension. The content of the file is never inspected. If nothing matches, the file is plain text
   (no highlighting).
-- Themes are the defaults of `delta`: `Monokai Extended` (dark) and `GitHub` (light).
+- Themes are the same as `delta`’s default:
+    - dark: `Monokai Extended` (dark)
+    - light: `GitHub` (light)
+    - none: black and white only
 
 Interactivity
 -------------
@@ -350,7 +353,13 @@ displaying the part of a line that did not fit on the previous row.
 Settings
 --------
 
-- All settings can be configured in `~/.config/reedi/config.toml`.
+- All settings can be configured in `$XDG_CONFIG_HOME/reedi/config.toml` (if unset:
+  `~/.config/reedi/config.toml`)
+- A missing file, or a file without the preference key, means the preference is unset
+- An unreadable file, an invalid TOML file, or an invalid value makes `reedi` exit with a
+ clear error message
+- A warning is displayed if an unknown key is used (displaying both the faulty key and its value)
+
 - There is a named action for each of them for each shortcut, and they can be all remapped (and
   unmapped).
 - Incremental search can be toggled off
@@ -360,7 +369,7 @@ Settings
 - search pattern setting can be set to perl regex (default) or literal
 - embedded editor style can be set to vim (default) / emacs / standard / helix
 - tab width is 4 spaces by default
-- theme has light and dark variant (terminal theme by default, dark otherwise)
+- theme has light, dark, and none variant (terminal theme by default, dark otherwise)
 - each invisible character replacements can be configured. Default:
     - tab: `⇥`, followed by spaces up to the next tab stop
     - space, when trailing or before a wrapping break: `∙`

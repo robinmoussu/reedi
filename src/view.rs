@@ -1,6 +1,7 @@
 //! Rendering of the commits and of the status bar.
 
 use std::iter;
+use std::path::PathBuf;
 
 use gix::bstr::ByteSlice;
 use ratatui::Frame;
@@ -8,13 +9,17 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
+use ratatui::widgets::Block;
+use ratatui::widgets::BorderType;
+use ratatui::widgets::Clear;
+use ratatui::widgets::Padding;
 use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthStr;
 
+use crate::config::UnknownKey;
 use crate::invisible::FinalCr;
 use crate::invisible::Kind;
 use crate::model::Chunk;
@@ -27,6 +32,7 @@ use crate::model::FileDiff;
 use crate::model::LineKind;
 use crate::model::LineNumbers;
 use crate::pairing;
+use crate::theme::Theme;
 use crate::viewport::Viewport;
 use crate::wrap;
 use crate::wrap::Segment;
@@ -34,42 +40,6 @@ use crate::wrap::TooNarrow;
 
 /// Format used to display `Commit::date`.
 const DATE_FORMAT: &str = "%d/%m/%Y";
-
-// Colors used by git by default.
-const HASH: Style = Style::new().fg(Color::Yellow);
-const AUTHOR: Style = Style::new().fg(Color::Green);
-const DATE: Style = Style::new().fg(Color::Blue);
-const DECORATION_PUNCTUATION: Style = Style::new().fg(Color::Yellow);
-const HEAD: Style = Style::new().fg(Color::Cyan).bold();
-const LOCAL_BRANCH: Style = Style::new().fg(Color::Green).bold();
-const REMOTE_BRANCH: Style = Style::new().fg(Color::Red).bold();
-const TAG: Style = Style::new().fg(Color::Yellow).bold();
-
-const FILE: Style = Style::new().fg(Color::Blue);
-// The line number column never has the background of the modified lines.
-/// The borders of the line number column.
-const LINE_NUMBER: Style = Style::new().fg(Color::Blue).bg(Color::Reset);
-// Colors used by `delta` by default for the line numbers.
-const REMOVED_LINE_NUMBER: Style = Style::new().fg(Color::Indexed(88)).bg(Color::Reset);
-const ADDED_LINE_NUMBER: Style = Style::new().fg(Color::Indexed(28)).bg(Color::Reset);
-const UNCHANGED_LINE_NUMBER: Style = Style::new()
-    .fg(Color::Rgb(0x44, 0x44, 0x44))
-    .bg(Color::Reset);
-/// The `↵` marker of the wrapped lines of the diffs.
-const MARKER: Style = Style::new().fg(Color::Blue);
-// Backgrounds used by `delta` by default for the modified lines.
-const REMOVED_BACKGROUND: Color = Color::Rgb(0x3f, 0x00, 0x01);
-const ADDED_BACKGROUND: Color = Color::Rgb(0x00, 0x28, 0x00);
-const COMMIT_SEPARATOR: Style = Style::new().fg(Color::Red);
-const ERROR: Style = Style::new().fg(Color::LightRed).bold();
-
-/// Replacements of the tabs, and of the spaces and U+2800 next to a break, that are not part of
-/// the trailing whitespace.
-const DIMMED_WHITESPACE: Style = Style::new().fg(Color::DarkGray);
-/// Replacements of the trailing whitespace, including the tabs.
-const TRAILING_WHITESPACE: Style = Style::new().fg(Color::Red).bold();
-/// Replacements of the other invisible characters.
-const INVISIBLE: Style = Style::new().fg(Color::Red).bold();
 
 /// Displayed in the last column of each half of a diff row followed by a continuation row of the
 /// same line.
@@ -89,9 +59,6 @@ const CHUNK_TOO_NARROW: &str = "This chunk cannot be displayed: the terminal is 
 /// another column, and a row starting with a right-to-left text may be displayed right-to-left.
 const LEFT_TO_RIGHT_MARK: char = '\u{200e}';
 
-/// Background of the row of the cursor.
-const CURSOR: Style = Style::new().bg(Color::Indexed(235));
-
 /// The interaction mode, displayed in the status bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -102,13 +69,6 @@ impl Mode {
     pub fn name(self) -> &'static str {
         match self {
             Mode::Review => "Review",
-        }
-    }
-
-    /// Background color of the mode name in the status bar.
-    pub fn accent(self) -> Color {
-        match self {
-            Mode::Review => Color::Blue,
         }
     }
 }
@@ -279,12 +239,12 @@ impl Part {
 }
 
 /// The style of a piece of `kind`.
-fn kind_style(kind: Kind) -> Style {
+fn kind_style(kind: Kind, theme: &Theme) -> Style {
     match kind {
         Kind::Text => Style::new(),
-        Kind::DimmedWhitespace => DIMMED_WHITESPACE,
-        Kind::TrailingWhitespace => TRAILING_WHITESPACE,
-        Kind::Replacement => INVISIBLE,
+        Kind::DimmedWhitespace => theme.dimmed_whitespace,
+        Kind::TrailingWhitespace => theme.trailing_whitespace,
+        Kind::Replacement => theme.invisible,
     }
 }
 
@@ -299,6 +259,7 @@ fn wrapped(
     parts: &[Part],
     final_cr: FinalCr,
     width: usize,
+    theme: &Theme,
 ) -> Result<Vec<(usize, usize, Vec<Span<'static>>)>, TooNarrow> {
     let segments: Vec<_> = parts
         .iter()
@@ -315,7 +276,7 @@ fn wrapped(
                 .pieces
                 .into_iter()
                 .map(|(segment, piece)| {
-                    let style = parts[segment].style.patch(kind_style(piece.kind));
+                    let style = parts[segment].style.patch(kind_style(piece.kind, theme));
                     Span::styled(piece.text, style)
                 })
                 .collect();
@@ -342,85 +303,95 @@ fn mark_left_to_right(buf: &mut Buffer, x: u16, y: u16) {
     }
 }
 
-fn single_decoration_parts(decoration: &Decoration) -> Vec<Part> {
+fn single_decoration_parts(decoration: &Decoration, theme: &Theme) -> Vec<Part> {
     match decoration {
-        Decoration::Head(None) => vec![Part::markup("HEAD", HEAD)],
+        Decoration::Head(None) => vec![Part::markup("HEAD", theme.head)],
         Decoration::Head(Some(branch)) => vec![
-            Part::markup("HEAD", HEAD),
-            Part::markup(" -> ", DECORATION_PUNCTUATION),
-            Part::content(branch, LOCAL_BRANCH),
+            Part::markup("HEAD", theme.head),
+            Part::markup(" -> ", theme.decoration_punctuation),
+            Part::content(branch, theme.local_branch),
         ],
-        Decoration::LocalBranch(branch) => vec![Part::content(branch, LOCAL_BRANCH)],
-        Decoration::RemoteBranch(branch) => vec![Part::content(branch, REMOTE_BRANCH)],
-        Decoration::Tag(tag) => vec![Part::markup("tag: ", TAG), Part::content(tag, TAG)],
+        Decoration::LocalBranch(branch) => vec![Part::content(branch, theme.local_branch)],
+        Decoration::RemoteBranch(branch) => vec![Part::content(branch, theme.remote_branch)],
+        Decoration::Tag(tag) => vec![
+            Part::markup("tag: ", theme.tag),
+            Part::content(tag, theme.tag),
+        ],
     }
 }
 
 /// ` ($decorations)`, or nothing if there are no decorations.
-fn decoration_parts(decorations: &[Decoration]) -> Vec<Part> {
+fn decoration_parts(decorations: &[Decoration], theme: &Theme) -> Vec<Part> {
     if decorations.is_empty() {
         return Vec::new();
     }
     let decorations = decorations.iter().enumerate().flat_map(|(i, decoration)| {
         let separator = if i > 0 {
-            Some(Part::markup(", ", DECORATION_PUNCTUATION))
+            Some(Part::markup(", ", theme.decoration_punctuation))
         } else {
             None
         };
         separator
             .into_iter()
-            .chain(single_decoration_parts(decoration))
+            .chain(single_decoration_parts(decoration, theme))
     });
-    iter::once(Part::markup(" (", DECORATION_PUNCTUATION))
+    iter::once(Part::markup(" (", theme.decoration_punctuation))
         .chain(decorations)
-        .chain(iter::once(Part::markup(")", DECORATION_PUNCTUATION)))
+        .chain(iter::once(Part::markup(")", theme.decoration_punctuation)))
         .collect()
 }
 
 /// `$hash $commit_subject $author $date ($tags, $branches)`
 ///
 /// The trailing whitespace of each field is the one ending the field.
-fn header_parts(commit: &Commit) -> Vec<Part> {
+fn header_parts(commit: &Commit, theme: &Theme) -> Vec<Part> {
     let date = commit.date.strftime(DATE_FORMAT).to_string();
     let space = || Part::markup(" ", Style::new());
     [
-        Part::content(&commit.hash, HASH),
+        Part::content(&commit.hash, theme.hash),
         space(),
         Part::content(&commit.subject, Style::new()),
         space(),
-        Part::content(&commit.author, AUTHOR),
+        Part::content(&commit.author, theme.author),
         space(),
-        Part::content(&date, DATE),
+        Part::content(&date, theme.date),
     ]
     .into_iter()
-    .chain(decoration_parts(&commit.decorations))
+    .chain(decoration_parts(&commit.decorations, theme))
     .collect()
 }
 
 /// The line number column of a diff row: `│ $line │ `, with `$line` displayed with its style, or
 /// `│     │ ` without `number`.
-fn number_column(number: Option<(usize, Style)>, width: usize) -> Vec<Span<'static>> {
+fn number_column(
+    number: Option<(usize, Style)>,
+    width: usize,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
     match number {
         Some((number, style)) => vec![
-            Span::styled("│ ", LINE_NUMBER),
+            Span::styled("│ ", theme.line_number),
             Span::styled(format!("{number:>width$}"), style),
-            Span::styled(" │ ", LINE_NUMBER),
+            Span::styled(" │ ", theme.line_number),
         ],
-        None => vec![Span::styled(format!("│ {:width$} │ ", ""), LINE_NUMBER)],
+        None => vec![Span::styled(
+            format!("│ {:width$} │ ", ""),
+            theme.line_number,
+        )],
     }
 }
 
 /// A half of a row displaying only the line number column, without number.
-fn filler(number_width: usize) -> Line<'static> {
-    Line::from(number_column(None, number_width))
+fn filler(number_width: usize, theme: &Theme) -> Line<'static> {
+    Line::from(number_column(None, number_width, theme))
 }
 
-/// The background of a line of `kind`, if it is modified.
-fn line_background(kind: LineKind) -> Option<Color> {
+/// The style of the text area of a line of `kind`: a background if it is modified.
+fn line_style(kind: LineKind, theme: &Theme) -> Style {
     match kind {
-        LineKind::Unchanged => None,
-        LineKind::Removed => Some(REMOVED_BACKGROUND),
-        LineKind::Added => Some(ADDED_BACKGROUND),
+        LineKind::Unchanged => Style::new(),
+        LineKind::Removed => theme.removed_line,
+        LineKind::Added => theme.added_line,
     }
 }
 
@@ -433,11 +404,11 @@ fn missing_newline_kind(chunk: &Chunk) -> Option<LineKind> {
 }
 
 /// The style of the number of a line of `kind`.
-fn line_number_style(kind: LineKind) -> Style {
+fn line_number_style(kind: LineKind, theme: &Theme) -> Style {
     match kind {
-        LineKind::Unchanged => UNCHANGED_LINE_NUMBER,
-        LineKind::Removed => REMOVED_LINE_NUMBER,
-        LineKind::Added => ADDED_LINE_NUMBER,
+        LineKind::Unchanged => theme.unchanged_line_number,
+        LineKind::Removed => theme.removed_line_number,
+        LineKind::Added => theme.added_line_number,
     }
 }
 
@@ -456,33 +427,31 @@ fn half_rows(
     number_width: usize,
     width: usize,
     final_cr: FinalCr,
+    theme: &Theme,
 ) -> Result<Vec<(usize, Line<'static>)>, TooNarrow> {
     let text_width = text_width(width, number_width);
-    let background = match line_background(line.kind) {
-        Some(background) => Style::new().bg(background),
-        None => Style::new(),
-    };
+    let background = line_style(line.kind, theme);
     let code = Part::content(&line.text, background);
-    let rows = wrapped(&[code], final_cr, text_width)?;
+    let rows = wrapped(&[code], final_cr, text_width, theme)?;
     let last = rows.len() - 1;
     Ok(rows
         .into_iter()
         .enumerate()
         .map(|(i, (start, columns_count, spans))| {
             let number = if i == 0 {
-                Some((line_number, line_number_style(line.kind)))
+                Some((line_number, line_number_style(line.kind, theme)))
             } else {
                 None
             };
             let marker = if i < last {
                 vec![
                     Span::raw(" ".repeat(text_width.saturating_sub(columns_count))),
-                    Span::styled(WRAP_MARKER, MARKER),
+                    Span::styled(WRAP_MARKER, theme.marker),
                 ]
             } else {
                 Vec::new()
             };
-            let spans: Vec<_> = number_column(number, number_width)
+            let spans: Vec<_> = number_column(number, number_width, theme)
                 .into_iter()
                 .chain(spans)
                 .chain(marker)
@@ -497,13 +466,19 @@ fn half_rows(
 fn missing_newline_rows(
     number_width: usize,
     width: usize,
+    theme: &Theme,
 ) -> Result<Vec<(usize, Line<'static>)>, TooNarrow> {
-    let message = Part::markup(MISSING_NEWLINE, ERROR);
-    let rows = wrapped(&[message], FinalCr::Shown, text_width(width, number_width))?;
+    let message = Part::markup(MISSING_NEWLINE, theme.error);
+    let rows = wrapped(
+        &[message],
+        FinalCr::Shown,
+        text_width(width, number_width),
+        theme,
+    )?;
     Ok(rows
         .into_iter()
         .map(|(start, _, spans)| {
-            let spans: Vec<_> = number_column(None, number_width)
+            let spans: Vec<_> = number_column(None, number_width, theme)
                 .into_iter()
                 .chain(spans)
                 .collect();
@@ -521,42 +496,44 @@ fn text_width(width: usize, number_width: usize) -> usize {
 
 /// `$file`, with a label if the file is not only modified (like `delta`), and a suffix if it has
 /// no chunks because of its content.
-fn file_parts(file: &FileDiff) -> Vec<Part> {
+fn file_parts(file: &FileDiff, theme: &Theme) -> Vec<Part> {
     // Invalid UTF-8 is replaced by `�`.
-    let path = Part::content(&file.path.to_str_lossy(), FILE);
+    let path = Part::content(&file.path.to_str_lossy(), theme.file);
     let name = match &file.change {
         FileChange::Modified => vec![path],
-        FileChange::Added => vec![Part::markup("added: ", FILE), path],
-        FileChange::Deleted => vec![Part::markup("removed: ", FILE), path],
+        FileChange::Added => vec![Part::markup("added: ", theme.file), path],
+        FileChange::Deleted => vec![Part::markup("removed: ", theme.file), path],
         FileChange::Renamed { from } => vec![
-            Part::markup("renamed: ", FILE),
-            Part::content(&from.to_str_lossy(), FILE),
-            Part::markup(" ⟶   ", FILE),
+            Part::markup("renamed: ", theme.file),
+            Part::content(&from.to_str_lossy(), theme.file),
+            Part::markup(" ⟶   ", theme.file),
             path,
         ],
     };
     let suffix = match file.content {
         FileContentType::Text => None,
-        FileContentType::Binary => Some(Part::markup(" (binary file)", FILE)),
-        FileContentType::InvalidUtf8 => Some(Part::markup(" (invalid utf-8 content)", ERROR)),
+        FileContentType::Binary => Some(Part::markup(" (binary file)", theme.file)),
+        FileContentType::InvalidUtf8 => Some(Part::markup(" (invalid utf-8 content)", theme.error)),
     };
     name.into_iter().chain(suffix).collect()
 }
 
 /// The rows being built. `line` counts the lines added so far (a wrapped line is added as several
 /// rows, all with the same [`Row::line`]).
-struct Rows {
+struct Rows<'a> {
     rows: Vec<Row>,
     line: usize,
     width: u16,
+    theme: &'a Theme,
 }
 
-impl Rows {
-    fn new(width: u16) -> Self {
+impl<'a> Rows<'a> {
+    fn new(width: u16, theme: &'a Theme) -> Self {
         Self {
             rows: Vec::new(),
             line: 0,
             width,
+            theme,
         }
     }
 
@@ -581,7 +558,7 @@ impl Rows {
     /// Add a line made of `parts`, using the whole width. A carriage return ending a part is
     /// replaced.
     fn text(&mut self, parts: &[Part]) -> Result<(), TooNarrow> {
-        let rows = wrapped(parts, FinalCr::Shown, self.width.into())?;
+        let rows = wrapped(parts, FinalCr::Shown, self.width.into(), self.theme)?;
         let line = self.line;
         self.rows
             .extend(rows.into_iter().map(|(start, _, spans)| Row {
@@ -607,7 +584,7 @@ impl Rows {
                 self.line += len;
             }
             Err(_) => {
-                self.text(&[Part::markup(CHUNK_TOO_NARROW, ERROR)])?;
+                self.text(&[Part::markup(CHUNK_TOO_NARROW, self.theme.error)])?;
                 // The error message takes the index of the first line.
                 self.line += len.saturating_sub(1);
             }
@@ -634,6 +611,7 @@ impl Rows {
                     number_width,
                     width,
                     final_cr,
+                    self.theme,
                 )
             })
         };
@@ -647,10 +625,16 @@ impl Rows {
             .collect::<Result<Vec<_>, TooNarrow>>()?;
         match missing_newline_kind(chunk) {
             Some(LineKind::Removed) => {
-                lines.push((missing_newline_rows(number_width, left_width)?, Vec::new()));
+                lines.push((
+                    missing_newline_rows(number_width, left_width, self.theme)?,
+                    Vec::new(),
+                ));
             }
             Some(LineKind::Added) => {
-                lines.push((Vec::new(), missing_newline_rows(number_width, right_width)?));
+                lines.push((
+                    Vec::new(),
+                    missing_newline_rows(number_width, right_width, self.theme)?,
+                ));
             }
             Some(LineKind::Unchanged) | None => {}
         }
@@ -662,7 +646,9 @@ impl Rows {
                 let padded = |rows: Vec<(usize, Line<'static>)>| {
                     rows.into_iter()
                         .map(|(start, line)| (Some(start), line))
-                        .chain(iter::repeat_with(|| (None, filler(number_width))))
+                        .chain(iter::repeat_with(|| {
+                            (None, filler(number_width, self.theme))
+                        }))
                         .take(len)
                 };
                 let line = self.line + index;
@@ -688,8 +674,8 @@ impl Rows {
             FinalCr::Hidden
         };
         self.blank();
-        self.text(&file_parts(file))?;
-        self.rule(FILE);
+        self.text(&file_parts(file, self.theme))?;
+        self.rule(self.theme.file);
         file.chunks.iter().enumerate().try_for_each(|(i, chunk)| {
             if i > 0 {
                 self.blank();
@@ -700,7 +686,7 @@ impl Rows {
 
     /// Add `commit`, including the separator below it.
     fn commit(&mut self, commit: &Commit) -> Result<(), TooNarrow> {
-        self.text(&header_parts(commit))?;
+        self.text(&header_parts(commit, self.theme))?;
         if !commit.body.is_empty() {
             self.blank();
             // Unlike `str::lines`, a carriage return ending a line is kept, to be displayed.
@@ -711,7 +697,7 @@ impl Rows {
         }
         commit.files.iter().try_for_each(|file| self.file(file))?;
         self.blank();
-        self.rule(COMMIT_SEPARATOR);
+        self.rule(self.theme.commit_separator);
         Ok(())
     }
 }
@@ -720,8 +706,8 @@ impl Rows {
 ///
 /// Fails if a text area is too narrow to display a grapheme cluster of its line, unless it is in
 /// a chunk, which is then replaced by an error message.
-pub fn rows(commits: &[Commit], width: u16) -> Result<Vec<Row>, TooNarrow> {
-    let mut rows = Rows::new(width);
+pub fn rows(commits: &[Commit], width: u16, theme: &Theme) -> Result<Vec<Row>, TooNarrow> {
+    let mut rows = Rows::new(width, theme);
     commits.iter().try_for_each(|commit| rows.commit(commit))?;
     Ok(rows.rows)
 }
@@ -731,6 +717,7 @@ pub fn rows(commits: &[Commit], width: u16) -> Result<Vec<Row>, TooNarrow> {
 pub struct RowsView<'a> {
     pub rows: &'a [Row],
     pub viewport: Viewport,
+    pub theme: &'a Theme,
 }
 
 impl Widget for RowsView<'_> {
@@ -748,36 +735,153 @@ impl Widget for RowsView<'_> {
                 };
                 row.render(area, buf);
                 if index == self.viewport.cursor {
-                    buf.set_style(area, CURSOR);
+                    buf.set_style(area, self.theme.cursor);
                 }
             });
     }
 }
 
-pub struct StatusBar {
+pub struct StatusBar<'a> {
     pub mode: Mode,
+    pub theme: &'a Theme,
 }
 
-impl Widget for StatusBar {
+impl Widget for StatusBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let mode = Span::styled(
-            format!(" {} ", self.mode.name()),
-            Style::new().fg(Color::Black).bg(self.mode.accent()).bold(),
-        );
+        let style = match self.mode {
+            Mode::Review => self.theme.review_mode,
+        };
+        let mode = Span::styled(format!(" {} ", self.mode.name()), style);
         Line::from(mode).render(area, buf);
     }
 }
 
-/// Draw `rows`, with the status bar on the last line of the screen.
+/// A message displayed over the commits, until a key is pressed.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ErrorModal {
+    /// The keys of the config file at `path` that are not settings.
+    UnknownKeys {
+        path: PathBuf,
+        unknown_keys: Vec<UnknownKey>,
+    },
+}
+
+impl ErrorModal {
+    fn title(&self) -> String {
+        match self {
+            ErrorModal::UnknownKeys { path, .. } => {
+                format!("Unknown key in config file: {}", path.display())
+            }
+        }
+    }
+
+    fn lines(&self) -> Vec<String> {
+        match self {
+            ErrorModal::UnknownKeys { unknown_keys, .. } => unknown_keys
+                .iter()
+                .map(|unknown_key| format!("line {}: {unknown_key}", unknown_key.line))
+                .collect(),
+        }
+    }
+}
+
+/// Displayed centered in the bottom border of the modals.
+const CLOSE_MODAL: &str = "Press any key to close";
+
+/// `error_modal` centered in the area, with a border and a blank row above and below its content,
+/// as wide as its content (at most the width of the area), its long lines being wrapped. The border
+/// has heavy lines and the error style, and the title the error style in reverse video.
+/// `CLOSE_MODAL` is in the bottom border.
+struct ErrorModalView<'a> {
+    error_modal: &'a ErrorModal,
+    theme: &'a Theme,
+}
+
+impl Widget for ErrorModalView<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let title = format!(" {} ", self.error_modal.title());
+        let close = format!(" {CLOSE_MODAL} ");
+        // The border and the padding, on each side.
+        let max_width = usize::from(area.width).saturating_sub(4);
+        // Like the chunks, the content is not displayed if it is too narrow to be wrapped.
+        let rows: Vec<_> = self
+            .error_modal
+            .lines()
+            .iter()
+            .map(|line| {
+                let line = Part::content(line, Style::new());
+                wrapped(&[line], FinalCr::Shown, max_width, self.theme)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|rows| rows.into_iter().flatten().collect())
+            .unwrap_or_default();
+        let content_width = rows
+            .iter()
+            .map(|(_, columns_count, _)| *columns_count)
+            .chain([title.width(), close.width()])
+            .max()
+            .unwrap_or(0)
+            .min(max_width);
+        let width = u16::try_from(content_width + 4)
+            .unwrap_or(u16::MAX)
+            .min(area.width);
+        // The border and the padding, on each side.
+        let height = u16::try_from(rows.len() + 4)
+            .unwrap_or(u16::MAX)
+            .min(area.height);
+        let error_modal_area = Rect::new(
+            area.x + (area.width - width) / 2,
+            area.y + (area.height - height) / 2,
+            width,
+            height,
+        );
+        let block = Block::bordered()
+            .border_type(BorderType::Thick)
+            .title(Line::styled(title, self.theme.error.reversed()))
+            .border_style(self.theme.error)
+            .title_bottom(Line::styled(close, self.theme.error).centered())
+            .padding(Padding::uniform(1));
+        let inner = block.inner(error_modal_area);
+        Clear.render(error_modal_area, buf);
+        block.render(error_modal_area, buf);
+        rows.into_iter()
+            .zip(inner.top()..inner.bottom())
+            .for_each(|((_, _, spans), y)| {
+                buf.set_line(inner.x, y, &Line::from(spans), inner.width);
+                if inner.width > 0 {
+                    mark_left_to_right(buf, inner.x, y);
+                }
+            });
+    }
+}
+
+/// Draw `rows`, with the status bar on the last line of the screen, and `error_modal` over them.
 ///
 /// `viewport` is first scrolled to fit the screen.
-pub fn draw(frame: &mut Frame, rows: &[Row], viewport: &mut Viewport, mode: Mode) {
+pub fn draw(
+    frame: &mut Frame,
+    rows: &[Row],
+    viewport: &mut Viewport,
+    mode: Mode,
+    error_modal: Option<&ErrorModal>,
+    theme: &Theme,
+) {
     let [content, status_bar] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
     viewport.scroll(rows.len(), content.height.into());
     let viewport = *viewport;
-    frame.render_widget(RowsView { rows, viewport }, content);
-    frame.render_widget(StatusBar { mode }, status_bar);
+    frame.render_widget(
+        RowsView {
+            rows,
+            viewport,
+            theme,
+        },
+        content,
+    );
+    frame.render_widget(StatusBar { mode, theme }, status_bar);
+    if let Some(error_modal) = error_modal {
+        frame.render_widget(ErrorModalView { error_modal, theme }, frame.area());
+    }
 }
 
 #[cfg(test)]
@@ -785,12 +889,15 @@ mod tests {
     use ratatui::Terminal;
     use ratatui::backend::Backend;
     use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
+    use ratatui::style::Modifier;
 
     use super::*;
     use crate::fake::FakeCommit;
+    use crate::theme::Theme;
 
-    fn commit_rows(commit: &Commit, width: u16) -> Vec<Row> {
-        let mut rows = Rows::new(width);
+    fn commit_rows(commit: &Commit, width: u16, theme: &Theme) -> Vec<Row> {
+        let mut rows = Rows::new(width, theme);
         rows.commit(commit).unwrap();
         rows.rows
     }
@@ -800,7 +907,7 @@ mod tests {
         FakeCommit::all()
             .iter()
             .take_while(|other| other.hash != commit.hash)
-            .map(|other| commit_rows(other, width).len())
+            .map(|other| commit_rows(other, width, &Theme::none()).len())
             .sum()
     }
 
@@ -814,8 +921,8 @@ mod tests {
     }
 
     /// The rows of `file`, starting with the blank row above the file name.
-    fn file_rows(file: &FileDiff, width: u16) -> Vec<Row> {
-        let mut rows = Rows::new(width);
+    fn file_rows(file: &FileDiff, width: u16, theme: &Theme) -> Vec<Row> {
+        let mut rows = Rows::new(width, theme);
         rows.file(file).unwrap();
         rows.rows
     }
@@ -853,8 +960,8 @@ mod tests {
     }
 
     /// The header of `commit`, on a single row.
-    fn header(commit: &Commit) -> Line<'static> {
-        let (_, _, spans) = wrapped(&header_parts(commit), FinalCr::Shown, 1000)
+    fn header(commit: &Commit, theme: &Theme) -> Line<'static> {
+        let (_, _, spans) = wrapped(&header_parts(commit, theme), FinalCr::Shown, 1000, theme)
             .unwrap()
             .remove(0);
         Line::from(spans)
@@ -869,6 +976,11 @@ mod tests {
             .style
     }
 
+    /// The themes with colors.
+    fn themes() -> [Theme; 2] {
+        [Theme::dark(), Theme::light()]
+    }
+
     /// `buffer`, without the left-to-right marks, which are invisible in the snapshots.
     fn without_left_to_right_marks(buffer: &Buffer) -> Buffer {
         let mut buffer = buffer.clone();
@@ -880,13 +992,33 @@ mod tests {
     }
 
     /// The screen displaying the fake commits, without the left-to-right marks.
-    fn render(width: u16, height: u16, viewport: Viewport) -> TestBackend {
+    fn render(width: u16, height: u16, viewport: Viewport, theme: &Theme) -> TestBackend {
+        render_with_error_modal(width, height, viewport, None, theme)
+    }
+
+    /// The screen displaying the fake commits and `error_modal`, without the left-to-right marks.
+    fn render_with_error_modal(
+        width: u16,
+        height: u16,
+        viewport: Viewport,
+        error_modal: Option<&ErrorModal>,
+        theme: &Theme,
+    ) -> TestBackend {
         let commits = FakeCommit::all();
-        let rows = rows(&commits, width).unwrap();
+        let rows = rows(&commits, width, theme).unwrap();
         let mut viewport = viewport;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
-            .draw(|frame| draw(frame, &rows, &mut viewport, Mode::Review))
+            .draw(|frame| {
+                draw(
+                    frame,
+                    &rows,
+                    &mut viewport,
+                    Mode::Review,
+                    error_modal,
+                    theme,
+                )
+            })
             .unwrap();
         let buffer = without_left_to_right_marks(terminal.backend().buffer());
         let mut backend = TestBackend::new(width, height);
@@ -900,30 +1032,30 @@ mod tests {
 
     #[test]
     fn full_screen() {
-        insta::assert_snapshot!(render(110, 26, Viewport::default()));
+        insta::assert_snapshot!(render(110, 26, Viewport::default(), &Theme::none()));
     }
 
     #[test]
     fn small_screen_is_wrapped_and_cropped() {
-        insta::assert_snapshot!(render(50, 8, Viewport::default()));
+        insta::assert_snapshot!(render(50, 8, Viewport::default(), &Theme::none()));
     }
 
     #[test]
     fn scrolled_to_the_end() {
-        let len = rows(&FakeCommit::all(), 110).unwrap().len();
+        let len = rows(&FakeCommit::all(), 110, &Theme::none()).unwrap().len();
         let viewport = Viewport {
             cursor: len - 1,
             top: 0,
         };
-        insta::assert_snapshot!(render(110, 26, viewport));
+        insta::assert_snapshot!(render(110, 26, viewport, &Theme::none()));
     }
 
     #[test]
     fn all_kinds_of_file_changes_are_displayed() {
         let commit = FakeCommit::FileChanges.commit();
-        let height = commit_rows(&commit, 110).len() + 1;
+        let height = commit_rows(&commit, 110, &Theme::none()).len() + 1;
         let viewport = viewport_at(&commit, 110);
-        insta::assert_snapshot!(render(110, height as u16, viewport));
+        insta::assert_snapshot!(render(110, height as u16, viewport, &Theme::none()));
     }
 
     #[test]
@@ -931,7 +1063,8 @@ mod tests {
         insta::assert_snapshot!(render(
             110,
             60,
-            viewport_at(&FakeCommit::LineWrapping.commit(), 110)
+            viewport_at(&FakeCommit::LineWrapping.commit(), 110),
+            &Theme::none()
         ));
     }
 
@@ -940,7 +1073,8 @@ mod tests {
         insta::assert_snapshot!(render(
             70,
             80,
-            viewport_at(&FakeCommit::LineWrapping.commit(), 70)
+            viewport_at(&FakeCommit::LineWrapping.commit(), 70),
+            &Theme::none()
         ));
     }
 
@@ -951,20 +1085,20 @@ mod tests {
             cursor: start + 30,
             top: start + 20,
         };
-        insta::assert_snapshot!(render(110, 26, viewport));
+        insta::assert_snapshot!(render(110, 26, viewport, &Theme::none()));
     }
 
     #[test]
     fn rows_of_all_commits_are_displayed_one_after_the_other() {
         let commits = FakeCommit::all();
-        let all_rows: Vec<_> = rows(&commits, 110)
+        let all_rows: Vec<_> = rows(&commits, 110, &Theme::none())
             .unwrap()
             .into_iter()
             .map(|row| row.content)
             .collect();
         let expected: Vec<_> = commits
             .iter()
-            .flat_map(|commit| commit_rows(commit, 110))
+            .flat_map(|commit| commit_rows(commit, 110, &Theme::none()))
             .map(|row| row.content)
             .collect();
         assert_eq!(all_rows, expected);
@@ -972,7 +1106,7 @@ mod tests {
 
     #[test]
     fn lines_are_numbered_consecutively() {
-        let rows = rows(&FakeCommit::all(), 110).unwrap();
+        let rows = rows(&FakeCommit::all(), 110, &Theme::none()).unwrap();
         assert_eq!(rows[0].line, 0);
         assert!(
             rows.windows(2)
@@ -983,11 +1117,14 @@ mod tests {
     #[test]
     fn cursor_row_is_highlighted() {
         let viewport = Viewport { cursor: 2, top: 0 };
-        let backend = render(110, 26, viewport);
-        let buffer = backend.buffer();
-        assert!((0..110).all(|x| buffer[(x, 2)].bg == Color::Indexed(235)));
-        assert!((0..110).all(|x| buffer[(x, 1)].bg == Color::Reset));
-        assert!((0..110).all(|x| buffer[(x, 3)].bg == Color::Reset));
+        themes().iter().for_each(|theme| {
+            let backend = render(110, 26, viewport, theme);
+            let buffer = backend.buffer();
+            let cursor = theme.cursor.bg.unwrap();
+            assert!((0..110).all(|x| buffer[(x, 2)].bg == cursor));
+            assert!((0..110).all(|x| buffer[(x, 1)].bg == Color::Reset));
+            assert!((0..110).all(|x| buffer[(x, 3)].bg == Color::Reset));
+        });
     }
 
     #[test]
@@ -996,36 +1133,50 @@ mod tests {
             cursor: 30,
             top: 20,
         };
-        let backend = render(110, 26, viewport);
+        themes().iter().for_each(|theme| {
+            let backend = render(110, 26, viewport, theme);
+            let buffer = backend.buffer();
+            assert_eq!(buffer[(0, 10)].bg, theme.cursor.bg.unwrap());
+            assert_eq!(buffer[(0, 9)].bg, Color::Reset);
+        });
+    }
+
+    #[test]
+    fn cursor_row_is_in_reverse_video_without_colors() {
+        let viewport = Viewport { cursor: 2, top: 0 };
+        let backend = render(110, 26, viewport, &Theme::none());
         let buffer = backend.buffer();
-        assert_eq!(buffer[(0, 10)].bg, Color::Indexed(235));
-        assert_eq!(buffer[(0, 9)].bg, Color::Reset);
+        assert!((0..110).all(|x| buffer[(x, 2)].modifier.contains(Modifier::REVERSED)));
+        assert!((0..110).all(|x| !buffer[(x, 1)].modifier.contains(Modifier::REVERSED)));
+        assert!((0..110).all(|x| !buffer[(x, 3)].modifier.contains(Modifier::REVERSED)));
     }
 
     #[test]
     fn header_is_colored_like_git() {
         let commit = FakeCommit::newest();
-        let header = header(&commit);
-        assert_eq!(
-            text(&header),
-            "3f9a2c1 config: rename scroll_off to scrolloff Alice Martin 12/10/2026 \
-             (HEAD -> main, tag: v1.0, origin/main)"
-        );
-        assert_eq!(style_in(&header, "3f9a2c1"), HASH);
-        assert_eq!(style_in(&header, "Alice Martin"), AUTHOR);
-        assert_eq!(style_in(&header, "12/10/2026"), DATE);
-        assert_eq!(style_in(&header, "HEAD"), HEAD);
-        assert_eq!(style_in(&header, " -> "), DECORATION_PUNCTUATION);
-        assert_eq!(style_in(&header, "main"), LOCAL_BRANCH);
-        assert_eq!(style_in(&header, "v1.0"), TAG);
-        assert_eq!(style_in(&header, "origin/main"), REMOTE_BRANCH);
+        themes().iter().for_each(|theme| {
+            let header = header(&commit, theme);
+            assert_eq!(
+                text(&header),
+                "3f9a2c1 config: rename scroll_off to scrolloff Alice Martin 12/10/2026 \
+                 (HEAD -> main, tag: v1.0, origin/main)"
+            );
+            assert_eq!(style_in(&header, "3f9a2c1"), theme.hash);
+            assert_eq!(style_in(&header, "Alice Martin"), theme.author);
+            assert_eq!(style_in(&header, "12/10/2026"), theme.date);
+            assert_eq!(style_in(&header, "HEAD"), theme.head);
+            assert_eq!(style_in(&header, " -> "), theme.decoration_punctuation);
+            assert_eq!(style_in(&header, "main"), theme.local_branch);
+            assert_eq!(style_in(&header, "v1.0"), theme.tag);
+            assert_eq!(style_in(&header, "origin/main"), theme.remote_branch);
+        });
     }
 
     #[test]
     fn decorations_are_omitted_when_empty() {
         let mut commit = FakeCommit::newest();
         commit.decorations.clear();
-        assert!(text(&header(&commit)).ends_with("12/10/2026"));
+        assert!(text(&header(&commit, &Theme::none())).ends_with("12/10/2026"));
     }
 
     #[test]
@@ -1034,7 +1185,7 @@ mod tests {
             Decoration::LocalBranch("feature".to_string()),
             Decoration::Head(None),
         ];
-        let text: String = decoration_parts(&decorations)
+        let text: String = decoration_parts(&decorations, &Theme::none())
             .into_iter()
             .map(|part| part.text)
             .collect();
@@ -1045,7 +1196,7 @@ mod tests {
     fn body_is_omitted_when_empty() {
         let mut commit = FakeCommit::newest();
         commit.body.clear();
-        let rows = commit_rows(&commit, 110);
+        let rows = commit_rows(&commit, 110, &Theme::none());
         assert_eq!(rows[1].content, Content::Text(Line::default()));
         assert_eq!(text_of_row(&rows[2]).0, "src/config.rs");
     }
@@ -1106,15 +1257,17 @@ mod tests {
     #[test]
     fn line_numbers_are_aligned_per_chunk() {
         let commit = FakeCommit::newest();
-        let rows = Rows::new(110)
-            .chunk_rows(&commit.files[0].chunks[1], FinalCr::Hidden)
-            .unwrap();
-        let Content::Split { left, right } = &rows[0].content else {
-            panic!("chunk rows are split");
-        };
-        assert_eq!(text(left), "│  98 │     fn default() -> Self {");
-        assert_eq!(text(right), "│  98 │     fn default() -> Self {");
-        assert_eq!(left.spans[0].style, LINE_NUMBER);
+        themes().iter().for_each(|theme| {
+            let rows = Rows::new(110, theme)
+                .chunk_rows(&commit.files[0].chunks[1], FinalCr::Hidden)
+                .unwrap();
+            let Content::Split { left, right } = &rows[0].content else {
+                panic!("chunk rows are split");
+            };
+            assert_eq!(text(left), "│  98 │     fn default() -> Self {");
+            assert_eq!(text(right), "│  98 │     fn default() -> Self {");
+            assert_eq!(left.spans[0].style, theme.line_number);
+        });
     }
 
     /// A chunk replacing the line `before` by the line `after`, displayed side by side if they are
@@ -1137,35 +1290,37 @@ mod tests {
 
     #[test]
     fn wrapped_diff_lines_have_a_marker_and_no_line_number_on_continuation_rows() {
-        // Each half is 12 columns wide: 6 for the line number column, 5 for the text, and 1 for
-        // the marker.
-        let rows = Rows::new(24)
-            .chunk_rows(&chunk("aaaa bbbb cccc", "aaaa"), FinalCr::Hidden)
-            .unwrap();
-        let texts: Vec<_> = rows.iter().map(text_of_row).collect();
-        assert_eq!(
-            texts,
-            [
-                ("│ 1 │ aaaa ↵".to_string(), "│ 1 │ aaaa".to_string()),
-                ("│   │ bbbb ↵".to_string(), "│   │ ".to_string()),
-                ("│   │ cccc".to_string(), "│   │ ".to_string()),
-            ]
-        );
-        let Content::Split { left, .. } = &rows[0].content else {
-            panic!("chunk rows are split");
-        };
-        assert_eq!(style_in(left, WRAP_MARKER), MARKER);
-        let area = Rect::new(0, 0, 24, 1);
-        let mut buf = Buffer::empty(area);
-        rows[0].render(area, &mut buf);
-        let buf = without_left_to_right_marks(&buf);
-        // In the last column of the left half.
-        assert_eq!(buf[(11, 0)].symbol(), WRAP_MARKER);
+        themes().iter().for_each(|theme| {
+            // Each half is 12 columns wide: 6 for the line number column, 5 for the text, and 1
+            // for the marker.
+            let rows = Rows::new(24, theme)
+                .chunk_rows(&chunk("aaaa bbbb cccc", "aaaa"), FinalCr::Hidden)
+                .unwrap();
+            let texts: Vec<_> = rows.iter().map(text_of_row).collect();
+            assert_eq!(
+                texts,
+                [
+                    ("│ 1 │ aaaa ↵".to_string(), "│ 1 │ aaaa".to_string()),
+                    ("│   │ bbbb ↵".to_string(), "│   │ ".to_string()),
+                    ("│   │ cccc".to_string(), "│   │ ".to_string()),
+                ]
+            );
+            let Content::Split { left, .. } = &rows[0].content else {
+                panic!("chunk rows are split");
+            };
+            assert_eq!(style_in(left, WRAP_MARKER), theme.marker);
+            let area = Rect::new(0, 0, 24, 1);
+            let mut buf = Buffer::empty(area);
+            rows[0].render(area, &mut buf);
+            let buf = without_left_to_right_marks(&buf);
+            // In the last column of the left half.
+            assert_eq!(buf[(11, 0)].symbol(), WRAP_MARKER);
+        });
     }
 
     #[test]
     fn marker_is_in_the_last_column_of_the_right_half() {
-        let rows = Rows::new(24)
+        let rows = Rows::new(24, &Theme::none())
             .chunk_rows(&chunk("aaaa", "aaaa bbbb"), FinalCr::Hidden)
             .unwrap();
         let area = Rect::new(0, 0, 24, 1);
@@ -1176,7 +1331,7 @@ mod tests {
 
     #[test]
     fn unpaired_lines_have_a_filler_on_the_other_side() {
-        let rows = Rows::new(24)
+        let rows = Rows::new(24, &Theme::none())
             .chunk_rows(&chunk("aaaa", "bbbb"), FinalCr::Hidden)
             .unwrap();
         let texts: Vec<_> = rows.iter().map(text_of_row).collect();
@@ -1220,20 +1375,24 @@ mod tests {
                 missing_newline: false,
             },
         );
-        let rows = Rows::new(40).chunk_rows(&chunk, FinalCr::Hidden).unwrap();
         let halves = |row: &Row| match &row.content {
             Content::Split { left, right } => (left.clone(), right.clone()),
             _ => panic!("chunk rows are split"),
         };
-        let (left, right) = halves(&rows[0]);
-        assert_eq!(style_in(&left, "1"), UNCHANGED_LINE_NUMBER);
-        assert_eq!(style_in(&right, "1"), UNCHANGED_LINE_NUMBER);
-        let (left, right) = halves(&rows[1]);
-        assert_eq!(style_in(&left, "2"), REMOVED_LINE_NUMBER);
-        assert_eq!(style_in(&right, "2"), ADDED_LINE_NUMBER);
-        // The borders keep their color.
-        assert_eq!(style_in(&left, "│ "), LINE_NUMBER);
-        assert_eq!(style_in(&left, " │ "), LINE_NUMBER);
+        themes().iter().for_each(|theme| {
+            let rows = Rows::new(40, theme)
+                .chunk_rows(&chunk, FinalCr::Hidden)
+                .unwrap();
+            let (left, right) = halves(&rows[0]);
+            assert_eq!(style_in(&left, "1"), theme.unchanged_line_number);
+            assert_eq!(style_in(&right, "1"), theme.unchanged_line_number);
+            let (left, right) = halves(&rows[1]);
+            assert_eq!(style_in(&left, "2"), theme.removed_line_number);
+            assert_eq!(style_in(&right, "2"), theme.added_line_number);
+            // The borders keep their color.
+            assert_eq!(style_in(&left, "│ "), theme.line_number);
+            assert_eq!(style_in(&left, " │ "), theme.line_number);
+        });
     }
 
     /// The background colors of the cells of `row`, rendered `width` columns wide.
@@ -1246,33 +1405,39 @@ mod tests {
 
     #[test]
     fn modified_lines_have_a_red_or_green_background_up_to_the_end_of_their_half() {
-        // Each half is 20 columns wide: 6 for the line number column, 13 for the text, and 1 for
-        // the marker.
-        let rows = Rows::new(40)
-            .chunk_rows(&chunk("aaaa bbbb cccc dddd", "aaaa bbbb"), FinalCr::Hidden)
-            .unwrap();
-        let first = backgrounds(&rows[0], 40);
-        assert!(first[..6].iter().all(|bg| *bg == Color::Reset));
-        assert!(first[6..20].iter().all(|bg| *bg == REMOVED_BACKGROUND));
-        assert!(first[20..26].iter().all(|bg| *bg == Color::Reset));
-        assert!(first[26..].iter().all(|bg| *bg == ADDED_BACKGROUND));
-        // The continuation row of the removed line, and the padding of the added line.
-        let second = backgrounds(&rows[1], 40);
-        assert!(second[..6].iter().all(|bg| *bg == Color::Reset));
-        assert!(second[6..20].iter().all(|bg| *bg == REMOVED_BACKGROUND));
-        assert!(second[20..].iter().all(|bg| *bg == Color::Reset));
+        themes().iter().for_each(|theme| {
+            let removed = theme.removed_line.bg.unwrap();
+            let added = theme.added_line.bg.unwrap();
+            // Each half is 20 columns wide: 6 for the line number column, 13 for the text, and 1
+            // for the marker.
+            let rows = Rows::new(40, theme)
+                .chunk_rows(&chunk("aaaa bbbb cccc dddd", "aaaa bbbb"), FinalCr::Hidden)
+                .unwrap();
+            let first = backgrounds(&rows[0], 40);
+            assert!(first[..6].iter().all(|bg| *bg == Color::Reset));
+            assert!(first[6..20].iter().all(|bg| *bg == removed));
+            assert!(first[20..26].iter().all(|bg| *bg == Color::Reset));
+            assert!(first[26..].iter().all(|bg| *bg == added));
+            // The continuation row of the removed line, and the padding of the added line.
+            let second = backgrounds(&rows[1], 40);
+            assert!(second[..6].iter().all(|bg| *bg == Color::Reset));
+            assert!(second[6..20].iter().all(|bg| *bg == removed));
+            assert!(second[20..].iter().all(|bg| *bg == Color::Reset));
+        });
     }
 
     #[test]
     fn replacements_of_modified_lines_keep_their_background() {
-        let rows = Rows::new(40)
-            .chunk_rows(&chunk("a b", "a\u{a0}b"), FinalCr::Hidden)
-            .unwrap();
-        let Content::Split { right, .. } = &rows[0].content else {
-            panic!("chunk rows are split");
-        };
-        assert_eq!(style_in(right, "⍽").bg, Some(ADDED_BACKGROUND));
-        assert_eq!(style_in(right, "⍽").fg, INVISIBLE.fg);
+        themes().iter().for_each(|theme| {
+            let rows = Rows::new(40, theme)
+                .chunk_rows(&chunk("a b", "a\u{a0}b"), FinalCr::Hidden)
+                .unwrap();
+            let Content::Split { right, .. } = &rows[0].content else {
+                panic!("chunk rows are split");
+            };
+            assert_eq!(style_in(right, "⍽").bg, theme.added_line.bg);
+            assert_eq!(style_in(right, "⍽").fg, theme.invisible.fg);
+        });
     }
 
     #[test]
@@ -1286,18 +1451,22 @@ mod tests {
                 missing_newline: false,
             },
         );
-        let rows = Rows::new(40).chunk_rows(&chunk, FinalCr::Hidden).unwrap();
-        assert!(
-            backgrounds(&rows[0], 40)
-                .iter()
-                .all(|bg| *bg == Color::Reset)
-        );
-        // The removed line is unpaired, so the right half is a filler.
-        assert!(
-            backgrounds(&rows[1], 40)[20..]
-                .iter()
-                .all(|bg| *bg == Color::Reset)
-        );
+        themes().iter().for_each(|theme| {
+            let rows = Rows::new(40, theme)
+                .chunk_rows(&chunk, FinalCr::Hidden)
+                .unwrap();
+            assert!(
+                backgrounds(&rows[0], 40)
+                    .iter()
+                    .all(|bg| *bg == Color::Reset)
+            );
+            // The removed line is unpaired, so the right half is a filler.
+            assert!(
+                backgrounds(&rows[1], 40)[20..]
+                    .iter()
+                    .all(|bg| *bg == Color::Reset)
+            );
+        });
     }
 
     #[test]
@@ -1305,7 +1474,9 @@ mod tests {
         // Each half is 40 columns wide: the right line is wrapped, not the left one.
         let mut chunk = chunk("aaaa bbbb cccc", "aaaa bbbb cccc dddd eeee ffff gggg hhhh");
         chunk.lines[0].missing_newline = true;
-        let rows = Rows::new(80).chunk_rows(&chunk, FinalCr::Hidden).unwrap();
+        let rows = Rows::new(80, &Theme::none())
+            .chunk_rows(&chunk, FinalCr::Hidden)
+            .unwrap();
         let texts: Vec<_> = rows.iter().map(text_of_row).collect();
         assert_eq!(
             texts,
@@ -1321,10 +1492,6 @@ mod tests {
                 ),
             ]
         );
-        let Content::Split { left, .. } = &rows[2].content else {
-            panic!("chunk rows are split");
-        };
-        assert_eq!(style_in(left, MISSING_NEWLINE), ERROR);
         // It is a line of its own.
         assert_eq!(rows[2].line, rows[1].line + 1);
         assert_eq!(
@@ -1337,6 +1504,21 @@ mod tests {
     }
 
     #[test]
+    fn missing_newline_has_the_error_color() {
+        let mut chunk = chunk("aaaa", "aaaa bbbb");
+        chunk.lines[0].missing_newline = true;
+        themes().iter().for_each(|theme| {
+            let rows = Rows::new(80, theme)
+                .chunk_rows(&chunk, FinalCr::Hidden)
+                .unwrap();
+            let Content::Split { left, .. } = &rows[1].content else {
+                panic!("chunk rows are split");
+            };
+            assert_eq!(style_in(left, MISSING_NEWLINE), theme.error);
+        });
+    }
+
+    #[test]
     fn missing_newline_is_displayed_below_the_lines_added_after_it() {
         let mut chunk = chunk("aaaa", "aaaa");
         chunk.lines[0].missing_newline = true;
@@ -1345,7 +1527,9 @@ mod tests {
             text: "bbbb".to_string(),
             missing_newline: false,
         });
-        let rows = Rows::new(80).chunk_rows(&chunk, FinalCr::Hidden).unwrap();
+        let rows = Rows::new(80, &Theme::none())
+            .chunk_rows(&chunk, FinalCr::Hidden)
+            .unwrap();
         let texts: Vec<_> = rows.iter().map(text_of_row).collect();
         assert_eq!(
             texts,
@@ -1364,15 +1548,11 @@ mod tests {
     fn missing_newline_is_counted_as_a_line_when_the_chunk_is_too_narrow() {
         let mut chunk = chunk("aaaa", "aaaa");
         chunk.lines[0].missing_newline = true;
-        let mut rows = Rows::new(12);
+        let theme = Theme::none();
+        let mut rows = Rows::new(12, &theme);
         rows.chunk(&chunk, FinalCr::Hidden).unwrap();
         // The pair of lines, and the line displaying `MISSING_NEWLINE`.
         assert_eq!(rows.line, 2);
-    }
-
-    #[test]
-    fn error_color_is_bold_bright_red() {
-        assert_eq!(ERROR, Style::new().fg(Color::LightRed).bold());
     }
 
     #[test]
@@ -1383,11 +1563,13 @@ mod tests {
             content: FileContentType::InvalidUtf8,
             chunks: Vec::new(),
         };
-        let Content::Text(name) = &file_rows(&file, 110)[1].content else {
-            panic!("the file name is not split");
-        };
-        assert_eq!(style_in(name, "a"), FILE);
-        assert_eq!(style_in(name, " (invalid utf-8 content)"), ERROR);
+        themes().iter().for_each(|theme| {
+            let Content::Text(name) = &file_rows(&file, 110, theme)[1].content else {
+                panic!("the file name is not split");
+            };
+            assert_eq!(style_in(name, "a"), theme.file);
+            assert_eq!(style_in(name, " (invalid utf-8 content)"), theme.error);
+        });
     }
 
     #[test]
@@ -1399,7 +1581,7 @@ mod tests {
                 content,
                 chunks: Vec::new(),
             };
-            text_of_row(&file_rows(&file, 110)[1]).0
+            text_of_row(&file_rows(&file, 110, &Theme::none())[1]).0
         };
         let renamed = FileChange::Renamed { from: "a".into() };
         assert_eq!(name(FileChange::Modified, FileContentType::Text), "b");
@@ -1429,13 +1611,13 @@ mod tests {
             content: FileContentType::Text,
             chunks: Vec::new(),
         };
-        let name = text_of_row(&file_rows(&file, 110)[1]).0;
+        let name = text_of_row(&file_rows(&file, 110, &Theme::none())[1]).0;
         assert_eq!(name, "renamed: \u{fffd}.txt ⟶   caf\u{fffd}.txt");
     }
 
     #[test]
     fn rows_of_a_diff_line_start_at_their_first_character() {
-        let rows = Rows::new(24)
+        let rows = Rows::new(24, &Theme::none())
             .chunk_rows(&chunk("aaaa bbbb cccc", "aaaa"), FinalCr::Hidden)
             .unwrap();
         let starts: Vec<_> = rows.iter().map(|row| row.start).collect();
@@ -1461,7 +1643,7 @@ mod tests {
 
     #[test]
     fn header_body_and_file_names_are_wrapped_without_marker() {
-        let rows = commit_rows(&FakeCommit::LineWrapping.commit(), 110);
+        let rows = commit_rows(&FakeCommit::LineWrapping.commit(), 110, &Theme::none());
         let (header, continuation) = (text_of_row(&rows[0]).0, text_of_row(&rows[1]).0);
         assert_eq!(
             header,
@@ -1474,7 +1656,7 @@ mod tests {
         assert_eq!(rows[3].line, rows[4].line);
         let mut commit = FakeCommit::newest();
         commit.files[0].path = "src/a/very/long/path/to/the/config.rs".into();
-        let rows = commit_rows(&commit, 20);
+        let rows = commit_rows(&commit, 20, &Theme::none());
         let names: Vec<_> = rows
             .iter()
             .filter(|row| row.line == rows[0].line + 5)
@@ -1489,16 +1671,18 @@ mod tests {
 
     #[test]
     fn header_is_broken_inside_a_field_keeping_its_style() {
-        let rows = commit_rows(&FakeCommit::newest(), 93);
-        let (first, second) = (&rows[0].content, &rows[1].content);
-        let (Content::Text(first), Content::Text(second)) = (first, second) else {
-            panic!("the header is not split");
-        };
-        // The space of the markup before the break is not replaced.
-        assert!(text(first).ends_with("(HEAD -> main, tag: "));
-        assert_eq!(first.spans.last().unwrap().style, TAG);
-        assert_eq!(text(second), "v1.0, origin/main)");
-        assert_eq!(second.spans[0].style, TAG);
+        themes().iter().for_each(|theme| {
+            let rows = commit_rows(&FakeCommit::newest(), 93, theme);
+            let (first, second) = (&rows[0].content, &rows[1].content);
+            let (Content::Text(first), Content::Text(second)) = (first, second) else {
+                panic!("the header is not split");
+            };
+            // The space of the markup before the break is not replaced.
+            assert!(text(first).ends_with("(HEAD -> main, tag: "));
+            assert_eq!(first.spans.last().unwrap().style, theme.tag);
+            assert_eq!(text(second), "v1.0, origin/main)");
+            assert_eq!(second.spans[0].style, theme.tag);
+        });
     }
 
     #[test]
@@ -1507,35 +1691,42 @@ mod tests {
         commit.subject = "xy".to_string();
         commit.author = "a\tb".to_string();
         // The tab is at column 12.
-        assert_eq!(text(&header(&commit)), "c7e05b9 xy a⇥   b 05/10/2026");
+        assert_eq!(
+            text(&header(&commit, &Theme::none())),
+            "c7e05b9 xy a⇥   b 05/10/2026"
+        );
     }
 
     #[test]
     fn chunk_too_narrow_is_replaced_by_an_error_message() {
         let commit = FakeCommit::newest();
-        // The text area of each half has no column.
-        let rows = commit_rows(&commit, 12);
-        assert!(
-            rows.iter()
-                .all(|row| !matches!(row.content, Content::Split { .. }))
-        );
-        let errors: Vec<_> = rows
-            .iter()
-            .filter_map(|row| match &row.content {
-                Content::Text(line) if line.spans.first()?.style == ERROR => Some(row.line),
-                _ => None,
-            })
-            .collect();
-        assert!(!errors.is_empty());
-        // The lines after the chunks keep the same index.
-        let wide = commit_rows(&commit, 110);
-        assert_eq!(rows.last().unwrap().line, wide.last().unwrap().line);
+        themes().iter().for_each(|theme| {
+            // The text area of each half has no column.
+            let rows = commit_rows(&commit, 12, theme);
+            assert!(
+                rows.iter()
+                    .all(|row| !matches!(row.content, Content::Split { .. }))
+            );
+            let errors: Vec<_> = rows
+                .iter()
+                .filter_map(|row| match &row.content {
+                    Content::Text(line) if line.spans.first()?.style == theme.error => {
+                        Some(row.line)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert!(!errors.is_empty());
+            // The lines after the chunks keep the same index.
+            let wide = commit_rows(&commit, 110, theme);
+            assert_eq!(rows.last().unwrap().line, wide.last().unwrap().line);
+        });
     }
 
     #[test]
     fn chunk_too_narrow_for_the_error_message_is_an_error() {
         let commit = FakeCommit::newest();
-        let error = Rows::new(0)
+        let error = Rows::new(0, &Theme::none())
             .chunk(&commit.files[0].chunks[0], FinalCr::Hidden)
             .unwrap_err();
         assert_eq!(error.width, 0);
@@ -1545,7 +1736,7 @@ mod tests {
     fn text_area_too_narrow_outside_of_a_chunk_is_an_error() {
         let mut commit = FakeCommit::newest();
         commit.author = "日本".to_string();
-        let error = rows(&[commit], 1).unwrap_err();
+        let error = rows(&[commit], 1, &Theme::none()).unwrap_err();
         assert_eq!(
             error,
             TooNarrow {
@@ -1553,12 +1744,12 @@ mod tests {
                 cluster: "日".to_string()
             }
         );
-        assert!(rows(&FakeCommit::all(), 0).is_err());
+        assert!(rows(&FakeCommit::all(), 0, &Theme::none()).is_err());
     }
 
     #[test]
     fn anchor_is_on_the_right_half_if_it_displays_text() {
-        let rows = Rows::new(24)
+        let rows = Rows::new(24, &Theme::none())
             .chunk_rows(&chunk("aaaa bbbb", "aaaa dddd"), FinalCr::Hidden)
             .unwrap();
         assert_eq!(
@@ -1569,7 +1760,7 @@ mod tests {
                 offset: 5
             }
         );
-        let rows = Rows::new(24)
+        let rows = Rows::new(24, &Theme::none())
             .chunk_rows(&chunk("aaaa bbbb", "aaaa"), FinalCr::Hidden)
             .unwrap();
         assert_eq!(
@@ -1585,8 +1776,8 @@ mod tests {
     #[test]
     fn find_returns_the_row_displaying_the_first_character_of_a_row() {
         let commits = FakeCommit::all();
-        let wide = rows(&commits, 110).unwrap();
-        let narrow = rows(&commits, 60).unwrap();
+        let wide = rows(&commits, 110, &Theme::none()).unwrap();
+        let narrow = rows(&commits, 60, &Theme::none()).unwrap();
         narrow.iter().for_each(|row| {
             let anchor = row.anchor();
             let i = find(&wide, anchor);
@@ -1611,8 +1802,8 @@ mod tests {
     #[test]
     fn find_returns_the_next_line_when_the_line_is_not_displayed() {
         let commit = FakeCommit::newest();
-        let wide = commit_rows(&commit, 110);
-        let narrow = commit_rows(&commit, 12);
+        let wide = commit_rows(&commit, 110, &Theme::none());
+        let narrow = commit_rows(&commit, 12, &Theme::none());
         let code = wide
             .iter()
             .find(|row| matches!(row.content, Content::Split { .. }))
@@ -1624,81 +1815,139 @@ mod tests {
     #[test]
     fn rules_and_file_name_are_colored() {
         let commit = FakeCommit::newest();
-        let rows = commit_rows(&commit, 110);
-        let area = Rect::new(0, 0, 110, 26);
-        let mut buffer = Buffer::empty(area);
-        RowsView {
-            rows: &rows,
-            viewport: Viewport::default(),
-        }
-        .render(area, &mut buffer);
-        let buffer = without_left_to_right_marks(&buffer);
-        // File name, then the rule below it.
-        assert_eq!(buffer[(0, 5)].symbol(), "s");
-        assert_eq!(buffer[(0, 5)].fg, Color::Blue);
-        assert_eq!(buffer[(109, 6)].symbol(), "─");
-        assert_eq!(buffer[(109, 6)].fg, Color::Blue);
-        // Separator below the commit.
-        assert_eq!(buffer[(109, 25)].symbol(), "─");
-        assert_eq!(buffer[(109, 25)].fg, Color::Red);
+        themes().iter().for_each(|theme| {
+            let rows = commit_rows(&commit, 110, theme);
+            let area = Rect::new(0, 0, 110, 26);
+            let mut buffer = Buffer::empty(area);
+            RowsView {
+                rows: &rows,
+                viewport: Viewport::default(),
+                theme,
+            }
+            .render(area, &mut buffer);
+            let buffer = without_left_to_right_marks(&buffer);
+            // File name, then the rule below it.
+            assert_eq!(buffer[(0, 5)].symbol(), "s");
+            assert_eq!(buffer[(0, 5)].fg, theme.file.fg.unwrap());
+            assert_eq!(buffer[(109, 6)].symbol(), "─");
+            assert_eq!(buffer[(109, 6)].fg, theme.file.fg.unwrap());
+            // Separator below the commit.
+            assert_eq!(buffer[(109, 25)].symbol(), "─");
+            assert_eq!(buffer[(109, 25)].fg, theme.commit_separator.fg.unwrap());
+        });
     }
 
     #[test]
     fn status_bar_displays_the_mode() {
-        let backend = render(110, 26, Viewport::default());
+        themes().iter().for_each(|theme| {
+            let backend = render(110, 26, Viewport::default(), theme);
+            let buffer = backend.buffer();
+            let status_bar: String = (0..8).map(|x| buffer[(x, 25)].symbol()).collect();
+            assert_eq!(status_bar, " Review ");
+            assert_eq!(buffer[(1, 25)].bg, theme.review_mode.bg.unwrap());
+        });
+    }
+
+    #[test]
+    fn mode_is_in_reverse_video_and_bold_without_colors() {
+        let backend = render(110, 26, Viewport::default(), &Theme::none());
         let buffer = backend.buffer();
         let status_bar: String = (0..8).map(|x| buffer[(x, 25)].symbol()).collect();
         assert_eq!(status_bar, " Review ");
-        assert_eq!(buffer[(1, 25)].bg, Mode::Review.accent());
+        assert!((0..8).all(|x| {
+            buffer[(x, 25)]
+                .modifier
+                .contains(Modifier::REVERSED | Modifier::BOLD)
+        }));
+    }
+
+    /// All the rows of the fake commits on a single screen, with the cursor on the first row.
+    fn render_all(theme: &Theme) -> TestBackend {
+        let height = rows(&FakeCommit::all(), 110, theme).unwrap().len() + 1;
+        render(110, height as u16, Viewport::default(), theme)
+    }
+
+    #[test]
+    fn none_theme_displays_no_color() {
+        let backend = render_all(&Theme::none());
+        assert!(backend.buffer().content.iter().all(|cell| {
+            cell.fg == Color::Reset
+                && cell.bg == Color::Reset
+                && cell.underline_color == Color::Reset
+        }));
+    }
+
+    #[test]
+    fn none_theme_keeps_bold() {
+        let bold = |backend: TestBackend| -> Vec<bool> {
+            backend
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.modifier.contains(Modifier::BOLD))
+                .collect()
+        };
+        assert_eq!(
+            bold(render_all(&Theme::none())),
+            bold(render_all(&Theme::dark()))
+        );
     }
 
     #[test]
     fn invisible_characters_of_the_header_are_replaced_per_field() {
         let mut commit = FakeCommit::InvisibleCharacters.commit();
         commit.decorations = vec![Decoration::LocalBranch("fix\u{200b} ".to_string())];
-        let header = header(&commit);
-        assert_eq!(
-            text(&header),
-            "c7e05b9 lint: add fixtures for⌁ invisible characters∙ Zoé⍽Durand 05/10/2026 (fix⌁∙)"
-        );
-        assert_eq!(style_in(&header, "⍽"), AUTHOR.patch(INVISIBLE));
-        assert_eq!(style_in(&header, "⌁"), LOCAL_BRANCH.patch(INVISIBLE));
-        assert_eq!(
-            style_in(&header, "∙"),
-            LOCAL_BRANCH.patch(TRAILING_WHITESPACE)
-        );
+        themes().iter().for_each(|theme| {
+            let header = header(&commit, theme);
+            assert_eq!(
+                text(&header),
+                "c7e05b9 lint: add fixtures for⌁ invisible characters∙ Zoé⍽Durand 05/10/2026 \
+                 (fix⌁∙)"
+            );
+            assert_eq!(style_in(&header, "⍽"), theme.author.patch(theme.invisible));
+            assert_eq!(
+                style_in(&header, "⌁"),
+                theme.local_branch.patch(theme.invisible)
+            );
+            assert_eq!(
+                style_in(&header, "∙"),
+                theme.local_branch.patch(theme.trailing_whitespace)
+            );
+        });
     }
 
     #[test]
     fn replacements_are_bold_red_and_tabs_dim_gray() {
         let commit = FakeCommit::InvisibleCharacters.commit();
-        let rows = commit_rows(&commit, 110);
-        let Content::Text(body) = &rows[2].content else {
-            panic!("the body is not split");
-        };
-        assert_eq!(style_in(body, "⍽"), INVISIBLE);
-        assert_eq!(style_in(body, "∙"), TRAILING_WHITESPACE);
-        let makefile = file_rows(&commit.files[2], 110);
-        let Content::Split { right, .. } = &makefile[7].content else {
-            panic!("chunk rows are split");
-        };
-        assert_eq!(text(right), "│ 5 │ ⇥   cc $(CFLAGS) -o app main.c");
-        assert_eq!(style_in(right, "⇥   "), DIMMED_WHITESPACE);
-        let Content::Split { right, .. } = &makefile[4].content else {
-            panic!("chunk rows are split");
-        };
-        // A trailing tab is trailing whitespace.
-        assert_eq!(text(right), "│ 2 │ all: build⇥ ");
-        assert_eq!(
-            style_in(right, "⇥ "),
-            TRAILING_WHITESPACE.bg(ADDED_BACKGROUND)
-        );
+        themes().iter().for_each(|theme| {
+            let rows = commit_rows(&commit, 110, theme);
+            let Content::Text(body) = &rows[2].content else {
+                panic!("the body is not split");
+            };
+            assert_eq!(style_in(body, "⍽"), theme.invisible);
+            assert_eq!(style_in(body, "∙"), theme.trailing_whitespace);
+            let makefile = file_rows(&commit.files[2], 110, theme);
+            let Content::Split { right, .. } = &makefile[7].content else {
+                panic!("chunk rows are split");
+            };
+            assert_eq!(text(right), "│ 5 │ ⇥   cc $(CFLAGS) -o app main.c");
+            assert_eq!(style_in(right, "⇥   "), theme.dimmed_whitespace);
+            let Content::Split { right, .. } = &makefile[4].content else {
+                panic!("chunk rows are split");
+            };
+            // A trailing tab is trailing whitespace.
+            assert_eq!(text(right), "│ 2 │ all: build⇥ ");
+            assert_eq!(
+                style_in(right, "⇥ "),
+                theme.trailing_whitespace.patch(theme.added_line)
+            );
+        });
     }
 
     #[test]
     fn tab_stops_are_counted_from_the_beginning_of_the_code() {
         let commit = FakeCommit::InvisibleCharacters.commit();
-        let makefile = file_rows(&commit.files[2], 110);
+        let makefile = file_rows(&commit.files[2], 110, &Theme::none());
         // `CFLAGS` is 6 columns wide, the next tab stop is at column 8.
         assert_eq!(text_of_row(&makefile[3]).1, "│ 1 │ CFLAGS⇥ = -O2");
     }
@@ -1706,7 +1955,7 @@ mod tests {
     #[test]
     fn carriage_returns_are_hidden_when_line_endings_are_consistent() {
         let commit = FakeCommit::InvisibleCharacters.commit();
-        let emoji = file_rows(&commit.files[1], 110);
+        let emoji = file_rows(&commit.files[1], 110, &Theme::none());
         let (left, right) = row_starting_with(&emoji, "│ 7 │");
         assert_eq!(left, "│ 7 │ const JOINED: &str = \"ab\";");
         assert_eq!(right, "│ 7 │ const JOINED: &str = \"a⌁b⌁\";");
@@ -1715,7 +1964,7 @@ mod tests {
     #[test]
     fn carriage_returns_are_shown_when_line_endings_are_inconsistent() {
         let commit = FakeCommit::InvisibleCharacters.commit();
-        let script = file_rows(&commit.files[3], 110);
+        let script = file_rows(&commit.files[3], 110, &Theme::none());
         let (left, right) = row_starting_with(&script, "│ 3 │");
         assert_eq!(left, "│ 3 │ exit /b 0␍");
         assert_eq!(right, "│ 3 │ exit /b 0");
@@ -1724,7 +1973,7 @@ mod tests {
     #[test]
     fn carriage_returns_of_the_body_are_shown() {
         let commit = FakeCommit::InvisibleCharacters.commit();
-        let rows = commit_rows(&commit, 110);
+        let rows = commit_rows(&commit, 110, &Theme::none());
         assert_eq!(
             text_of_row(&rows[3]).0,
             "The batch script now always uses CRLF line endings.␍"
@@ -1735,7 +1984,187 @@ mod tests {
     fn invisible_characters_of_the_file_name_are_replaced() {
         let mut commit = FakeCommit::InvisibleCharacters.commit();
         commit.files[0].path = "a\u{a0}b".into();
-        let rows = commit_rows(&commit, 110);
+        let rows = commit_rows(&commit, 110, &Theme::none());
         assert_eq!(text_of_row(&rows[5]).0, "a⍽b");
+    }
+
+    /// An error modal displaying 2 unknown keys of the config file.
+    fn unknown_keys_error_modal() -> ErrorModal {
+        let unknown_key = |key: &str, value: &str, line| UnknownKey {
+            key: key.to_string(),
+            value: value.parse().unwrap(),
+            line,
+        };
+        ErrorModal::UnknownKeys {
+            path: "/home/alice/.config/reedi/config.toml".into(),
+            unknown_keys: vec![
+                unknown_key("scrolloff", "3", 3),
+                unknown_key("keys", "{ quit = \"q\", down = \"j\", up = \"k\" }", 5),
+            ],
+        }
+    }
+
+    #[test]
+    fn error_modal_is_displayed_over_the_commits() {
+        let error_modal = unknown_keys_error_modal();
+        insta::assert_snapshot!(render_with_error_modal(
+            110,
+            26,
+            Viewport::default(),
+            Some(&error_modal),
+            &Theme::none()
+        ));
+    }
+
+    #[test]
+    fn long_lines_of_the_error_modal_are_wrapped() {
+        let error_modal = unknown_keys_error_modal();
+        insta::assert_snapshot!(render_with_error_modal(
+            40,
+            12,
+            Viewport::default(),
+            Some(&error_modal),
+            &Theme::none()
+        ));
+    }
+
+    /// The position of the top left corner of the error modal displayed on `backend`.
+    fn error_modal_corner(backend: &TestBackend) -> (u16, u16) {
+        let buffer = backend.buffer();
+        let corner = buffer
+            .content
+            .iter()
+            .position(|cell| cell.symbol() == "┏")
+            .unwrap();
+        buffer.pos_of(corner)
+    }
+
+    #[test]
+    fn border_of_the_error_modal_has_the_error_style_and_its_title_in_reverse_video() {
+        let error_modal = unknown_keys_error_modal();
+        themes().iter().for_each(|theme| {
+            let backend =
+                render_with_error_modal(110, 26, Viewport::default(), Some(&error_modal), theme);
+            let buffer = backend.buffer();
+            let (x, y) = error_modal_corner(&backend);
+            // The corner, and the left border below it.
+            [(x, y), (x, y + 1)].into_iter().for_each(|position| {
+                assert_eq!(buffer[position].fg, theme.error.fg.unwrap());
+                assert_eq!(buffer[position].bg, Color::Reset);
+                assert!(!buffer[position].modifier.contains(Modifier::REVERSED));
+            });
+            // The space before the title, then its first letter.
+            assert_eq!(buffer[(x + 2, y)].symbol(), "U");
+            [(x + 1, y), (x + 2, y)].into_iter().for_each(|position| {
+                assert_eq!(buffer[position].fg, theme.error.fg.unwrap());
+                assert!(
+                    buffer[position]
+                        .modifier
+                        .contains(Modifier::REVERSED | Modifier::BOLD)
+                );
+            });
+        });
+    }
+
+    #[test]
+    fn title_of_the_error_modal_is_in_reverse_video_without_colors() {
+        let error_modal = unknown_keys_error_modal();
+        let backend = render_with_error_modal(
+            110,
+            26,
+            Viewport::default(),
+            Some(&error_modal),
+            &Theme::none(),
+        );
+        let buffer = backend.buffer();
+        let (x, y) = error_modal_corner(&backend);
+        assert!(!buffer[(x, y)].modifier.contains(Modifier::REVERSED));
+        assert!(
+            buffer[(x + 2, y)]
+                .modifier
+                .contains(Modifier::REVERSED | Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn bottom_border_of_the_error_modal_tells_how_to_close_it() {
+        let error_modal = unknown_keys_error_modal();
+        themes().iter().for_each(|theme| {
+            let backend =
+                render_with_error_modal(110, 26, Viewport::default(), Some(&error_modal), theme);
+            let buffer = backend.buffer();
+            let (left, top) = error_modal_corner(&backend);
+            let bottom = (top..26)
+                .find(|&y| buffer[(left, y)].symbol() == "┗")
+                .unwrap();
+            let right = (left..110)
+                .find(|&x| buffer[(x, bottom)].symbol() == "┛")
+                .unwrap();
+            let border: String = (left + 1..right)
+                .map(|x| buffer[(x, bottom)].symbol())
+                .collect();
+            let (before, after) = border.split_once(" Press any key to close ").unwrap();
+            // Centered.
+            assert!(before.chars().count().abs_diff(after.chars().count()) <= 1);
+            assert!(before.chars().chain(after.chars()).all(|c| c == '━'));
+            let start = left + 1 + before.chars().count() as u16;
+            (start..start + 24).for_each(|x| {
+                assert_eq!(buffer[(x, bottom)].fg, theme.error.fg.unwrap());
+                assert!(!buffer[(x, bottom)].modifier.contains(Modifier::REVERSED));
+            });
+        });
+    }
+
+    #[test]
+    fn content_of_the_error_modal_has_a_blank_row_above_and_below() {
+        let error_modal = unknown_keys_error_modal();
+        let backend = render_with_error_modal(
+            110,
+            26,
+            Viewport::default(),
+            Some(&error_modal),
+            &Theme::none(),
+        );
+        let buffer = backend.buffer();
+        let (left, top) = error_modal_corner(&backend);
+        let right = (left..110)
+            .find(|&x| buffer[(x, top)].symbol() == "┓")
+            .unwrap();
+        let bottom = (top..26)
+            .find(|&y| buffer[(left, y)].symbol() == "┗")
+            .unwrap();
+        let row = |y| -> String { (left..=right).map(|x| buffer[(x, y)].symbol()).collect() };
+        let blank = format!("┃{}┃", " ".repeat(usize::from(right - left - 1)));
+        assert_eq!(row(top + 1), blank);
+        assert!(row(top + 2).starts_with("┃ line 3: "));
+        assert_eq!(row(bottom - 1), blank);
+        // Just around the border, the commits are displayed.
+        assert_ne!(buffer[(left - 1, top)].symbol(), " ");
+    }
+
+    #[test]
+    fn inside_of_the_error_modal_has_the_default_background() {
+        let error_modal = unknown_keys_error_modal();
+        [Theme::dark(), Theme::light(), Theme::none()]
+            .iter()
+            .for_each(|theme| {
+                let backend = render_with_error_modal(
+                    110,
+                    26,
+                    Viewport::default(),
+                    Some(&error_modal),
+                    theme,
+                );
+                let buffer = backend.buffer();
+                let (x, y) = error_modal_corner(&backend);
+                // The blank row, then the padding and the text below it.
+                assert_eq!(buffer[(x + 2, y + 2)].symbol(), "l");
+                [(x + 1, y + 1), (x + 1, y + 2), (x + 2, y + 2)]
+                    .into_iter()
+                    .for_each(|position| {
+                        assert_eq!(buffer[position].bg, Color::Reset);
+                        assert!(!buffer[position].modifier.contains(Modifier::REVERSED));
+                    });
+            });
     }
 }

@@ -5,7 +5,7 @@ The software (named "reedi") is in Rust (rust-version: 1.99, edition: 2024). 3rd
 over hand-written code. Everything impremented comes with a test (unit test or integration test,
 whichever make the more sense).
 
-- no configuration for the prototype, they all use their default value
+- unless specified, config file is unused in the prototype, all settings use their default value
 - each version should be as simple as possible to implement what is required, but keep in mind the
 future modification needed for next versions. Most notably dependencies should not be changed
 between version, just added.
@@ -34,7 +34,7 @@ Syntax highlighting
   empty state at each chunk).
 
 version 0.0.0: general structure
-----------------------------
+------------------------------
 
 - [x] Display only realistic fake Rust fixed values for a single fake commit, but with real logic to
   fill them (real data model, and real rendering, only the data is fake):
@@ -164,15 +164,51 @@ version 0.0.4: diff-aware internal architecture
          newline at end of file` in the error color, with an empty line number column
    - [x] added/deleted files still use the 50/50 split, with an empty side (like unpaired lines)
 
-version 0.0.x: theming
+version 0.0.5: theming
 --------------------
 
-- [ ] read theme preference (light/dark/none) from config file (using XDG conventions)
-- [ ] if preference is unset, detect terminal color theme (with `terminal-colorsaurus`, like
+- [x] config file:
+   - [x] the config file is `$XDG_CONFIG_HOME/reedi/config.toml` (`~/.config/reedi/config.toml`
+     if unset)
+   - [x] a missing file, or a file without the preference key, means the preference is unset
+   - [x] an unreadable file, an invalid TOML file, or an invalid value makes `reedi` exit with a
+     clear error message
+   - [x] a warning is display if an unknown preference key is used
+      - [x] it is displayed at startup in a modal over the commits (instead of the standard error
+        output), closed by any key press, which does nothing else
+      - [x] its title is `Unknown key in config file: $path`, then each unknown key is on its own
+        line: ``line $line: `$key = $value` ``. Long lines are wrapped
+      - [x] the modal is centered, as wide as its content (at most the width of the screen), with
+        its border with heavy lines in the error style on the default background, and its title in
+        the error style in reverse video (bright red background). Its inside has the default
+        background
+      - [x] inside the border, there is a blank row above and below the content
+      - [x] `Press any key to close` is centered in the bottom border, in the error style (the
+        modal is at least wide enough to display it)
+      - [x] the status bar keeps displaying the current mode
+- [x] read theme preference from config file:
+    - [x] the preference is `colorscheme = "light" | "dark" | "none"`
+- [x] if preference is unset, detect terminal color theme (with `terminal-colorsaurus`, like
       `delta`, dark if it cannot be detected) to choose between the light and dark theme
-- [ ] architecture is ready to use different colorscheme
-- [ ] snapshoot testing use the `none` theme, that only use black and white
-- [ ] dedicated unit tests testing for color validate both light and dark themes
+   - [x] the detection is done once, before entering the alternate screen
+- [x] all styles are grouped in a `Theme` (one per theme: dark, light and none), built once and
+  given to the rendering. Later versions will fill it from the git configuration and the syntax
+  highlighting theme
+   - [x] dark: the current colors
+   - [x] light: the git colors (hash, author, date, decorations, file name, rules, `↵` marker,
+     errors, invisible characters) are the same as in dark. The other colors are the defaults of
+     `delta` in light mode, or their light equivalent:
+      - removed line background: `#ffe0e0`, added line background: `#d0ffd0`
+      - removed line number: red, added line number: green, unchanged line number: `#dddddd`
+      - cursor row background: 254
+      - dimmed whitespace: 250
+   - [x] none: no color, only the terminal default foreground and background (bold is kept). The
+     row of the cursor uses reverse video, and the mode name in the status bar uses reverse video
+     and bold
+- [x] snapshoot testing use the `none` theme, that only use black and white
+   - [x] snapshots stay color independent (they only contain the text)
+- [x] dedicated unit tests testing for color validate both light and dark themes
+   - [x] the existing color tests are run for both the light and dark themes (not duplicated)
 
 version 0.0.x: word-diff and syntax support
 -----------------------------------------
