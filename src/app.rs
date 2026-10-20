@@ -1,6 +1,7 @@
 //! Terminal handling and event loop.
 
 use std::io;
+use std::path::PathBuf;
 
 use nix::sys::signal;
 use nix::sys::signal::Signal;
@@ -13,9 +14,13 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal;
 use ratatui::crossterm::terminal::EnterAlternateScreen;
 
+use crate::config::UnknownKey;
 use crate::fake::FakeCommit;
 use crate::model::Commit;
+use crate::settings::Settings;
+use crate::theme::Theme;
 use crate::view;
+use crate::view::ErrorModal;
 use crate::view::Mode;
 use crate::view::Row;
 use crate::viewport::Viewport;
@@ -30,12 +35,19 @@ enum Action {
     Suspend,
 }
 
-/// Display the commits until `q` or `ctrl+c` is pressed.
+/// Display the commits with `settings` until `q` or `ctrl+c` is pressed, and the `unknown_keys` of
+/// the config file (its path, and at least one key) in an error modal over them, if any, until a
+/// key is pressed.
 ///
 /// Like `less`, the alternate screen is used, and the screen is redrawn when its size changes.
 /// Fails if a text area outside of the chunks is too narrow to display a grapheme cluster of its
 /// line.
-pub fn run() -> io::Result<()> {
+pub fn run(
+    settings: &Settings,
+    unknown_keys: Option<(PathBuf, Vec<UnknownKey>)>,
+) -> io::Result<()> {
+    let mut error_modal =
+        unknown_keys.map(|(path, unknown_keys)| ErrorModal::UnknownKeys { path, unknown_keys });
     let commits = FakeCommit::all();
     let mut rows = Vec::new();
     let mut width = None;
@@ -44,12 +56,27 @@ pub fn run() -> io::Result<()> {
         loop {
             let screen_width = terminal.size()?.width;
             if width != Some(screen_width) {
-                rows = rewrap(&commits, &rows, &mut viewport, screen_width)
-                    .map_err(io::Error::other)?;
+                rows = rewrap(
+                    &commits,
+                    &rows,
+                    &mut viewport,
+                    screen_width,
+                    &settings.theme,
+                )
+                .map_err(io::Error::other)?;
                 width = Some(screen_width);
             }
-            terminal.draw(|frame| view::draw(frame, &rows, &mut viewport, Mode::Review))?;
-            match action(&event::read()?) {
+            terminal.draw(|frame| {
+                view::draw(
+                    frame,
+                    &rows,
+                    &mut viewport,
+                    Mode::Review,
+                    error_modal.as_ref(),
+                    &settings.theme,
+                )
+            })?;
+            match handle(&event::read()?, &mut error_modal) {
                 Some(Action::Down) => viewport.down(rows.len()),
                 Some(Action::Up) => viewport.up(),
                 Some(Action::Quit) => return Ok(()),
@@ -69,12 +96,27 @@ fn rewrap(
     rows: &[Row],
     viewport: &mut Viewport,
     width: u16,
+    theme: &Theme,
 ) -> Result<Vec<Row>, TooNarrow> {
-    let new_rows = view::rows(commits, width)?;
+    let new_rows = view::rows(commits, width, theme)?;
     if let Some(row) = rows.get(viewport.cursor) {
         viewport.move_cursor(view::find(&new_rows, row.anchor()));
     }
     Ok(new_rows)
+}
+
+/// The action triggered by `event`, if any. While `error_modal` is displayed, a key press only
+/// closes it.
+fn handle(event: &Event, error_modal: &mut Option<ErrorModal>) -> Option<Action> {
+    match error_modal {
+        Some(_) => {
+            if matches!(event, Event::Key(key) if key.is_press()) {
+                *error_modal = None;
+            }
+            None
+        }
+        None => action(event),
+    }
 }
 
 /// The action triggered by `event`, if any. All other keys are inactive.
@@ -185,7 +227,7 @@ mod tests {
     #[test]
     fn cursor_moves_row_by_row() {
         let commits = FakeCommit::all();
-        let rows = view::rows(&commits, 110).unwrap();
+        let rows = view::rows(&commits, 110, &Theme::monochrome()).unwrap();
         let mut viewport = Viewport::default();
         viewport.down(rows.len());
         // The header of the first commit is displayed on 2 rows.
@@ -196,7 +238,14 @@ mod tests {
     #[test]
     fn first_rows_keep_the_cursor_on_the_first_row() {
         let mut viewport = Viewport::default();
-        let rows = rewrap(&FakeCommit::all(), &[], &mut viewport, 110).unwrap();
+        let rows = rewrap(
+            &FakeCommit::all(),
+            &[],
+            &mut viewport,
+            110,
+            &Theme::monochrome(),
+        )
+        .unwrap();
         assert!(!rows.is_empty());
         assert_eq!(viewport, Viewport::default());
     }
@@ -204,7 +253,7 @@ mod tests {
     #[test]
     fn rewrapping_keeps_the_cursor_on_the_first_character_of_its_row() {
         let commits = FakeCommit::all();
-        let narrow = view::rows(&commits, 60).unwrap();
+        let narrow = view::rows(&commits, 60, &Theme::monochrome()).unwrap();
         // The second row of the first line of the body (the header is the line 0, then a blank
         // line).
         let cursor = narrow
@@ -215,7 +264,7 @@ mod tests {
             cursor,
             top: cursor - 3,
         };
-        let wide = rewrap(&commits, &narrow, &mut viewport, 110).unwrap();
+        let wide = rewrap(&commits, &narrow, &mut viewport, 110, &Theme::monochrome()).unwrap();
         // The first line of the body is displayed on a single row.
         assert_eq!(wide[viewport.cursor].line, 2);
         assert_eq!(viewport.cursor, view::find(&wide, narrow[cursor].anchor()));
@@ -228,6 +277,51 @@ mod tests {
     // CHUNK_TOO_NARROW message
     fn rewrapping_to_a_too_narrow_screen_is_an_error() {
         let mut viewport = Viewport::default();
-        assert!(rewrap(&FakeCommit::all(), &[], &mut viewport, 0).is_err());
+        assert!(
+            rewrap(
+                &FakeCommit::all(),
+                &[],
+                &mut viewport,
+                0,
+                &Theme::monochrome()
+            )
+            .is_err()
+        );
+    }
+
+    fn error_modal() -> Option<ErrorModal> {
+        Some(ErrorModal::UnknownKeys {
+            path: "config.toml".into(),
+            unknown_keys: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn key_press_only_closes_the_error_modal() {
+        let mut error_modal = error_modal();
+        assert_eq!(handle(&key(KeyCode::Char('q')), &mut error_modal), None);
+        assert_eq!(error_modal, None);
+    }
+
+    #[test]
+    fn error_modal_stays_open_until_a_key_is_pressed() {
+        let mut error_modal = error_modal();
+        let release = Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char('q'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+        assert_eq!(handle(&release, &mut error_modal), None);
+        assert_eq!(handle(&Event::Resize(80, 24), &mut error_modal), None);
+        assert!(error_modal.is_some());
+    }
+
+    #[test]
+    fn keys_are_active_without_error_modal() {
+        let mut error_modal = None;
+        assert_eq!(
+            handle(&key(KeyCode::Char('q')), &mut error_modal),
+            Some(Action::Quit)
+        );
     }
 }
