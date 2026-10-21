@@ -15,6 +15,7 @@ use ratatui::crossterm::terminal;
 use ratatui::crossterm::terminal::EnterAlternateScreen;
 
 use crate::config::UnknownKey;
+use crate::date::DateDisplay;
 use crate::fake::FakeCommit;
 use crate::model::Commit;
 use crate::settings::Settings;
@@ -62,6 +63,7 @@ pub fn run(
                     &mut viewport,
                     screen_width,
                     &settings.theme,
+                    &settings.dates,
                 )
                 .map_err(io::Error::other)?;
                 width = Some(screen_width);
@@ -97,8 +99,9 @@ fn rewrap(
     viewport: &mut Viewport,
     width: u16,
     theme: &Theme,
+    dates: &DateDisplay,
 ) -> Result<Vec<Row>, TooNarrow> {
-    let new_rows = view::rows(commits, width, theme)?;
+    let new_rows = view::rows(commits, width, theme, dates)?;
     if let Some(row) = rows.get(viewport.cursor) {
         viewport.move_cursor(view::find(&new_rows, row.anchor()));
     }
@@ -227,7 +230,8 @@ mod tests {
     #[test]
     fn cursor_moves_row_by_row() {
         let commits = FakeCommit::all();
-        let rows = view::rows(&commits, 110, &Theme::none()).unwrap();
+        let rows =
+            view::rows(&commits, 110, &Theme::none(), &DateDisplay::for_snapshots()).unwrap();
         let mut viewport = Viewport::default();
         viewport.down(rows.len());
         // The header of the first commit is displayed on 2 rows.
@@ -238,7 +242,15 @@ mod tests {
     #[test]
     fn first_rows_keep_the_cursor_on_the_first_row() {
         let mut viewport = Viewport::default();
-        let rows = rewrap(&FakeCommit::all(), &[], &mut viewport, 110, &Theme::none()).unwrap();
+        let rows = rewrap(
+            &FakeCommit::all(),
+            &[],
+            &mut viewport,
+            110,
+            &Theme::none(),
+            &DateDisplay::for_snapshots(),
+        )
+        .unwrap();
         assert!(!rows.is_empty());
         assert_eq!(viewport, Viewport::default());
     }
@@ -246,7 +258,8 @@ mod tests {
     #[test]
     fn rewrapping_keeps_the_cursor_on_the_first_character_of_its_row() {
         let commits = FakeCommit::all();
-        let narrow = view::rows(&commits, 60, &Theme::none()).unwrap();
+        let narrow =
+            view::rows(&commits, 60, &Theme::none(), &DateDisplay::for_snapshots()).unwrap();
         // The second row of the first line of the body (the header is the line 0, then a blank
         // line).
         let cursor = narrow
@@ -257,7 +270,15 @@ mod tests {
             cursor,
             top: cursor - 3,
         };
-        let wide = rewrap(&commits, &narrow, &mut viewport, 110, &Theme::none()).unwrap();
+        let wide = rewrap(
+            &commits,
+            &narrow,
+            &mut viewport,
+            110,
+            &Theme::none(),
+            &DateDisplay::for_snapshots(),
+        )
+        .unwrap();
         // The first line of the body is displayed on a single row.
         assert_eq!(wide[viewport.cursor].line, 2);
         assert_eq!(viewport.cursor, view::find(&wide, narrow[cursor].anchor()));
@@ -270,7 +291,17 @@ mod tests {
     // CHUNK_TOO_NARROW message
     fn rewrapping_to_a_too_narrow_screen_is_an_error() {
         let mut viewport = Viewport::default();
-        assert!(rewrap(&FakeCommit::all(), &[], &mut viewport, 0, &Theme::none()).is_err());
+        assert!(
+            rewrap(
+                &FakeCommit::all(),
+                &[],
+                &mut viewport,
+                0,
+                &Theme::none(),
+                &DateDisplay::for_snapshots()
+            )
+            .is_err()
+        );
     }
 
     fn error_modal() -> Option<ErrorModal> {
