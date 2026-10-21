@@ -12,6 +12,15 @@ between version, just added.
 - If the terminal is too small to fit the whole layout, it is cropped (ignore this non-usecase),
   except for the text areas too narrow to be wrapped (see "Line wrapping" in the README)
 
+All git-related parsing/display is done using `gix`, but when `gix` lacks the functionality:
+- `git` itself should be used (if fast enough), libc, or code manually re-written in
+  `src/gix_compat/`
+- all of those should be seen as technical debt, and when a new version of `gix` gains that
+  functionality, the associated code should be removed
+- each of those should be documented in `src/gix_compat/compatibility.md`
+- each commit that introduce new compatibility shim should contain `Added git compatibily shim:`
+  followed by a list of short descriptions of each compatibility shim added, one per line
+
 Diff model
 ----------
 
@@ -210,6 +219,71 @@ version 0.0.5: theming
 - [x] dedicated unit tests testing for color validate both light and dark themes
    - [x] the existing color tests are run for both the light and dark themes (not duplicated)
 
+version 0.0.6: internal tooling
+-----------------------------
+
+- [ ] pure refactor, acceptance tests shouldn’t change
+
+First commit containing only the change needed to support proper date parsing:
+- [x] parsed as git would, displayed as git would
+- [x] full hash (fake data) -> short hash (display) conversion (use 7 char for fake commits)
+- [x] all date formats supported by `git commit --date $date` (fake data) -> displayed date
+- [x] The binary should have an hidden `--fake` option that display the fake commits. Currently
+  it is also the default behavior, but in the future when the real data will be used, this
+  option will be useful
+- [x] add hidden `--fake-now` (same input format as `git commit --date`) and `--fake-timezone`
+  (IANA name or fixed offset) options to set the current date and timezone used to resolve
+  relative dates and dates without an offset in the fake data, and to display dates in the
+  `relative`, `human` and `local` formats (defaulting to the current date and timezone).
+  Snapshots should use those options (or the internal mechanism). Using `--fake-now` or
+  `--fake-timezone` without `--fake` is an error
+- [x] add a visible `--date-format` option, accepting the same values as `git log --date=`
+  (`default`, `iso`, `iso-strict`, `rfc`, `short`, `relative`, `local`, `human`, `unix`, `raw`,
+  `format:<strftime>`):
+   - the `-local` variant of each format (except `local`), like `iso-local` or
+     `format-local:<strftime>`
+   - the aliases `iso8601`, `iso8601-strict` and `rfc2822`
+   - `auto:<format>`, which is always `<format>`, since the output is always a terminal
+   - if unset, the `log.date` setting of the git configuration is used (read like `git log` does:
+     from the repository of the current directory, or only the global and system configuration
+     outside a repository), and if it is unset too, `human`
+   - `format:<strftime>` uses the `strftime` of the C library, with the time locale (`LC_TIME`)
+     of the environment, like git
+   - snapshots use `format:%d/%m/%Y`, so that they don't change
+
+Second commit with only the restructuring of fake data:
+- [ ] fake data should be plain text files whose data is read at compile time and embedded in the
+  binary
+- [ ] fake commit data should be in `etc/fake_commits/${reverse_order}_${descriptive_commit_name}/`:
+   - `$reverse_order`: index of the commit, starting from `00`, corresponding of the reverse order
+     in which commit are displayed (so that most recently added test will get a higher number, and
+     be displayed first without renumbering index of existing fake commits)
+   - `$descriptive_commit_name`: short descriptive name of the commit content
+- [ ] each commit folder should contain:
+   - [ ] a metadata.toml file containing
+      - commit hash (full hash), author, mail, date (absolute, as `git log --date=iso`), decorations
+        (structured format: maybe empty string for head, and array for local_branches,
+        remote_branches, and tags), message subject, message body
+      - any relevant toml comments for that fake commit
+      - `gitattributes` (using the full name for each file, so before/after can be
+        differentiated)
+   - [ ] all files in the before/after states, named `$id_$state_$filename`, where:
+      - `$id`: index of the pair (the order in which they are displayed, starting from `01`)
+      - `$state`: "before" or "after" (a "before" file without "after" is a deletion, the reverse is
+         an addition, multiple "before"/"after" with the same `id` should fail tests)
+      - `$filename`: name of the file in the fake commit (use `__` for path separation)
+- [ ] `etc/fake_commits/**` is covered by a single glob in `.gitattributes` (`-text -whitespace`)
+  and `.editorconfig`, so that git and editors never modify the bytes of the fake data
+
+version 0.0.x: interactivity
+--------------------------
+
+- [ ] `ctrl+e`/`ctrl+y` move the screen one line down/up (and move the cursor if it would have gone
+  closer to 5 lines of the top/bottom)
+- [ ] `d`/`u` move the half a screen down/up (and may move the cursor like `ctrl+e`/`ctrl+y`)
+- [ ] `g`/`G` move the cursor to first/last line
+- [ ] `J`/`K` or `ctrl+up`/`ctrl+down` jumps to the next/previous commit
+
 version 0.0.x: word-diff and syntax support
 -----------------------------------------
 
@@ -218,8 +292,8 @@ version 0.0.x: word-diff and syntax support
    - [ ] word-level diff, like `delta`
 - [ ] syntax support
 
-version 0.0.x: minimal interactivity (second part)
-------------------------------------------------
+version 0.0.x: editable areas interactivity
+-----------------------------------------
 
 - [ ] Review mode
    - [ ] `left`/`right`
@@ -231,7 +305,7 @@ version 0.0.x: minimal interactivity (second part)
       - [ ] each chunks
 
 version 0.0.x: minimal editing
---------------------------
+----------------------------
 
 - [ ] status bar displays the current mode (`Review` and `Edit`)
 - [ ] line wrapping support when editing the right side
@@ -252,12 +326,12 @@ version 0.0.x: minimal editing
    - [ ] adding a new line on the right add a blank filler (without line number) on the left
 
 version 0.0.x: real data (single commit) and syntax highlighting
-------------------------------------------------------------
+---------------------------------------------------------------
 
 - [ ] Display the content than `%h% s%C(green)% an%C(blue)% ad%C(auto)% d%C(auto)%+N%-C()%+b%-C()`
 
 version 0.0.x: edition
-------------------
+---------------------
 
 - [ ] Embeded editor
    - [ ] scrolling works if all the text in a single editable area doesn’t fit in a single screen
@@ -267,7 +341,7 @@ version 0.0.x: edition
      - [ ] diff are updated in real time
 
 version 0.0.x: real data (multiple commits)
----------------------------------------
+------------------------------------------
 
 - [ ] Display the same content than `$git log $current_branch $current_branch@{upsteam} -p --reverse` assuming HEAD is attached to `$current_branch` and that has its upstream set.
 - [ ] Embeded editor

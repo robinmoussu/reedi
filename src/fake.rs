@@ -1,6 +1,6 @@
 //! Realistic fake data, used until real git data is read.
 
-use jiff::Zoned;
+use gix::date::Time;
 use jiff::civil;
 use jiff::tz;
 use jiff::tz::TimeZone;
@@ -10,6 +10,9 @@ use crate::diff::FileState;
 use crate::model::Commit;
 use crate::model::Decoration;
 use crate::model::FileDiff;
+
+/// The number of characters of the short hash of all the fake commits.
+const FAKE_HASH_ABBREV_LEN: usize = 7;
 
 fn lines(lines: &[&str]) -> Vec<String> {
     lines.iter().map(|line| line.to_string()).collect()
@@ -31,11 +34,13 @@ fn text<S: AsRef<str>>(lines: &[S]) -> Vec<u8> {
 }
 
 /// `year-month-day hour:minute:second`, in UTC+2.
-fn date(year: i16, month: i8, day: i8, hour: i8, minute: i8, second: i8) -> Zoned {
-    civil::date(year, month, day)
+fn date(year: i16, month: i8, day: i8, hour: i8, minute: i8, second: i8) -> Time {
+    let offset = tz::offset(2);
+    let zoned = civil::date(year, month, day)
         .at(hour, minute, second, 0)
-        .to_zoned(TimeZone::fixed(tz::offset(2)))
-        .expect("the fake date is valid")
+        .to_zoned(TimeZone::fixed(offset))
+        .expect("the fake date is valid");
+    Time::new(zoned.timestamp().as_second(), offset.seconds())
 }
 
 /// A file modified by a fake commit: its path and content before and after the commit (`None` if
@@ -150,7 +155,8 @@ impl FakeCommit {
 /// added.
 fn file_changes() -> Commit {
     Commit {
-        hash: "5e2b9d4".to_string(),
+        hash: "5e2b9d4a1f03c7e8b2d946051fa3c8e7d2b4096a".to_string(),
+        hash_abbrev_len: FAKE_HASH_ABBREV_LEN,
         subject: "release: install with a shell script instead of the Makefile, and check the \
                   downloaded archive"
             .to_string(),
@@ -329,7 +335,8 @@ fn line_wrapping() -> Commit {
         "",
     ]);
     Commit {
-        hash: "b0d4e2a".to_string(),
+        hash: "b0d4e2a3c91f5d7a8e260b4c9d1f3a5e7b82c046".to_string(),
+        hash_abbrev_len: FAKE_HASH_ABBREV_LEN,
         subject:
             "view: wrap the lines too wide for the screen instead of cropping them at its edge"
                 .to_string(),
@@ -430,7 +437,8 @@ fn line_wrapping() -> Commit {
 /// with consistent and inconsistent line endings.
 fn invisible_characters() -> Commit {
     Commit {
-        hash: "c7e05b9".to_string(),
+        hash: "c7e05b9d2a4f6081c3e5b7d9f0a2c4e6b8d1f357".to_string(),
+        hash_abbrev_len: FAKE_HASH_ABBREV_LEN,
         subject: "lint: add fixtures for\u{200b} invisible characters ".to_string(),
         author: "Zoé\u{a0}Durand".to_string(),
         email: "zoe.durand@example.org".to_string(),
@@ -528,7 +536,8 @@ fn invisible_characters() -> Commit {
 /// A commit modifying one chunk of a file and three chunks of another one.
 fn search_rename() -> Commit {
     Commit {
-        hash: "8d41e07".to_string(),
+        hash: "8d41e07b6c93a5f1e7d2084b6a9c3e5f7d1b2a48".to_string(),
+        hash_abbrev_len: FAKE_HASH_ABBREV_LEN,
         subject: "search: rename pattern to query".to_string(),
         author: "Bruno Lefebvre".to_string(),
         email: "bruno.lefebvre@example.org".to_string(),
@@ -649,7 +658,8 @@ fn scrolloff_rename() -> Commit {
         .concat()
     };
     Commit {
-        hash: "3f9a2c1".to_string(),
+        hash: "3f9a2c1e5d7b0a4c8f2169e3b5d7a1c9f4e6280b".to_string(),
+        hash_abbrev_len: FAKE_HASH_ABBREV_LEN,
         subject: "config: rename scroll_off to scrolloff".to_string(),
         author: "Alice Martin".to_string(),
         email: "alice.martin@example.org".to_string(),
@@ -676,6 +686,15 @@ mod tests {
     use crate::model::FileChange;
     use crate::model::FileContentType;
     use crate::model::LineKind;
+
+    #[test]
+    fn fake_hashes_are_full_hashes() {
+        FakeCommit::all().iter().for_each(|commit| {
+            let hash = commit.hash.to_string();
+            assert_eq!(hash.len(), 40, "{hash}");
+            assert!(hash.bytes().all(|byte| byte.is_ascii_hexdigit()), "{hash}");
+        });
+    }
 
     #[test]
     fn hidden_lines_are_numbered() {

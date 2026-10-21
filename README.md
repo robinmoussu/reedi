@@ -27,6 +27,7 @@ reedi
 - Binary file only show a message if they differ. Non-valid utf8 files are treated the same.
 - Likewise commit message, author name and other metadate must be valid utf8 or are replaced by an
   error message.
+- Read git configuration, and re-use its settings
 
 ```
 $hash $commit_subject $author $date ($tags, $branches)
