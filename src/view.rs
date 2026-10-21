@@ -20,6 +20,7 @@ use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthStr;
 
 use crate::config::UnknownKey;
+use crate::date::DateDisplay;
 use crate::invisible::FinalCr;
 use crate::invisible::Kind;
 use crate::model::Chunk;
@@ -37,9 +38,6 @@ use crate::viewport::Viewport;
 use crate::wrap;
 use crate::wrap::Segment;
 use crate::wrap::TooNarrow;
-
-/// Format used to display `Commit::date`.
-const DATE_FORMAT: &str = "%d/%m/%Y";
 
 /// Displayed in the last column of each half of a diff row followed by a continuation row of the
 /// same line.
@@ -344,11 +342,11 @@ fn decoration_parts(decorations: &[Decoration], theme: &Theme) -> Vec<Part> {
 /// `$hash $commit_subject $author $date ($tags, $branches)`
 ///
 /// The trailing whitespace of each field is the one ending the field.
-fn header_parts(commit: &Commit, theme: &Theme) -> Vec<Part> {
-    let date = commit.date.strftime(DATE_FORMAT).to_string();
+fn header_parts(commit: &Commit, theme: &Theme, dates: &DateDisplay) -> Vec<Part> {
+    let date = dates.display(commit.date);
     let space = || Part::markup(" ", Style::new());
     [
-        Part::content(&commit.hash, theme.hash),
+        Part::content(commit.short_hash(), theme.hash),
         space(),
         Part::content(&commit.subject, Style::new()),
         space(),
@@ -525,15 +523,17 @@ struct Rows<'a> {
     line: usize,
     width: u16,
     theme: &'a Theme,
+    dates: &'a DateDisplay,
 }
 
 impl<'a> Rows<'a> {
-    fn new(width: u16, theme: &'a Theme) -> Self {
+    fn new(width: u16, theme: &'a Theme, dates: &'a DateDisplay) -> Self {
         Self {
             rows: Vec::new(),
             line: 0,
             width,
             theme,
+            dates,
         }
     }
 
@@ -686,7 +686,7 @@ impl<'a> Rows<'a> {
 
     /// Add `commit`, including the separator below it.
     fn commit(&mut self, commit: &Commit) -> Result<(), TooNarrow> {
-        self.text(&header_parts(commit, self.theme))?;
+        self.text(&header_parts(commit, self.theme, self.dates))?;
         if !commit.body.is_empty() {
             self.blank();
             // Unlike `str::lines`, a carriage return ending a line is kept, to be displayed.
@@ -706,8 +706,13 @@ impl<'a> Rows<'a> {
 ///
 /// Fails if a text area is too narrow to display a grapheme cluster of its line, unless it is in
 /// a chunk, which is then replaced by an error message.
-pub fn rows(commits: &[Commit], width: u16, theme: &Theme) -> Result<Vec<Row>, TooNarrow> {
-    let mut rows = Rows::new(width, theme);
+pub fn rows(
+    commits: &[Commit],
+    width: u16,
+    theme: &Theme,
+    dates: &DateDisplay,
+) -> Result<Vec<Row>, TooNarrow> {
+    let mut rows = Rows::new(width, theme, dates);
     commits.iter().try_for_each(|commit| rows.commit(commit))?;
     Ok(rows.rows)
 }
@@ -897,7 +902,8 @@ mod tests {
     use crate::theme::Theme;
 
     fn commit_rows(commit: &Commit, width: u16, theme: &Theme) -> Vec<Row> {
-        let mut rows = Rows::new(width, theme);
+        let dates = DateDisplay::for_snapshots();
+        let mut rows = Rows::new(width, theme, &dates);
         rows.commit(commit).unwrap();
         rows.rows
     }
@@ -922,7 +928,8 @@ mod tests {
 
     /// The rows of `file`, starting with the blank row above the file name.
     fn file_rows(file: &FileDiff, width: u16, theme: &Theme) -> Vec<Row> {
-        let mut rows = Rows::new(width, theme);
+        let dates = DateDisplay::for_snapshots();
+        let mut rows = Rows::new(width, theme, &dates);
         rows.file(file).unwrap();
         rows.rows
     }
@@ -961,9 +968,14 @@ mod tests {
 
     /// The header of `commit`, on a single row.
     fn header(commit: &Commit, theme: &Theme) -> Line<'static> {
-        let (_, _, spans) = wrapped(&header_parts(commit, theme), FinalCr::Shown, 1000, theme)
-            .unwrap()
-            .remove(0);
+        let (_, _, spans) = wrapped(
+            &header_parts(commit, theme, &DateDisplay::for_snapshots()),
+            FinalCr::Shown,
+            1000,
+            theme,
+        )
+        .unwrap()
+        .remove(0);
         Line::from(spans)
     }
 
@@ -1005,7 +1017,7 @@ mod tests {
         theme: &Theme,
     ) -> TestBackend {
         let commits = FakeCommit::all();
-        let rows = rows(&commits, width, theme).unwrap();
+        let rows = rows(&commits, width, theme, &DateDisplay::for_snapshots()).unwrap();
         let mut viewport = viewport;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
@@ -1042,9 +1054,14 @@ mod tests {
 
     #[test]
     fn scrolled_to_the_end() {
-        let len = rows(&FakeCommit::all(), 110, &Theme::monochrome())
-            .unwrap()
-            .len();
+        let len = rows(
+            &FakeCommit::all(),
+            110,
+            &Theme::monochrome(),
+            &DateDisplay::for_snapshots(),
+        )
+        .unwrap()
+        .len();
         let viewport = Viewport {
             cursor: len - 1,
             top: 0,
@@ -1093,11 +1110,16 @@ mod tests {
     #[test]
     fn rows_of_all_commits_are_displayed_one_after_the_other() {
         let commits = FakeCommit::all();
-        let all_rows: Vec<_> = rows(&commits, 110, &Theme::monochrome())
-            .unwrap()
-            .into_iter()
-            .map(|row| row.content)
-            .collect();
+        let all_rows: Vec<_> = rows(
+            &commits,
+            110,
+            &Theme::monochrome(),
+            &DateDisplay::for_snapshots(),
+        )
+        .unwrap()
+        .into_iter()
+        .map(|row| row.content)
+        .collect();
         let expected: Vec<_> = commits
             .iter()
             .flat_map(|commit| commit_rows(commit, 110, &Theme::monochrome()))
@@ -1108,7 +1130,13 @@ mod tests {
 
     #[test]
     fn lines_are_numbered_consecutively() {
-        let rows = rows(&FakeCommit::all(), 110, &Theme::monochrome()).unwrap();
+        let rows = rows(
+            &FakeCommit::all(),
+            110,
+            &Theme::monochrome(),
+            &DateDisplay::for_snapshots(),
+        )
+        .unwrap();
         assert_eq!(rows[0].line, 0);
         assert!(
             rows.windows(2)
@@ -1260,7 +1288,7 @@ mod tests {
     fn line_numbers_are_aligned_per_chunk() {
         let commit = FakeCommit::newest();
         themes().iter().for_each(|theme| {
-            let rows = Rows::new(110, theme)
+            let rows = Rows::new(110, theme, &DateDisplay::for_snapshots())
                 .chunk_rows(&commit.files[0].chunks[1], FinalCr::Hidden)
                 .unwrap();
             let Content::Split { left, right } = &rows[0].content else {
@@ -1295,7 +1323,7 @@ mod tests {
         themes().iter().for_each(|theme| {
             // Each half is 12 columns wide: 6 for the line number column, 5 for the text, and 1
             // for the marker.
-            let rows = Rows::new(24, theme)
+            let rows = Rows::new(24, theme, &DateDisplay::for_snapshots())
                 .chunk_rows(&chunk("aaaa bbbb cccc", "aaaa"), FinalCr::Hidden)
                 .unwrap();
             let texts: Vec<_> = rows.iter().map(text_of_row).collect();
@@ -1322,7 +1350,7 @@ mod tests {
 
     #[test]
     fn marker_is_in_the_last_column_of_the_right_half() {
-        let rows = Rows::new(24, &Theme::monochrome())
+        let rows = Rows::new(24, &Theme::monochrome(), &DateDisplay::for_snapshots())
             .chunk_rows(&chunk("aaaa", "aaaa bbbb"), FinalCr::Hidden)
             .unwrap();
         let area = Rect::new(0, 0, 24, 1);
@@ -1333,7 +1361,7 @@ mod tests {
 
     #[test]
     fn unpaired_lines_have_a_filler_on_the_other_side() {
-        let rows = Rows::new(24, &Theme::monochrome())
+        let rows = Rows::new(24, &Theme::monochrome(), &DateDisplay::for_snapshots())
             .chunk_rows(&chunk("aaaa", "bbbb"), FinalCr::Hidden)
             .unwrap();
         let texts: Vec<_> = rows.iter().map(text_of_row).collect();
@@ -1382,7 +1410,7 @@ mod tests {
             _ => panic!("chunk rows are split"),
         };
         themes().iter().for_each(|theme| {
-            let rows = Rows::new(40, theme)
+            let rows = Rows::new(40, theme, &DateDisplay::for_snapshots())
                 .chunk_rows(&chunk, FinalCr::Hidden)
                 .unwrap();
             let (left, right) = halves(&rows[0]);
@@ -1412,7 +1440,7 @@ mod tests {
             let added = theme.added_line.bg.unwrap();
             // Each half is 20 columns wide: 6 for the line number column, 13 for the text, and 1
             // for the marker.
-            let rows = Rows::new(40, theme)
+            let rows = Rows::new(40, theme, &DateDisplay::for_snapshots())
                 .chunk_rows(&chunk("aaaa bbbb cccc dddd", "aaaa bbbb"), FinalCr::Hidden)
                 .unwrap();
             let first = backgrounds(&rows[0], 40);
@@ -1431,7 +1459,7 @@ mod tests {
     #[test]
     fn replacements_of_modified_lines_keep_their_background() {
         themes().iter().for_each(|theme| {
-            let rows = Rows::new(40, theme)
+            let rows = Rows::new(40, theme, &DateDisplay::for_snapshots())
                 .chunk_rows(&chunk("a b", "a\u{a0}b"), FinalCr::Hidden)
                 .unwrap();
             let Content::Split { right, .. } = &rows[0].content else {
@@ -1454,7 +1482,7 @@ mod tests {
             },
         );
         themes().iter().for_each(|theme| {
-            let rows = Rows::new(40, theme)
+            let rows = Rows::new(40, theme, &DateDisplay::for_snapshots())
                 .chunk_rows(&chunk, FinalCr::Hidden)
                 .unwrap();
             assert!(
@@ -1476,7 +1504,7 @@ mod tests {
         // Each half is 40 columns wide: the right line is wrapped, not the left one.
         let mut chunk = chunk("aaaa bbbb cccc", "aaaa bbbb cccc dddd eeee ffff gggg hhhh");
         chunk.lines[0].missing_newline = true;
-        let rows = Rows::new(80, &Theme::monochrome())
+        let rows = Rows::new(80, &Theme::monochrome(), &DateDisplay::for_snapshots())
             .chunk_rows(&chunk, FinalCr::Hidden)
             .unwrap();
         let texts: Vec<_> = rows.iter().map(text_of_row).collect();
@@ -1510,7 +1538,7 @@ mod tests {
         let mut chunk = chunk("aaaa", "aaaa bbbb");
         chunk.lines[0].missing_newline = true;
         themes().iter().for_each(|theme| {
-            let rows = Rows::new(80, theme)
+            let rows = Rows::new(80, theme, &DateDisplay::for_snapshots())
                 .chunk_rows(&chunk, FinalCr::Hidden)
                 .unwrap();
             let Content::Split { left, .. } = &rows[1].content else {
@@ -1529,7 +1557,7 @@ mod tests {
             text: "bbbb".to_string(),
             missing_newline: false,
         });
-        let rows = Rows::new(80, &Theme::monochrome())
+        let rows = Rows::new(80, &Theme::monochrome(), &DateDisplay::for_snapshots())
             .chunk_rows(&chunk, FinalCr::Hidden)
             .unwrap();
         let texts: Vec<_> = rows.iter().map(text_of_row).collect();
@@ -1551,7 +1579,8 @@ mod tests {
         let mut chunk = chunk("aaaa", "aaaa");
         chunk.lines[0].missing_newline = true;
         let theme = Theme::monochrome();
-        let mut rows = Rows::new(12, &theme);
+        let dates = DateDisplay::for_snapshots();
+        let mut rows = Rows::new(12, &theme, &dates);
         rows.chunk(&chunk, FinalCr::Hidden).unwrap();
         // The pair of lines, and the line displaying `MISSING_NEWLINE`.
         assert_eq!(rows.line, 2);
@@ -1619,7 +1648,7 @@ mod tests {
 
     #[test]
     fn rows_of_a_diff_line_start_at_their_first_character() {
-        let rows = Rows::new(24, &Theme::monochrome())
+        let rows = Rows::new(24, &Theme::monochrome(), &DateDisplay::for_snapshots())
             .chunk_rows(&chunk("aaaa bbbb cccc", "aaaa"), FinalCr::Hidden)
             .unwrap();
         let starts: Vec<_> = rows.iter().map(|row| row.start).collect();
@@ -1732,7 +1761,7 @@ mod tests {
     #[test]
     fn chunk_too_narrow_for_the_error_message_is_an_error() {
         let commit = FakeCommit::newest();
-        let error = Rows::new(0, &Theme::monochrome())
+        let error = Rows::new(0, &Theme::monochrome(), &DateDisplay::for_snapshots())
             .chunk(&commit.files[0].chunks[0], FinalCr::Hidden)
             .unwrap_err();
         assert_eq!(error.width, 0);
@@ -1742,7 +1771,13 @@ mod tests {
     fn text_area_too_narrow_outside_of_a_chunk_is_an_error() {
         let mut commit = FakeCommit::newest();
         commit.author = "日本".to_string();
-        let error = rows(&[commit], 1, &Theme::monochrome()).unwrap_err();
+        let error = rows(
+            &[commit],
+            1,
+            &Theme::monochrome(),
+            &DateDisplay::for_snapshots(),
+        )
+        .unwrap_err();
         assert_eq!(
             error,
             TooNarrow {
@@ -1750,12 +1785,20 @@ mod tests {
                 cluster: "日".to_string()
             }
         );
-        assert!(rows(&FakeCommit::all(), 0, &Theme::monochrome()).is_err());
+        assert!(
+            rows(
+                &FakeCommit::all(),
+                0,
+                &Theme::monochrome(),
+                &DateDisplay::for_snapshots()
+            )
+            .is_err()
+        );
     }
 
     #[test]
     fn anchor_is_on_the_right_half_if_it_displays_text() {
-        let rows = Rows::new(24, &Theme::monochrome())
+        let rows = Rows::new(24, &Theme::monochrome(), &DateDisplay::for_snapshots())
             .chunk_rows(&chunk("aaaa bbbb", "aaaa dddd"), FinalCr::Hidden)
             .unwrap();
         assert_eq!(
@@ -1766,7 +1809,7 @@ mod tests {
                 offset: 5
             }
         );
-        let rows = Rows::new(24, &Theme::monochrome())
+        let rows = Rows::new(24, &Theme::monochrome(), &DateDisplay::for_snapshots())
             .chunk_rows(&chunk("aaaa bbbb", "aaaa"), FinalCr::Hidden)
             .unwrap();
         assert_eq!(
@@ -1782,8 +1825,20 @@ mod tests {
     #[test]
     fn find_returns_the_row_displaying_the_first_character_of_a_row() {
         let commits = FakeCommit::all();
-        let wide = rows(&commits, 110, &Theme::monochrome()).unwrap();
-        let narrow = rows(&commits, 60, &Theme::monochrome()).unwrap();
+        let wide = rows(
+            &commits,
+            110,
+            &Theme::monochrome(),
+            &DateDisplay::for_snapshots(),
+        )
+        .unwrap();
+        let narrow = rows(
+            &commits,
+            60,
+            &Theme::monochrome(),
+            &DateDisplay::for_snapshots(),
+        )
+        .unwrap();
         narrow.iter().for_each(|row| {
             let anchor = row.anchor();
             let i = find(&wide, anchor);
@@ -1869,7 +1924,15 @@ mod tests {
 
     /// All the rows of the fake commits on a single screen, with the cursor on the first row.
     fn render_all(theme: &Theme) -> TestBackend {
-        let height = rows(&FakeCommit::all(), 110, theme).unwrap().len() + 1;
+        let height = rows(
+            &FakeCommit::all(),
+            110,
+            theme,
+            &DateDisplay::for_snapshots(),
+        )
+        .unwrap()
+        .len()
+            + 1;
         render(110, height as u16, Viewport::default(), theme)
     }
 
