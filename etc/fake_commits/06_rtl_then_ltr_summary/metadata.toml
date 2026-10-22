@@ -1,0 +1,8 @@
+# A very short commit whose summary is in a right-to-left language (Arabic), then in a
+# left-to-right one.
+hash = "c41f8a2d7e0b93561a8d4c7f2e9b0536d8a14f72"
+author = "Layla Haddad"
+email = "layla.haddad@example.org"
+date = "2026-09-25 16:48:19 +0200"
+subject = "إصلاح الخطأ in the scrolloff computation"
+body = ""
