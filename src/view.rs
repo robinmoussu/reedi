@@ -1183,7 +1183,7 @@ mod tests {
 
     #[test]
     fn header_is_colored_like_git() {
-        let commit = FakeCommit::newest();
+        let commit = FakeCommit::ScrolloffRename.commit();
         themes().iter().for_each(|theme| {
             let header = header(&commit, theme);
             assert_eq!(
@@ -1204,7 +1204,7 @@ mod tests {
 
     #[test]
     fn decorations_are_omitted_when_empty() {
-        let mut commit = FakeCommit::newest();
+        let mut commit = FakeCommit::ScrolloffRename.commit();
         commit.decorations.clear();
         assert!(text(&header(&commit, &Theme::monochrome())).ends_with("12/10/2026"));
     }
@@ -1224,7 +1224,7 @@ mod tests {
 
     #[test]
     fn body_is_omitted_when_empty() {
-        let mut commit = FakeCommit::newest();
+        let mut commit = FakeCommit::ScrolloffRename.commit();
         commit.body.clear();
         let rows = commit_rows(&commit, 110, &Theme::monochrome());
         assert_eq!(rows[1].content, Content::Text(Line::default()));
@@ -1286,7 +1286,7 @@ mod tests {
 
     #[test]
     fn line_numbers_are_aligned_per_chunk() {
-        let commit = FakeCommit::newest();
+        let commit = FakeCommit::ScrolloffRename.commit();
         themes().iter().for_each(|theme| {
             let rows = Rows::new(110, theme, &DateDisplay::for_snapshots())
                 .chunk_rows(&commit.files[0].chunks[1], FinalCr::Hidden)
@@ -1689,7 +1689,7 @@ mod tests {
         assert_eq!((rows[0].line, rows[1].line), (0, 0));
         // The first line of the body.
         assert_eq!(rows[3].line, rows[4].line);
-        let mut commit = FakeCommit::newest();
+        let mut commit = FakeCommit::ScrolloffRename.commit();
         commit.files[0].path = "src/a/very/long/path/to/the/config.rs".into();
         let rows = commit_rows(&commit, 20, &Theme::monochrome());
         let names: Vec<_> = rows
@@ -1707,7 +1707,7 @@ mod tests {
     #[test]
     fn header_is_broken_inside_a_field_keeping_its_style() {
         themes().iter().for_each(|theme| {
-            let rows = commit_rows(&FakeCommit::newest(), 93, theme);
+            let rows = commit_rows(&FakeCommit::ScrolloffRename.commit(), 93, theme);
             let (first, second) = (&rows[0].content, &rows[1].content);
             let (Content::Text(first), Content::Text(second)) = (first, second) else {
                 panic!("the header is not split");
@@ -1734,7 +1734,7 @@ mod tests {
 
     #[test]
     fn chunk_too_narrow_is_replaced_by_an_error_message() {
-        let commit = FakeCommit::newest();
+        let commit = FakeCommit::ScrolloffRename.commit();
         themes().iter().for_each(|theme| {
             // The text area of each half has no column.
             let rows = commit_rows(&commit, 12, theme);
@@ -1760,7 +1760,7 @@ mod tests {
 
     #[test]
     fn chunk_too_narrow_for_the_error_message_is_an_error() {
-        let commit = FakeCommit::newest();
+        let commit = FakeCommit::ScrolloffRename.commit();
         let error = Rows::new(0, &Theme::monochrome(), &DateDisplay::for_snapshots())
             .chunk(&commit.files[0].chunks[0], FinalCr::Hidden)
             .unwrap_err();
@@ -1769,7 +1769,7 @@ mod tests {
 
     #[test]
     fn text_area_too_narrow_outside_of_a_chunk_is_an_error() {
-        let mut commit = FakeCommit::newest();
+        let mut commit = FakeCommit::ScrolloffRename.commit();
         commit.author = "日本".to_string();
         let error = rows(
             &[commit],
@@ -1862,7 +1862,7 @@ mod tests {
 
     #[test]
     fn find_returns_the_next_line_when_the_line_is_not_displayed() {
-        let commit = FakeCommit::newest();
+        let commit = FakeCommit::ScrolloffRename.commit();
         let wide = commit_rows(&commit, 110, &Theme::monochrome());
         let narrow = commit_rows(&commit, 12, &Theme::monochrome());
         let code = wide
@@ -1875,7 +1875,7 @@ mod tests {
 
     #[test]
     fn rules_and_file_name_are_colored() {
-        let commit = FakeCommit::newest();
+        let commit = FakeCommit::ScrolloffRename.commit();
         themes().iter().for_each(|theme| {
             let rows = commit_rows(&commit, 110, theme);
             let area = Rect::new(0, 0, 110, 26);

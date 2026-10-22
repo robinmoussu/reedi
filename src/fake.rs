@@ -133,12 +133,6 @@ impl FakeCommit {
         Self::ALL.into_iter().map(Self::commit).collect()
     }
 
-    /// The most recent fake commit.
-    pub fn newest() -> Commit {
-        let [.., newest] = Self::ALL;
-        newest.commit()
-    }
-
     pub fn commit(self) -> Commit {
         match self {
             FakeCommit::FileChanges => file_changes(),
