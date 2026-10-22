@@ -898,7 +898,7 @@ mod tests {
     use ratatui::style::Modifier;
 
     use super::*;
-    use crate::fake::FakeCommit;
+    use crate::fake;
     use crate::theme::Theme;
 
     fn commit_rows(commit: &Commit, width: u16, theme: &Theme) -> Vec<Row> {
@@ -910,7 +910,7 @@ mod tests {
 
     /// Index of the first row of the fake commit `commit`, on a screen `width` columns wide.
     fn first_row(commit: &Commit, width: u16) -> usize {
-        FakeCommit::all()
+        fake::all()
             .iter()
             .take_while(|other| other.hash != commit.hash)
             .map(|other| commit_rows(other, width, &Theme::monochrome()).len())
@@ -1016,7 +1016,7 @@ mod tests {
         error_modal: Option<&ErrorModal>,
         theme: &Theme,
     ) -> TestBackend {
-        let commits = FakeCommit::all();
+        let commits = fake::all();
         let rows = rows(&commits, width, theme, &DateDisplay::for_snapshots()).unwrap();
         let mut viewport = viewport;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
@@ -1055,7 +1055,7 @@ mod tests {
     #[test]
     fn scrolled_to_the_end() {
         let len = rows(
-            &FakeCommit::all(),
+            &fake::all(),
             110,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -1071,7 +1071,7 @@ mod tests {
 
     #[test]
     fn all_kinds_of_file_changes_are_displayed() {
-        let commit = FakeCommit::FileChanges.commit();
+        let commit = fake::file_changes();
         let height = commit_rows(&commit, 110, &Theme::monochrome()).len() + 1;
         let viewport = viewport_at(&commit, 110);
         insta::assert_snapshot!(render(110, height as u16, viewport, &Theme::monochrome()));
@@ -1082,7 +1082,7 @@ mod tests {
         insta::assert_snapshot!(render(
             110,
             60,
-            viewport_at(&FakeCommit::LineWrapping.commit(), 110),
+            viewport_at(&fake::line_wrapping(), 110),
             &Theme::monochrome()
         ));
     }
@@ -1092,14 +1092,14 @@ mod tests {
         insta::assert_snapshot!(render(
             70,
             80,
-            viewport_at(&FakeCommit::LineWrapping.commit(), 70),
+            viewport_at(&fake::line_wrapping(), 70),
             &Theme::monochrome()
         ));
     }
 
     #[test]
     fn invisible_characters_after_the_first_screen() {
-        let start = first_row(&FakeCommit::InvisibleCharacters.commit(), 110);
+        let start = first_row(&fake::invisible_characters(), 110);
         let viewport = Viewport {
             cursor: start + 30,
             top: start + 20,
@@ -1109,7 +1109,7 @@ mod tests {
 
     #[test]
     fn rows_of_all_commits_are_displayed_one_after_the_other() {
-        let commits = FakeCommit::all();
+        let commits = fake::all();
         let all_rows: Vec<_> = rows(
             &commits,
             110,
@@ -1131,7 +1131,7 @@ mod tests {
     #[test]
     fn lines_are_numbered_consecutively() {
         let rows = rows(
-            &FakeCommit::all(),
+            &fake::all(),
             110,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -1183,7 +1183,7 @@ mod tests {
 
     #[test]
     fn header_is_colored_like_git() {
-        let commit = FakeCommit::ScrolloffRename.commit();
+        let commit = fake::scrolloff_rename();
         themes().iter().for_each(|theme| {
             let header = header(&commit, theme);
             assert_eq!(
@@ -1204,7 +1204,7 @@ mod tests {
 
     #[test]
     fn decorations_are_omitted_when_empty() {
-        let mut commit = FakeCommit::ScrolloffRename.commit();
+        let mut commit = fake::scrolloff_rename();
         commit.decorations.clear();
         assert!(text(&header(&commit, &Theme::monochrome())).ends_with("12/10/2026"));
     }
@@ -1224,7 +1224,7 @@ mod tests {
 
     #[test]
     fn body_is_omitted_when_empty() {
-        let mut commit = FakeCommit::ScrolloffRename.commit();
+        let mut commit = fake::scrolloff_rename();
         commit.body.clear();
         let rows = commit_rows(&commit, 110, &Theme::monochrome());
         assert_eq!(rows[1].content, Content::Text(Line::default()));
@@ -1286,7 +1286,7 @@ mod tests {
 
     #[test]
     fn line_numbers_are_aligned_per_chunk() {
-        let commit = FakeCommit::ScrolloffRename.commit();
+        let commit = fake::scrolloff_rename();
         themes().iter().for_each(|theme| {
             let rows = Rows::new(110, theme, &DateDisplay::for_snapshots())
                 .chunk_rows(&commit.files[0].chunks[1], FinalCr::Hidden)
@@ -1674,11 +1674,7 @@ mod tests {
 
     #[test]
     fn header_body_and_file_names_are_wrapped_without_marker() {
-        let rows = commit_rows(
-            &FakeCommit::LineWrapping.commit(),
-            110,
-            &Theme::monochrome(),
-        );
+        let rows = commit_rows(&fake::line_wrapping(), 110, &Theme::monochrome());
         let (header, continuation) = (text_of_row(&rows[0]).0, text_of_row(&rows[1]).0);
         assert_eq!(
             header,
@@ -1689,7 +1685,7 @@ mod tests {
         assert_eq!((rows[0].line, rows[1].line), (0, 0));
         // The first line of the body.
         assert_eq!(rows[3].line, rows[4].line);
-        let mut commit = FakeCommit::ScrolloffRename.commit();
+        let mut commit = fake::scrolloff_rename();
         commit.files[0].path = "src/a/very/long/path/to/the/config.rs".into();
         let rows = commit_rows(&commit, 20, &Theme::monochrome());
         let names: Vec<_> = rows
@@ -1707,7 +1703,7 @@ mod tests {
     #[test]
     fn header_is_broken_inside_a_field_keeping_its_style() {
         themes().iter().for_each(|theme| {
-            let rows = commit_rows(&FakeCommit::ScrolloffRename.commit(), 93, theme);
+            let rows = commit_rows(&fake::scrolloff_rename(), 93, theme);
             let (first, second) = (&rows[0].content, &rows[1].content);
             let (Content::Text(first), Content::Text(second)) = (first, second) else {
                 panic!("the header is not split");
@@ -1722,7 +1718,7 @@ mod tests {
 
     #[test]
     fn tab_stops_of_the_header_are_counted_from_the_start_of_the_row() {
-        let mut commit = FakeCommit::InvisibleCharacters.commit();
+        let mut commit = fake::invisible_characters();
         commit.subject = "xy".to_string();
         commit.author = "a\tb".to_string();
         // The tab is at column 12.
@@ -1734,7 +1730,7 @@ mod tests {
 
     #[test]
     fn chunk_too_narrow_is_replaced_by_an_error_message() {
-        let commit = FakeCommit::ScrolloffRename.commit();
+        let commit = fake::scrolloff_rename();
         themes().iter().for_each(|theme| {
             // The text area of each half has no column.
             let rows = commit_rows(&commit, 12, theme);
@@ -1760,7 +1756,7 @@ mod tests {
 
     #[test]
     fn chunk_too_narrow_for_the_error_message_is_an_error() {
-        let commit = FakeCommit::ScrolloffRename.commit();
+        let commit = fake::scrolloff_rename();
         let error = Rows::new(0, &Theme::monochrome(), &DateDisplay::for_snapshots())
             .chunk(&commit.files[0].chunks[0], FinalCr::Hidden)
             .unwrap_err();
@@ -1769,7 +1765,7 @@ mod tests {
 
     #[test]
     fn text_area_too_narrow_outside_of_a_chunk_is_an_error() {
-        let mut commit = FakeCommit::ScrolloffRename.commit();
+        let mut commit = fake::scrolloff_rename();
         commit.author = "日本".to_string();
         let error = rows(
             &[commit],
@@ -1787,7 +1783,7 @@ mod tests {
         );
         assert!(
             rows(
-                &FakeCommit::all(),
+                &fake::all(),
                 0,
                 &Theme::monochrome(),
                 &DateDisplay::for_snapshots()
@@ -1824,7 +1820,7 @@ mod tests {
 
     #[test]
     fn find_returns_the_row_displaying_the_first_character_of_a_row() {
-        let commits = FakeCommit::all();
+        let commits = fake::all();
         let wide = rows(
             &commits,
             110,
@@ -1862,7 +1858,7 @@ mod tests {
 
     #[test]
     fn find_returns_the_next_line_when_the_line_is_not_displayed() {
-        let commit = FakeCommit::ScrolloffRename.commit();
+        let commit = fake::scrolloff_rename();
         let wide = commit_rows(&commit, 110, &Theme::monochrome());
         let narrow = commit_rows(&commit, 12, &Theme::monochrome());
         let code = wide
@@ -1875,7 +1871,7 @@ mod tests {
 
     #[test]
     fn rules_and_file_name_are_colored() {
-        let commit = FakeCommit::ScrolloffRename.commit();
+        let commit = fake::scrolloff_rename();
         themes().iter().for_each(|theme| {
             let rows = commit_rows(&commit, 110, theme);
             let area = Rect::new(0, 0, 110, 26);
@@ -1924,14 +1920,9 @@ mod tests {
 
     /// All the rows of the fake commits on a single screen, with the cursor on the first row.
     fn render_all(theme: &Theme) -> TestBackend {
-        let height = rows(
-            &FakeCommit::all(),
-            110,
-            theme,
-            &DateDisplay::for_snapshots(),
-        )
-        .unwrap()
-        .len()
+        let height = rows(&fake::all(), 110, theme, &DateDisplay::for_snapshots())
+            .unwrap()
+            .len()
             + 1;
         render(110, height as u16, Viewport::default(), theme)
     }
@@ -1964,7 +1955,7 @@ mod tests {
 
     #[test]
     fn invisible_characters_of_the_header_are_replaced_per_field() {
-        let mut commit = FakeCommit::InvisibleCharacters.commit();
+        let mut commit = fake::invisible_characters();
         commit.decorations = vec![Decoration::LocalBranch("fix\u{200b} ".to_string())];
         themes().iter().for_each(|theme| {
             let header = header(&commit, theme);
@@ -1987,7 +1978,7 @@ mod tests {
 
     #[test]
     fn replacements_are_bold_red_and_tabs_dim_gray() {
-        let commit = FakeCommit::InvisibleCharacters.commit();
+        let commit = fake::invisible_characters();
         themes().iter().for_each(|theme| {
             let rows = commit_rows(&commit, 110, theme);
             let Content::Text(body) = &rows[2].content else {
@@ -2015,7 +2006,7 @@ mod tests {
 
     #[test]
     fn tab_stops_are_counted_from_the_beginning_of_the_code() {
-        let commit = FakeCommit::InvisibleCharacters.commit();
+        let commit = fake::invisible_characters();
         let makefile = file_rows(&commit.files[2], 110, &Theme::monochrome());
         // `CFLAGS` is 6 columns wide, the next tab stop is at column 8.
         assert_eq!(text_of_row(&makefile[3]).1, "│ 1 │ CFLAGS⇥ = -O2");
@@ -2023,7 +2014,7 @@ mod tests {
 
     #[test]
     fn carriage_returns_are_hidden_when_line_endings_are_consistent() {
-        let commit = FakeCommit::InvisibleCharacters.commit();
+        let commit = fake::invisible_characters();
         let emoji = file_rows(&commit.files[1], 110, &Theme::monochrome());
         let (left, right) = row_starting_with(&emoji, "│ 7 │");
         assert_eq!(left, "│ 7 │ const JOINED: &str = \"ab\";");
@@ -2032,7 +2023,7 @@ mod tests {
 
     #[test]
     fn carriage_returns_are_shown_when_line_endings_are_inconsistent() {
-        let commit = FakeCommit::InvisibleCharacters.commit();
+        let commit = fake::invisible_characters();
         let script = file_rows(&commit.files[3], 110, &Theme::monochrome());
         let (left, right) = row_starting_with(&script, "│ 3 │");
         assert_eq!(left, "│ 3 │ exit /b 0␍");
@@ -2041,7 +2032,7 @@ mod tests {
 
     #[test]
     fn carriage_returns_of_the_body_are_shown() {
-        let commit = FakeCommit::InvisibleCharacters.commit();
+        let commit = fake::invisible_characters();
         let rows = commit_rows(&commit, 110, &Theme::monochrome());
         assert_eq!(
             text_of_row(&rows[3]).0,
@@ -2051,7 +2042,7 @@ mod tests {
 
     #[test]
     fn invisible_characters_of_the_file_name_are_replaced() {
-        let mut commit = FakeCommit::InvisibleCharacters.commit();
+        let mut commit = fake::invisible_characters();
         commit.files[0].path = "a\u{a0}b".into();
         let rows = commit_rows(&commit, 110, &Theme::monochrome());
         assert_eq!(text_of_row(&rows[5]).0, "a⍽b");

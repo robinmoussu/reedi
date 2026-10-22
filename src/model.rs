@@ -191,11 +191,11 @@ impl Chunk {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake::FakeCommit;
+    use crate::fake;
 
     #[test]
     fn short_hash_has_the_abbreviation_length_of_its_commit() {
-        let mut commit = FakeCommit::ScrolloffRename.commit();
+        let mut commit = fake::scrolloff_rename();
         commit.hash = "0123456789abcdef0123456789abcdef01234567".to_string();
         [7, 10, 40].into_iter().for_each(|len| {
             commit.hash_abbrev_len = len;
