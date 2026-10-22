@@ -13,4 +13,3 @@ expression: "render_with_error_modal(40, 12, Viewport::default(), Some(&error_mo
 "┗━━━━━━━ Press any key to close ━━━━━━━┛"
 "                                        "
 "src/release.rs                          "
-" Review                                 "

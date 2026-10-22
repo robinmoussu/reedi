@@ -1,0 +1,8 @@
+# A very short commit whose summary is in a left-to-right language, then in a right-to-left one
+# (Arabic).
+hash = "e96b0d35a8c1f472b6e09d3a5c7f1824b0d6e358"
+author = "Omar Nasser"
+email = "omar.nasser@example.org"
+date = "2026-09-24 09:12:51 +0200"
+subject = "docs: توثيق خيار التمرير"
+body = ""

@@ -50,6 +50,10 @@ pub struct Theme {
     pub cursor: Style,
     /// The name of the review mode, in the status bar.
     pub review_mode: Style,
+    /// The status bar, behind the mode, the blank column after it and the content.
+    pub status_bar: Style,
+    /// The content of the status bar, after the mode.
+    pub status_bar_content: Style,
 }
 
 impl Theme {
@@ -84,6 +88,8 @@ impl Theme {
             invisible: Style::new().fg(Color::Red).bold(),
             cursor: Style::new().bg(Color::Indexed(235)),
             review_mode: Style::new().fg(Color::Black).bg(Color::Blue).bold(),
+            status_bar: Style::new(),
+            status_bar_content: Style::new().fg(Color::Indexed(248)),
         }
     }
 
@@ -100,6 +106,8 @@ impl Theme {
             added_line: Style::new().bg(Color::Rgb(0xd0, 0xff, 0xd0)),
             dimmed_whitespace: Style::new().fg(Color::Indexed(250)),
             cursor: Style::new().bg(Color::Indexed(254)),
+            status_bar: Style::new().bg(Color::Indexed(252)),
+            status_bar_content: Style::new().fg(Color::Indexed(240)),
             // The colors of git are the same.
             ..Self::dark()
         }
@@ -132,6 +140,8 @@ impl Theme {
             invisible: Style::new().bold(),
             cursor: Style::new().reversed(),
             review_mode: Style::new().reversed().bold(),
+            status_bar: Style::new(),
+            status_bar_content: Style::new(),
         }
     }
 

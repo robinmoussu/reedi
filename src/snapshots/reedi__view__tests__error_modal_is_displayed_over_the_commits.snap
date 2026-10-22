@@ -27,4 +27,3 @@ expression: "render_with_error_modal(110, 26, Viewport::default(), Some(&error_m
 "│ 21 │ /// Removes the temporary files of the previous↵│ 24 │ /// Removes the temporary files of the previous↵"
 "│    │  installations.                                 │    │  installations.                                 "
 "│ 22 │ pub fn clean(directory: &Path) ->              ↵│ 25 │ pub fn clean(directory: &Path) ->              ↵"
-" Review                                                                                                       "

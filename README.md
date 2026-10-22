@@ -93,6 +93,10 @@ Areas
 - A status bar display the current mode and each mode has an accent color for the background of the
   name of the current mode (`Review`: blue, `Edit`: light green, `Search`: honey, `Comment`: dark
   green, `Command`: mango, `Selection`: purple, `Move`: dark red)
+- After the mode, the status bar displays in gray
+    - default: `commit $x/$y: $short_hash $summary` (`x`: index of the commit the cursor is on, `y`:
+    number of commits displayed)
+    - while a number is pending: `The next command will be repeated <n> times`
 
 Expected implementation
 =======================
@@ -155,12 +159,15 @@ Review mode:
 - `tab`/`shift+tab` or `left`/`right` move the cursor to the next/previous editable area (this does include
     `commit_subject`, `author` and `date` that are on the same line)
 - `g`/`G` move the cursor to first/last line
-- `J`/`K` or `ctrl+up`/`ctrl+down` jumps to the next/previous commit
+- `J`/`K` or `ctrl+down`/`ctrl+up` jumps to the next/previous commit
 - `[`/`]` jumps to the next/prevous merge conflict
 
 - `ctrl+e`/`ctrl+y` move the screen one line down/up (and move the cursor if it would have gone
   closer to 5 lines of the top/bottom)
 - `d`/`u` move the half a screen down/up (and may move the cursor like `ctrl+e`/`ctrl+y`)
+
+- numbers before a move repeat that move by this amount
+- `${number}g` move the cursor to the `number`th line from the top, `${number}G` from the bottom
 
 - `enter` edit the current editable area (or the next one if on a line with only non-editable
     elements
