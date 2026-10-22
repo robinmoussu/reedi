@@ -1,0 +1,14 @@
+# A commit modifying two chunks of the same file.
+hash = "3f9a2c1e5d7b0a4c8f2169e3b5d7a1c9f4e6280b"
+author = "Alice Martin"
+email = "alice.martin@example.org"
+date = "2026-10-12 14:32:07 +0200"
+subject = "config: rename scroll_off to scrolloff"
+body = """
+The option is named `scrolloff` in vim, using the same name makes it
+easier to find. `usize` avoids casts when computing screen offsets."""
+
+[decorations]
+head = "main"
+tags = ["v1.0"]
+remote_branches = ["origin/main"]

@@ -1,0 +1,15 @@
+# A commit with all kinds of file changes: added, deleted, renamed, binary and not valid UTF-8
+# files, files without newline at their end, and blocks of lines that are only removed or only
+# added.
+hash = "5e2b9d4a1f03c7e8b2d946051fa3c8e7d2b4096a"
+author = "Noah Petit"
+email = "noah.petit@example.org"
+date = "2026-09-28 10:24:05 +0200"
+subject = "release: install with a shell script instead of the Makefile, and check the downloaded archive"
+body = """
+The Makefile only worked with GNU make, a POSIX shell script works everywhere.
+The archive is now checked before being installed."""
+
+[gitattributes]
+"07_before_assets__logo.png" = "binary"
+"07_after_assets__logo.png" = "binary"

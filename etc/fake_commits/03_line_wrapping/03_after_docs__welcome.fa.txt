@@ -1,0 +1,3 @@
+سلام به همه‌ی کسانی که این برنامه را امتحان می‌کنند: hello to everyone trying reedi
+Welcome to everyone reading this file in a terminal: به همه‌ی شما خوش آمدید
+من می‌خواهم این جمله‌ی طولانی را در چند سطر ببینم تا مطمئن شوم که شکستن خط‌ها درست کار می‌کند

@@ -1,0 +1,14 @@
+# A commit whose lines are too wide for a screen 110 columns wide, in all the areas: header, body,
+# and code (including wide characters, tabs, trailing whitespace and right-to-left text).
+hash = "b0d4e2a3c91f5d7a8e260b4c9d1f3a5e7b82c046"
+author = "Chloé Bernard"
+email = "chloe.bernard@example.org"
+date = "2026-10-01 11:47:20 +0200"
+subject = "view: wrap the lines too wide for the screen instead of cropping them at its edge"
+body = """
+Long lines used to be cropped at the edge of the screen, hiding their end, which is often where the interesting part of a modification is. They are now displayed on several rows, broken at the Unicode line break opportunities.
+A `↵` marks each row of a diff that continues on the next one."""
+
+[decorations]
+tags = ["v0.2"]
+remote_branches = ["origin/line-wrapping"]

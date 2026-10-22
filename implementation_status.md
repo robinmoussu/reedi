@@ -222,7 +222,7 @@ version 0.0.5: theming
 version 0.0.6: internal tooling
 -----------------------------
 
-- [ ] pure refactor, acceptance tests shouldn’t change
+- [x] pure refactor, acceptance tests shouldn’t change
 
 First commit containing only the change needed to support proper date parsing:
 - [x] parsed as git would, displayed as git would
@@ -252,27 +252,27 @@ First commit containing only the change needed to support proper date parsing:
    - snapshots use `format:%d/%m/%Y`, so that they don't change
 
 Second commit with only the restructuring of fake data:
-- [ ] fake data should be plain text files whose data is read at compile time and embedded in the
+- [x] fake data should be plain text files whose data is read at compile time and embedded in the
   binary
-- [ ] fake commit data should be in `etc/fake_commits/${reverse_order}_${descriptive_commit_name}/`:
+- [x] fake commit data should be in `etc/fake_commits/${reverse_order}_${descriptive_commit_name}/`:
    - `$reverse_order`: index of the commit, starting from `00`, corresponding of the reverse order
      in which commit are displayed (so that most recently added test will get a higher number, and
      be displayed first without renumbering index of existing fake commits)
    - `$descriptive_commit_name`: short descriptive name of the commit content
-- [ ] each commit folder should contain:
-   - [ ] a metadata.toml file containing
+- [x] each commit folder should contain:
+   - [x] a metadata.toml file containing
       - commit hash (full hash), author, mail, date (absolute, as `git log --date=iso`), decorations
         (structured format: maybe empty string for head, and array for local_branches,
         remote_branches, and tags), message subject, message body
       - any relevant toml comments for that fake commit
       - `gitattributes` (using the full name for each file, so before/after can be
         differentiated)
-   - [ ] all files in the before/after states, named `$id_$state_$filename`, where:
+   - [x] all files in the before/after states, named `$id_$state_$filename`, where:
       - `$id`: index of the pair (the order in which they are displayed, starting from `01`)
       - `$state`: "before" or "after" (a "before" file without "after" is a deletion, the reverse is
          an addition, multiple "before"/"after" with the same `id` should fail tests)
       - `$filename`: name of the file in the fake commit (use `__` for path separation)
-- [ ] `etc/fake_commits/**` is covered by a single glob in `.gitattributes` (`-text -whitespace`)
+- [x] `etc/fake_commits/**` is covered by a single glob in `.gitattributes` (`-text -whitespace`)
   and `.editorconfig`, so that git and editors never modify the bytes of the fake data
 
 version 0.0.x: interactivity
@@ -329,6 +329,8 @@ version 0.0.x: real data (single commit) and syntax highlighting
 ---------------------------------------------------------------
 
 - [ ] Display the content than `%h% s%C(green)% an%C(blue)% ad%C(auto)% d%C(auto)%+N%-C()%+b%-C()`
+- [ ] the fake data functions of `src/fake.rs` (`all()` and the named ones, like `file_changes()`)
+  are `#[cfg(test)]` and `pub(crate)`
 
 version 0.0.x: edition
 ---------------------

@@ -10,6 +10,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 gix = { version = "0.89.0", default-features = false, features = ["blob-diff", "sha1"] }
 icu_properties = "2.3.0"
 icu_segmenter = "2.3.0"
+include_dir = "0.7.4"
 jiff = "0.2.38"
 libc = "0.2.191"
 nix = { version = "0.31.3", features = ["signal"] }

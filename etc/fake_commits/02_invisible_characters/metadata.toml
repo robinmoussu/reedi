@@ -1,0 +1,14 @@
+# A commit with all kinds of invisible characters, in all the areas: subject, author, body, code
+# with consistent and inconsistent line endings.
+hash = "c7e05b9d2a4f6081c3e5b7d9f0a2c4e6b8d1f357"
+author = "Zoé\u00A0Durand"
+email = "zoe.durand@example.org"
+date = "2026-10-05 17:03:51 +0200"
+subject = "lint: add fixtures for\u200B invisible characters "
+body = """
+Most fixtures were pasted from a web page, hence the no-break spaces\u00A0! 
+The batch script now always uses CRLF line endings.\r"""
+
+[gitattributes]
+# The NUL character is the fixture: without this attribute, git would consider the file as binary.
+"01_after_tests__fixtures__lookalike.rs" = "diff"
