@@ -16,7 +16,7 @@ use ratatui::crossterm::terminal::EnterAlternateScreen;
 
 use crate::config::UnknownKey;
 use crate::date::DateDisplay;
-use crate::fake::FakeCommit;
+use crate::fake;
 use crate::model::Commit;
 use crate::settings::Settings;
 use crate::theme::Theme;
@@ -49,7 +49,7 @@ pub fn run(
 ) -> io::Result<()> {
     let mut error_modal =
         unknown_keys.map(|(path, unknown_keys)| ErrorModal::UnknownKeys { path, unknown_keys });
-    let commits = FakeCommit::all();
+    let commits = fake::all();
     let mut rows = Vec::new();
     let mut width = None;
     let mut viewport = Viewport::default();
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn cursor_moves_row_by_row() {
-        let commits = FakeCommit::all();
+        let commits = fake::all();
         let rows =
             view::rows(&commits, 110, &Theme::none(), &DateDisplay::for_snapshots()).unwrap();
         let mut viewport = Viewport::default();
@@ -243,7 +243,7 @@ mod tests {
     fn first_rows_keep_the_cursor_on_the_first_row() {
         let mut viewport = Viewport::default();
         let rows = rewrap(
-            &FakeCommit::all(),
+            &fake::all(),
             &[],
             &mut viewport,
             110,
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn rewrapping_keeps_the_cursor_on_the_first_character_of_its_row() {
-        let commits = FakeCommit::all();
+        let commits = fake::all();
         let narrow =
             view::rows(&commits, 60, &Theme::none(), &DateDisplay::for_snapshots()).unwrap();
         // The second row of the first line of the body (the header is the line 0, then a blank
@@ -293,7 +293,7 @@ mod tests {
         let mut viewport = Viewport::default();
         assert!(
             rewrap(
-                &FakeCommit::all(),
+                &fake::all(),
                 &[],
                 &mut viewport,
                 0,

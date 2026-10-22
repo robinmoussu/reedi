@@ -1,0 +1,7 @@
+# A commit modifying one chunk of a file and three chunks of another one.
+hash = "8d41e07b6c93a5f1e7d2084b6a9c3e5f7d1b2a48"
+author = "Bruno Lefebvre"
+email = "bruno.lefebvre@example.org"
+date = "2026-10-09 09:15:42 +0200"
+subject = "search: rename pattern to query"
+body = "`query` is the name used in the status bar."

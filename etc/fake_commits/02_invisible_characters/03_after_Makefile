@@ -1,0 +1,5 @@
+CFLAGS	= -O2
+all: build	
+  	 
+build:
+	cc $(CFLAGS) -o app main.c

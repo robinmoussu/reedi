@@ -178,13 +178,20 @@ impl DateDisplay {
                 local: false,
             },
             environment: Environment {
-                now: Timestamp::from_second(1_791_808_327)
-                    .unwrap()
-                    .to_zoned(TimeZone::UTC),
+                now: snapshot_now(),
                 locale: Locale::c(),
             },
         }
     }
+}
+
+/// The current date used by the snapshots.
+#[cfg(test)]
+fn snapshot_now() -> Zoned {
+    jiff::civil::date(2026, 10, 12)
+        .at(14, 32, 7, 0)
+        .to_zoned(TimeZone::UTC)
+        .unwrap()
 }
 
 /// `input`, parsed like `git commit --date` does. Relative dates (like `yesterday`) and dates
