@@ -71,6 +71,7 @@ pub fn run(
             terminal.draw(|frame| {
                 view::draw(
                     frame,
+                    &commits,
                     &rows,
                     &mut viewport,
                     Mode::Review,
@@ -229,7 +230,7 @@ mod tests {
 
     #[test]
     fn cursor_moves_row_by_row() {
-        let commits = fake::all();
+        let commits = vec![fake::file_changes()];
         let rows =
             view::rows(&commits, 110, &Theme::none(), &DateDisplay::for_snapshots()).unwrap();
         let mut viewport = Viewport::default();
@@ -257,7 +258,7 @@ mod tests {
 
     #[test]
     fn rewrapping_keeps_the_cursor_on_the_first_character_of_its_row() {
-        let commits = fake::all();
+        let commits = vec![fake::file_changes()];
         let narrow =
             view::rows(&commits, 60, &Theme::none(), &DateDisplay::for_snapshots()).unwrap();
         // The second row of the first line of the body (the header is the line 0, then a blank

@@ -1,0 +1,7 @@
+# A very short commit whose summary is fully in a right-to-left language (Hebrew).
+hash = "a7c3e90b4d1f6285e3a07c9b1d4f8e26053b7a91"
+author = "Dana Levi"
+email = "dana.levi@example.org"
+date = "2026-09-26 11:05:33 +0200"
+subject = "הוספת בדיקות לשורת המצב"
+body = ""

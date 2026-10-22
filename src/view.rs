@@ -17,6 +17,7 @@ use ratatui::widgets::BorderType;
 use ratatui::widgets::Clear;
 use ratatui::widgets::Padding;
 use ratatui::widgets::Widget;
+use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
 use crate::config::UnknownKey;
@@ -123,6 +124,10 @@ pub struct Row {
     /// lines and the rules. It doesn't depend on the width of the screen.
     pub line: usize,
     pub start: Start,
+    /// Index, among the displayed commits, of the commit the row belongs to. The separator line
+    /// between two commits is the first line of the next commit (the separator below the last
+    /// commit belongs to it).
+    pub commit_index: usize,
 }
 
 impl Row {
@@ -521,6 +526,9 @@ fn file_parts(file: &FileDiff, theme: &Theme) -> Vec<Part> {
 struct Rows<'a> {
     rows: Vec<Row>,
     line: usize,
+    /// Index of the commit being added, given to each row added. It is incremented just before
+    /// adding the separator below a commit, which belongs to the next commit.
+    commit_index: usize,
     width: u16,
     theme: &'a Theme,
     dates: &'a DateDisplay,
@@ -531,6 +539,7 @@ impl<'a> Rows<'a> {
         Self {
             rows: Vec::new(),
             line: 0,
+            commit_index: 0,
             width,
             theme,
             dates,
@@ -543,6 +552,7 @@ impl<'a> Rows<'a> {
             content,
             line: self.line,
             start: Start::Whole(0),
+            commit_index: self.commit_index,
         });
         self.line += 1;
     }
@@ -560,11 +570,13 @@ impl<'a> Rows<'a> {
     fn text(&mut self, parts: &[Part]) -> Result<(), TooNarrow> {
         let rows = wrapped(parts, FinalCr::Shown, self.width.into(), self.theme)?;
         let line = self.line;
+        let commit_index = self.commit_index;
         self.rows
             .extend(rows.into_iter().map(|(start, _, spans)| Row {
                 content: Content::Text(Line::from(spans)),
                 line,
                 start: Start::Whole(start),
+                commit_index,
             }));
         self.line += 1;
         Ok(())
@@ -652,6 +664,7 @@ impl<'a> Rows<'a> {
                         .take(len)
                 };
                 let line = self.line + index;
+                let commit_index = self.commit_index;
                 padded(left)
                     .zip(padded(right))
                     .map(move |((left_start, left), (right_start, right))| Row {
@@ -661,6 +674,7 @@ impl<'a> Rows<'a> {
                             left: left_start,
                             right: right_start,
                         },
+                        commit_index,
                     })
                     .collect::<Vec<_>>()
             })
@@ -697,6 +711,7 @@ impl<'a> Rows<'a> {
         }
         commit.files.iter().try_for_each(|file| self.file(file))?;
         self.blank();
+        self.commit_index += 1;
         self.rule(self.theme.commit_separator);
         Ok(())
     }
@@ -714,6 +729,10 @@ pub fn rows(
 ) -> Result<Vec<Row>, TooNarrow> {
     let mut rows = Rows::new(width, theme, dates);
     commits.iter().try_for_each(|commit| rows.commit(commit))?;
+    // The separator below the last commit has no next commit.
+    if let Some(last) = rows.rows.last_mut() {
+        last.commit_index = commits.len() - 1;
+    }
     Ok(rows.rows)
 }
 
@@ -748,6 +767,9 @@ impl Widget for RowsView<'_> {
 
 pub struct StatusBar<'a> {
     pub mode: Mode,
+    /// Displayed after the mode, and a blank column. It is cropped, and its last column displays
+    /// `…`, if it doesn't fit.
+    pub content: Line<'static>,
     pub theme: &'a Theme,
 }
 
@@ -757,8 +779,43 @@ impl Widget for StatusBar<'_> {
             Mode::Review => self.theme.review_mode,
         };
         let mode = Span::styled(format!(" {} ", self.mode.name()), style);
-        Line::from(mode).render(area, buf);
+        let content_width = usize::from(area.width).saturating_sub(mode.width() + 1);
+        let mut spans = vec![mode, Span::raw(" ")];
+        spans.extend(cropped(self.content, content_width).spans);
+        Line::from(spans)
+            .style(self.theme.status_bar)
+            .render(area, buf);
     }
+}
+
+/// `line`, if it is at most `width` columns wide, otherwise its first `width - 1` columns followed
+/// by `…`, with the style of the last character kept.
+fn cropped(line: Line<'static>, width: usize) -> Line<'static> {
+    if line.width() <= width {
+        return line;
+    }
+    let kept = width.saturating_sub(1);
+    let styled_chars = line.spans.iter().flat_map(|span| {
+        span.content
+            .chars()
+            .map(|c| (c, span.style))
+            .collect::<Vec<_>>()
+    });
+    let mut used = 0;
+    let mut chars: Vec<_> = styled_chars
+        .take_while(|(c, _)| {
+            used += c.width().unwrap_or(0);
+            used <= kept
+        })
+        .collect();
+    let style = chars.last().map_or(line.style, |(_, style)| *style);
+    chars.push(('…', style));
+    Line::from(
+        chars
+            .into_iter()
+            .map(|(c, style)| Span::styled(c.to_string(), style))
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// A message displayed over the commits, until a key is pressed.
@@ -860,11 +917,42 @@ impl Widget for ErrorModalView<'_> {
     }
 }
 
-/// Draw `rows`, with the status bar on the last line of the screen, and `error_modal` over them.
+/// The content of the status bar (after the mode) while the cursor is on the commit `index` of
+/// `commits`, the displayed commits.
+///
+/// The summary is displayed as is, but for the left-to-right mark before it, so that its
+/// right-to-left text does not move the rest of the status bar.
+pub fn commit_status(commits: &[Commit], index: usize, theme: &Theme) -> Line<'static> {
+    let commit = &commits[index];
+    Line::from(Span::styled(
+        format!(
+            "commit {}/{}: {} {LEFT_TO_RIGHT_MARK}{}",
+            index + 1,
+            commits.len(),
+            commit.short_hash(),
+            commit.subject
+        ),
+        theme.status_bar_content,
+    ))
+}
+
+/// Index, among the displayed commits, of the commit displayed by the row `row` of `rows`.
+///
+/// The separator line between two commits is the first line of the next commit (the separator
+/// below the last commit belongs to it).
+pub fn commit_index(rows: &[Row], row: usize) -> usize {
+    rows.get(row)
+        .or(rows.last())
+        .map_or(0, |row| row.commit_index)
+}
+
+/// Draw `rows` (displaying `commits`), with the status bar on the last line of the screen, and
+/// `error_modal` over them. The status bar displays the commit the cursor is on.
 ///
 /// `viewport` is first scrolled to fit the screen.
 pub fn draw(
     frame: &mut Frame,
+    commits: &[Commit],
     rows: &[Row],
     viewport: &mut Viewport,
     mode: Mode,
@@ -883,7 +971,19 @@ pub fn draw(
         },
         content,
     );
-    frame.render_widget(StatusBar { mode, theme }, status_bar);
+    let content = if commits.is_empty() {
+        Line::default()
+    } else {
+        commit_status(commits, commit_index(rows, viewport.cursor), theme)
+    };
+    frame.render_widget(
+        StatusBar {
+            mode,
+            content,
+            theme,
+        },
+        status_bar,
+    );
     if let Some(error_modal) = error_modal {
         frame.render_widget(ErrorModalView { error_modal, theme }, frame.area());
     }
@@ -940,6 +1040,7 @@ mod tests {
             content,
             line: 0,
             start: Start::Whole(0),
+            commit_index: 0,
         }
     }
 
@@ -1016,23 +1117,18 @@ mod tests {
         error_modal: Option<&ErrorModal>,
         theme: &Theme,
     ) -> TestBackend {
-        let commits = fake::all();
-        let rows = rows(&commits, width, theme, &DateDisplay::for_snapshots()).unwrap();
-        let mut viewport = viewport;
-        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal
-            .draw(|frame| {
-                draw(
-                    frame,
-                    &rows,
-                    &mut viewport,
-                    Mode::Review,
-                    error_modal,
-                    theme,
-                )
-            })
-            .unwrap();
-        let buffer = without_left_to_right_marks(terminal.backend().buffer());
+        render_with(width, height, viewport, error_modal, theme)
+    }
+
+    fn render_with(
+        width: u16,
+        height: u16,
+        viewport: Viewport,
+        error_modal: Option<&ErrorModal>,
+        theme: &Theme,
+    ) -> TestBackend {
+        let buffer =
+            without_left_to_right_marks(&draw_all(width, height, viewport, error_modal, theme));
         let mut backend = TestBackend::new(width, height);
         let cells = buffer.content.iter().enumerate().map(|(i, cell)| {
             let (x, y) = (i % usize::from(width), i / usize::from(width));
@@ -1042,14 +1138,64 @@ mod tests {
         backend
     }
 
+    /// The screen displaying the fake commits, with the left-to-right marks.
+    fn draw_all(
+        width: u16,
+        height: u16,
+        viewport: Viewport,
+        error_modal: Option<&ErrorModal>,
+        theme: &Theme,
+    ) -> Buffer {
+        let commits = fake::all();
+        let rows = rows(&commits, width, theme, &DateDisplay::for_snapshots()).unwrap();
+        let mut viewport = viewport;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| {
+                draw(
+                    frame,
+                    &commits,
+                    &rows,
+                    &mut viewport,
+                    Mode::Review,
+                    error_modal,
+                    theme,
+                )
+            })
+            .unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    macro_rules! assert_content_snapshot {
+        ($backend:expr) => {
+            insta::assert_snapshot!(without_status_bar(&$backend))
+        };
+    }
+
+    /// `backend` as displayed in the snapshots: without its last row, the status bar, which has
+    /// its own tests.
+    fn without_status_bar(backend: &TestBackend) -> String {
+        let screen = backend.to_string();
+        let mut rows: Vec<_> = screen.lines().collect();
+        rows.pop();
+        rows.join("\n")
+    }
+
     #[test]
     fn full_screen() {
-        insta::assert_snapshot!(render(110, 26, Viewport::default(), &Theme::none()));
+        let viewport = viewport_at(&fake::file_changes(), 110);
+        assert_content_snapshot!(render(110, 26, viewport, &Theme::none()));
     }
 
     #[test]
     fn small_screen_is_wrapped_and_cropped() {
-        insta::assert_snapshot!(render(50, 8, Viewport::default(), &Theme::none()));
+        // The scrolloff is 3 rows on a screen of 7 rows.
+        let top = first_row(&fake::file_changes(), 50);
+        let viewport = Viewport {
+            cursor: top + 3,
+            top,
+        };
+        assert_content_snapshot!(render(50, 8, viewport, &Theme::none()));
     }
 
     #[test]
@@ -1066,7 +1212,7 @@ mod tests {
             cursor: len - 1,
             top: 0,
         };
-        insta::assert_snapshot!(render(110, 26, viewport, &Theme::none()));
+        assert_content_snapshot!(render(110, 26, viewport, &Theme::none()));
     }
 
     #[test]
@@ -1074,12 +1220,12 @@ mod tests {
         let commit = fake::file_changes();
         let height = commit_rows(&commit, 110, &Theme::none()).len() + 1;
         let viewport = viewport_at(&commit, 110);
-        insta::assert_snapshot!(render(110, height as u16, viewport, &Theme::none()));
+        assert_content_snapshot!(render(110, height as u16, viewport, &Theme::none()));
     }
 
     #[test]
     fn long_lines_are_wrapped() {
-        insta::assert_snapshot!(render(
+        assert_content_snapshot!(render(
             110,
             60,
             viewport_at(&fake::line_wrapping(), 110),
@@ -1089,7 +1235,7 @@ mod tests {
 
     #[test]
     fn long_lines_are_wrapped_on_a_narrow_screen() {
-        insta::assert_snapshot!(render(
+        assert_content_snapshot!(render(
             70,
             80,
             viewport_at(&fake::line_wrapping(), 70),
@@ -1104,7 +1250,7 @@ mod tests {
             cursor: start + 30,
             top: start + 20,
         };
-        insta::assert_snapshot!(render(110, 26, viewport, &Theme::none()));
+        assert_content_snapshot!(render(110, 26, viewport, &Theme::none()));
     }
 
     #[test]
@@ -1882,6 +2028,340 @@ mod tests {
         });
     }
 
+    /// Index of the first row of each fake commit, on a screen `width` columns wide.
+    fn commit_starts(width: u16) -> Vec<usize> {
+        fake::all()
+            .iter()
+            .scan(0, |start, commit| {
+                let first = *start;
+                *start += commit_rows(commit, width, &Theme::none()).len();
+                Some(first)
+            })
+            .collect()
+    }
+
+    /// All the rows of the fake commits, on a screen `width` columns wide.
+    fn all_rows(width: u16) -> Vec<Row> {
+        rows(
+            &fake::all(),
+            width,
+            &Theme::none(),
+            &DateDisplay::for_snapshots(),
+        )
+        .unwrap()
+    }
+
+    /// A viewport whose first row and cursor are the row `row`.
+    fn viewport_on(row: usize) -> Viewport {
+        Viewport {
+            cursor: row,
+            top: row,
+        }
+    }
+
+    /// The last row of `backend`, as text.
+    fn status_bar(backend: &TestBackend) -> String {
+        let buffer = backend.buffer();
+        let y = buffer.area.height - 1;
+        (0..buffer.area.width)
+            .map(|x| buffer[(x, y)].symbol())
+            .collect()
+    }
+
+    /// The cells of the last row of `backend`, after the mode and the blank column.
+    fn status_bar_content_cells(backend: &TestBackend) -> Vec<&ratatui::buffer::Cell> {
+        let buffer = backend.buffer();
+        let y = buffer.area.height - 1;
+        (STATUS_BAR_CONTENT_X..buffer.area.width)
+            .map(|x| &buffer[(x, y)])
+            .collect()
+    }
+
+    /// The first column of the content of the status bar: after ` Review ` and a blank column.
+    const STATUS_BAR_CONTENT_X: u16 = 9;
+
+    /// What the status bar displays by default when the cursor is on the commit `index` of the
+    /// fake commits.
+    fn expected_commit_status(index: usize) -> String {
+        let commits = fake::all();
+        let commit = &commits[index];
+        format!(
+            "commit {}/{}: {} {}",
+            index + 1,
+            commits.len(),
+            commit.short_hash(),
+            commit.subject
+        )
+    }
+
+    #[test]
+    fn the_header_rows_belong_to_their_commit() {
+        let rows = all_rows(110);
+        commit_starts(110)
+            .into_iter()
+            .enumerate()
+            .for_each(|(index, start)| assert_eq!(commit_index(&rows, start), index));
+    }
+
+    #[test]
+    fn the_separator_is_the_first_line_of_the_next_commit() {
+        let rows = all_rows(110);
+        let starts = commit_starts(110);
+        // The separator is the last row of the rows of each commit, below a blank row.
+        starts
+            .iter()
+            .skip(1)
+            .enumerate()
+            .for_each(|(previous, start)| {
+                assert_eq!(commit_index(&rows, start - 1), previous + 1, "separator");
+                assert_eq!(commit_index(&rows, start - 2), previous, "blank row");
+                assert_eq!(commit_index(&rows, *start), previous + 1, "header");
+            });
+    }
+
+    #[test]
+    fn the_separator_below_the_last_commit_belongs_to_the_last_commit() {
+        let rows = all_rows(110);
+        let last = fake::all().len() - 1;
+        assert_eq!(commit_index(&rows, rows.len() - 1), last);
+        assert_eq!(commit_index(&rows, rows.len() - 2), last);
+    }
+
+    #[test]
+    fn all_the_rows_of_a_commit_belong_to_it() {
+        let rows = all_rows(110);
+        let starts = commit_starts(110);
+        starts.iter().enumerate().for_each(|(index, start)| {
+            // Everything but the separator, which is the last row of the previous commit's rows.
+            let end = starts.get(index + 1).map_or(rows.len(), |end| end - 1);
+            (*start..end).for_each(|row| assert_eq!(commit_index(&rows, row), index, "{row}"));
+        });
+    }
+
+    #[test]
+    fn status_bar_displays_the_commit_the_cursor_is_on() {
+        themes().iter().chain([&Theme::none()]).for_each(|theme| {
+            // Wide enough to not crop the longest summary.
+            commit_starts(200)
+                .into_iter()
+                .enumerate()
+                .for_each(|(index, start)| {
+                    let backend = render(200, 30, viewport_on(start), theme);
+                    // Nothing but blanks follows the summary, which may end with a space.
+                    let expected = format!(" Review  {}", expected_commit_status(index));
+                    let status_bar = status_bar(&backend);
+                    let after = status_bar.strip_prefix(&expected).expect(&status_bar);
+                    assert!(after.chars().all(|c| c == ' '), "{status_bar:?}");
+                });
+        });
+    }
+
+    #[test]
+    fn status_bar_is_updated_when_the_cursor_moves() {
+        let starts = commit_starts(200);
+        // The cursor goes from the middle of the third commit to the separator above the fourth,
+        // which is the first line of the fourth commit.
+        let middle = starts[2] + 3;
+        let viewport = Viewport {
+            cursor: middle,
+            top: starts[2],
+        };
+        assert_eq!(
+            status_bar(&render(200, 30, viewport, &Theme::none())).trim_end(),
+            format!(" Review  {}", expected_commit_status(2))
+        );
+        let viewport = Viewport {
+            cursor: starts[3] - 1,
+            top: starts[2],
+        };
+        assert_eq!(
+            status_bar(&render(200, 30, viewport, &Theme::none())).trim_end(),
+            format!(" Review  {}", expected_commit_status(3))
+        );
+    }
+
+    #[test]
+    fn status_bar_counts_the_displayed_commits_and_starts_at_one() {
+        let count = fake::all().len();
+        let first = status_bar(&render(200, 30, viewport_on(0), &Theme::none()));
+        assert!(first.contains(&format!("commit 1/{count}: ")), "{first}");
+        let rows = all_rows(200);
+        let last = status_bar(&render(
+            200,
+            30,
+            viewport_on(rows.len() - 1),
+            &Theme::none(),
+        ));
+        assert!(
+            last.contains(&format!("commit {count}/{count}: ")),
+            "{last}"
+        );
+    }
+
+    #[test]
+    fn status_bar_summary_is_preceded_by_a_left_to_right_mark() {
+        let starts = commit_starts(200);
+        let commits = fake::all();
+        [
+            fake::rtl_summary(),
+            fake::rtl_then_ltr_summary(),
+            fake::ltr_then_rtl_summary(),
+            fake::scrolloff_rename(),
+        ]
+        .iter()
+        .for_each(|commit| {
+            let index = commits.iter().position(|c| c.hash == commit.hash).unwrap();
+            let buffer = draw_all(200, 30, viewport_on(starts[index]), None, &Theme::none());
+            let status_bar: String = (0..200).map(|x| buffer[(x, 29)].symbol()).collect();
+            let expected = format!(
+                " Review  commit {}/{}: {} {LEFT_TO_RIGHT_MARK}{}",
+                index + 1,
+                commits.len(),
+                commit.short_hash(),
+                commit.subject
+            );
+            assert_eq!(status_bar.trim_end(), expected);
+            // Only before the summary.
+            assert_eq!(status_bar.matches(LEFT_TO_RIGHT_MARK).count(), 1);
+        });
+    }
+
+    #[test]
+    fn status_bar_summary_is_not_replaced() {
+        let commit = fake::invisible_characters();
+        let index = fake::all()
+            .iter()
+            .position(|c| c.hash == commit.hash)
+            .unwrap();
+        let start = commit_starts(200)[index];
+        let status_bar = status_bar(&render(200, 30, viewport_on(start), &Theme::none()));
+        // The replacements of a zero-width space (`⌁`) and of a trailing space (`∙`).
+        assert!(!status_bar.contains('⌁'), "{status_bar}");
+        assert!(!status_bar.contains('∙'), "{status_bar}");
+        assert!(
+            status_bar.contains("lint: add fixtures for"),
+            "{status_bar}"
+        );
+    }
+
+    #[test]
+    fn status_bar_content_is_gray() {
+        let start = commit_starts(200)[1];
+        [
+            (Theme::dark(), Color::Indexed(248), Color::Reset),
+            (Theme::light(), Color::Indexed(240), Color::Indexed(252)),
+        ]
+        .iter()
+        .for_each(|(theme, gray, background)| {
+            let backend = render(200, 30, viewport_on(start), theme);
+            let content = status_bar_content_cells(&backend);
+            let texts: Vec<_> = content.iter().filter(|cell| cell.symbol() != " ").collect();
+            assert!(!texts.is_empty());
+            texts.iter().for_each(|cell| {
+                assert_eq!(cell.fg, *gray, "{}", cell.symbol());
+                assert_eq!(cell.bg, *background, "{}", cell.symbol());
+            });
+            // The mode keeps its own colors.
+            let mode = &backend.buffer()[(1, 29)];
+            assert_eq!(mode.bg, theme.review_mode.bg.unwrap());
+        });
+    }
+
+    #[test]
+    fn light_status_bar_has_a_light_gray_background_but_for_the_mode() {
+        let theme = Theme::light();
+        // Wide enough for the whole commit text, with blank columns after it.
+        let backend = render(200, 30, viewport_on(0), &theme);
+        let buffer = backend.buffer();
+        (0..8).for_each(|x| assert_eq!(buffer[(x, 29)].bg, Color::Blue, "mode {x}"));
+        // The blank column after the mode, the content and the blank columns after it.
+        (8..200).for_each(|x| assert_eq!(buffer[(x, 29)].bg, Color::Indexed(252), "{x}"));
+    }
+
+    #[test]
+    fn light_status_bar_background_is_kept_by_the_ellipsis() {
+        let backend = render(40, 30, viewport_on(0), &Theme::light());
+        let ellipsis = &backend.buffer()[(39, 29)];
+        assert_eq!(ellipsis.symbol(), "…");
+        assert_eq!(ellipsis.bg, Color::Indexed(252));
+    }
+
+    #[test]
+    fn dark_and_none_status_bars_have_no_background_but_for_the_mode() {
+        [Theme::dark(), Theme::none()].iter().for_each(|theme| {
+            let backend = render(200, 30, viewport_on(0), theme);
+            (8..200).for_each(|x| assert_eq!(backend.buffer()[(x, 29)].bg, Color::Reset, "{x}"));
+        });
+    }
+
+    #[test]
+    fn status_bar_content_has_no_color_without_colors() {
+        let start = commit_starts(200)[1];
+        let backend = render(200, 30, viewport_on(start), &Theme::none());
+        status_bar_content_cells(&backend).iter().for_each(|cell| {
+            assert_eq!(cell.fg, Color::Reset, "{}", cell.symbol());
+            assert_eq!(cell.bg, Color::Reset, "{}", cell.symbol());
+            assert!(!cell.modifier.contains(Modifier::REVERSED));
+        });
+    }
+
+    #[test]
+    fn status_bar_content_that_does_not_fit_is_cropped_with_an_ellipsis() {
+        let commit = fake::file_changes();
+        let index = fake::all()
+            .iter()
+            .position(|c| c.hash == commit.hash)
+            .unwrap();
+        let full = format!(" Review  {}", expected_commit_status(index));
+        [40, 60, 90].into_iter().for_each(|width| {
+            let start = commit_starts(width)[index];
+            let backend = render(width, 30, viewport_on(start), &Theme::none());
+            let expected: String = full
+                .chars()
+                .take(usize::from(width) - 1)
+                .chain(['…'])
+                .collect();
+            assert_eq!(status_bar(&backend), expected);
+        });
+    }
+
+    #[test]
+    fn status_bar_content_that_just_fits_is_not_cropped() {
+        let commit = fake::scrolloff_rename();
+        let index = fake::all()
+            .iter()
+            .position(|c| c.hash == commit.hash)
+            .unwrap();
+        let full = format!(" Review  {}", expected_commit_status(index));
+        let width = full.chars().count() as u16;
+        let start = commit_starts(width)[index];
+        let backend = render(width, 30, viewport_on(start), &Theme::none());
+        assert_eq!(status_bar(&backend), full);
+        // One column less crops it.
+        let start = commit_starts(width - 1)[index];
+        let backend = render(width - 1, 30, viewport_on(start), &Theme::none());
+        assert_eq!(
+            status_bar(&backend),
+            full.chars()
+                .take(usize::from(width) - 2)
+                .chain(['…'])
+                .collect::<String>()
+        );
+    }
+
+    #[test]
+    fn status_bar_cropped_content_keeps_the_gray() {
+        let index = fake::all()
+            .iter()
+            .position(|c| c.hash == fake::file_changes().hash)
+            .unwrap();
+        let start = commit_starts(40)[index];
+        let backend = render(40, 30, viewport_on(start), &Theme::dark());
+        let ellipsis = &backend.buffer()[(39, 29)];
+        assert_eq!(ellipsis.symbol(), "…");
+        assert_eq!(ellipsis.fg, Color::Indexed(248));
+    }
+
     #[test]
     fn mode_is_in_reverse_video_and_bold_without_colors() {
         let backend = render(110, 26, Viewport::default(), &Theme::none());
@@ -2044,10 +2524,10 @@ mod tests {
     #[test]
     fn error_modal_is_displayed_over_the_commits() {
         let error_modal = unknown_keys_error_modal();
-        insta::assert_snapshot!(render_with_error_modal(
+        assert_content_snapshot!(render_with_error_modal(
             110,
             26,
-            Viewport::default(),
+            viewport_at(&fake::file_changes(), 110),
             Some(&error_modal),
             &Theme::none()
         ));
@@ -2056,10 +2536,10 @@ mod tests {
     #[test]
     fn long_lines_of_the_error_modal_are_wrapped() {
         let error_modal = unknown_keys_error_modal();
-        insta::assert_snapshot!(render_with_error_modal(
+        assert_content_snapshot!(render_with_error_modal(
             40,
             12,
-            Viewport::default(),
+            viewport_at(&fake::file_changes(), 40),
             Some(&error_modal),
             &Theme::none()
         ));

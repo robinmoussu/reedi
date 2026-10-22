@@ -10,6 +10,9 @@ const FILE_CHANGES: &str = "file_changes";
 const LINE_WRAPPING: &str = "line_wrapping";
 const INVISIBLE_CHARACTERS: &str = "invisible_characters";
 const SCROLLOFF_RENAME: &str = "scrolloff_rename";
+const RTL_SUMMARY: &str = "rtl_summary";
+const RTL_THEN_LTR_SUMMARY: &str = "rtl_then_ltr_summary";
+const LTR_THEN_RTL_SUMMARY: &str = "ltr_then_rtl_summary";
 
 /// All the fake commits, in topological order (oldest first): the folders of
 /// `etc/fake_commits/`, from the highest index to `00`.
@@ -57,6 +60,23 @@ pub fn scrolloff_rename() -> Commit {
     named(SCROLLOFF_RENAME)
 }
 
+/// A very short commit whose summary is fully in a right-to-left language (Hebrew).
+pub fn rtl_summary() -> Commit {
+    named(RTL_SUMMARY)
+}
+
+/// A very short commit whose summary is in a right-to-left language (Arabic), then in a
+/// left-to-right one.
+pub fn rtl_then_ltr_summary() -> Commit {
+    named(RTL_THEN_LTR_SUMMARY)
+}
+
+/// A very short commit whose summary is in a left-to-right language, then in a right-to-left one
+/// (Arabic).
+pub fn ltr_then_rtl_summary() -> Commit {
+    named(LTR_THEN_RTL_SUMMARY)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,6 +107,9 @@ mod tests {
             line_wrapping(),
             invisible_characters(),
             scrolloff_rename(),
+            rtl_summary(),
+            rtl_then_ltr_summary(),
+            ltr_then_rtl_summary(),
         ]
         .into_iter()
         .for_each(|commit| assert!(hashes.contains(&commit.hash), "{}", commit.subject));
@@ -238,5 +261,113 @@ mod tests {
         };
         assert_eq!(missing("scripts/install.sh"), [LineKind::Unchanged]);
         assert_eq!(missing("config/default.toml"), [LineKind::Removed]);
+    }
+
+    /// The letters of the summary of `commit`, as `true` for the right-to-left ones (Hebrew and
+    /// Arabic) and `false` for the left-to-right ones (ASCII).
+    fn letters_directions(commit: &Commit) -> Vec<bool> {
+        commit
+            .subject
+            .chars()
+            .filter(|c| c.is_alphabetic())
+            .map(|c| match c {
+                '\u{0590}'..='\u{06ff}' => true,
+                c if c.is_ascii_alphabetic() => false,
+                c => panic!("{c:?} is neither Hebrew, Arabic nor ASCII"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_new_short_commits_are_the_first_displayed() {
+        let hashes: Vec<_> = all()
+            .into_iter()
+            .take(3)
+            .map(|commit| commit.hash)
+            .collect();
+        assert_eq!(
+            hashes,
+            [
+                ltr_then_rtl_summary().hash,
+                rtl_then_ltr_summary().hash,
+                rtl_summary().hash,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_summary_is_fully_in_a_right_to_left_language() {
+        let directions = letters_directions(&rtl_summary());
+        assert!(!directions.is_empty());
+        assert!(directions.iter().all(|rtl| *rtl));
+        assert!(
+            rtl_summary()
+                .subject
+                .chars()
+                .any(|c| ('\u{05d0}'..='\u{05ea}').contains(&c))
+        );
+    }
+
+    #[test]
+    fn a_summary_is_in_arabic_then_in_a_left_to_right_language() {
+        let commit = rtl_then_ltr_summary();
+        let directions = letters_directions(&commit);
+        assert_eq!(directions.first(), Some(&true));
+        assert_eq!(directions.last(), Some(&false));
+        // Both directions are each in a single block.
+        assert_eq!(
+            directions
+                .windows(2)
+                .filter(|pair| pair[0] != pair[1])
+                .count(),
+            1
+        );
+        assert!(
+            commit
+                .subject
+                .chars()
+                .any(|c| ('\u{0620}'..='\u{064a}').contains(&c))
+        );
+    }
+
+    #[test]
+    fn a_summary_is_in_a_left_to_right_language_then_in_arabic() {
+        let commit = ltr_then_rtl_summary();
+        let directions = letters_directions(&commit);
+        assert_eq!(directions.first(), Some(&false));
+        assert_eq!(directions.last(), Some(&true));
+        // Both directions are each in a single block.
+        assert_eq!(
+            directions
+                .windows(2)
+                .filter(|pair| pair[0] != pair[1])
+                .count(),
+            1
+        );
+        assert!(
+            commit
+                .subject
+                .chars()
+                .any(|c| ('\u{0620}'..='\u{064a}').contains(&c))
+        );
+    }
+
+    #[test]
+    fn the_new_short_commits_modify_a_single_ascii_line() {
+        [
+            rtl_summary(),
+            rtl_then_ltr_summary(),
+            ltr_then_rtl_summary(),
+        ]
+        .iter()
+        .for_each(|commit| {
+            assert_eq!(commit.files.len(), 1, "{}", commit.subject);
+            let file = &commit.files[0];
+            assert_eq!(file.chunks.len(), 1, "{}", commit.subject);
+            let lines = &file.chunks[0].lines;
+            let kinds: Vec<_> = lines.iter().map(|line| line.kind).collect();
+            assert_eq!(kinds, [LineKind::Removed, LineKind::Added]);
+            assert!(lines.iter().all(|line| line.text.is_ascii()));
+        });
     }
 }

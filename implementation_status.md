@@ -275,14 +275,56 @@ Second commit with only the restructuring of fake data:
 - [x] `etc/fake_commits/**` is covered by a single glob in `.gitattributes` (`-text -whitespace`)
   and `.editorconfig`, so that git and editors never modify the bytes of the fake data
 
-version 0.0.x: interactivity
+version 0.0.7: interactivity
 --------------------------
 
+- [x] The content of the status bar (after the mode, separated from it by one blank column) is in
+  gray:
+   - [x] by default it displays `commit $x/$y: $short_hash $summary`, where `x` is the 1-based index
+     of the commit the cursor is on and `y` the number of commits displayed (not the number of
+     commits of the repository), and it is updated when the cursor moves
+      - [x] the separator line between two commits is the first line of the next commit
+      - [x] `$summary` is displayed as is (no replacement of the invisible characters), preceded by
+        a left-to-right mark (U+200E), so that the right-to-left text of the summary does not move
+        the rest of the status bar
+   - [x] if the content does not fit, it is cropped at the end of the status bar and its last
+     column displays `…`
+   - [x] the gray is a `Theme` style: `Indexed(248)` in dark, `Indexed(240)` in light, no color in
+     none
+   - [x] in light mode, the whole status bar, but the mode, has a light gray background
+     (`Indexed(252)`)
+   - [x] the snapshots do not contain the status bar (it has its own tests), so that they do not
+     change when the commits or the cursor change
+- [x] fake data update (3 new commits, displayed first), each very short (one file with one line
+  before and one after, in plain ASCII), only their summary differs:
+   - [x] a commit whose summary is fully in a RTL language (Hebrew)
+   - [x] a commit whose summary is RTL Arabic then LTR
+   - [x] a commit whose summary is LTR then RTL Arabic
+
+- [ ] Content of the status bar update:
+  gray:
+   - [ ] while a number is pending (see "number prefix" below), it displays `The next command will
+     be repeated <n> times` instead
 - [ ] `ctrl+e`/`ctrl+y` move the screen one line down/up (and move the cursor if it would have gone
   closer to 5 lines of the top/bottom)
-- [ ] `d`/`u` move the half a screen down/up (and may move the cursor like `ctrl+e`/`ctrl+y`)
-- [ ] `g`/`G` move the cursor to first/last line
-- [ ] `J`/`K` or `ctrl+up`/`ctrl+down` jumps to the next/previous commit
+   - [ ] the screen stops at both ends, like `less`
+   - [ ] the cursor follows the scroll only when it is inside the scrolloff margin; otherwise it
+     keeps its distance from the top/bottom of the screen
+- [ ] `d`/`u` move the half a screen (`height / 2` rows, `height` excluding the status bar) down/up
+  (and may move the cursor like `ctrl+e`/`ctrl+y`). Screen and cursor are clamped at the ends
+- [ ] `g`/`G` move the cursor to first/last line (`G`: last row of the last commit; the screen
+  scrolls just enough to show it)
+- [ ] `J`/`K` or `ctrl+down`/`ctrl+up` jump to the header row of the next/previous commit
+   - [ ] `K` on a row of a commit goes to its header row, and on its header row goes to the header
+     row of the previous commit
+   - [ ] nothing happens on the last/first commit
+- [ ] number prefix:
+   - [ ] repeats `j`/`k`, `up`/`down`, `ctrl+e`/`ctrl+y`, `d`/`u`, `J`/`K`, `ctrl+down`/`ctrl+up`
+     and `tab`/`shift+tab` (`tab`/`shift+tab` do nothing yet, but accept and clear the number)
+   - [ ] `${number}g`/`${number}G`: 1-based row from the top/bottom
+   - [ ] a number too large clamps to the first/last row (or commit)
+   - [ ] a leading `0` is ignored, `0` alone does nothing
+   - [ ] any key that is not a digit or a move (`escape` included) cancels the pending number
 
 version 0.0.x: word-diff and syntax support
 -----------------------------------------
