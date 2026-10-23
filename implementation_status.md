@@ -88,7 +88,7 @@ version 0.0.2: invisible characters
    - [x] a left-to-right mark is put after the first character of each row and after the last
      character of each column
 
-version 0.0.x: line wrapping
+version 0.0.3: line wrapping
 --------------------------
 
 - [x] fake data update, in a new oldest commit, whose lines are wrapped in the 110 columns wide
@@ -111,7 +111,7 @@ version 0.0.x: line wrapping
    - [x] if one side wraps on more rows than the other, the shorter side is padded with rows
      displaying only the line number column without number
    - [x] the header, the commit message and the file names are wrapped too (without `↵` marker)
-   - [ ] RTL scripts are broken in memory order and reordered by the terminal (validated manually
+   - [x] RTL scripts are broken in memory order and reordered by the terminal (validated manually
      using the fake data, the right-to-left part of a text area can be displayed on either side)
    - [x] a tab that is the last character before a break is displayed as `⇥` alone
    - [x] Trailing whitespace are highlighted, wrapped, and not hidden
