@@ -97,6 +97,7 @@ Areas
     - default: `commit $x/$y: $short_hash $summary` (`x`: index of the commit the cursor is on, `y`:
     number of commits displayed)
     - while a number is pending: `The next command will be repeated <n> times`
+- In light mode, the background of the status bar (but the mode) is light gray
 
 Expected implementation
 =======================
@@ -163,11 +164,14 @@ Review mode:
 - `[`/`]` jumps to the next/prevous merge conflict
 
 - `ctrl+e`/`ctrl+y` move the screen one line down/up (and move the cursor if it would have gone
-  closer to 5 lines of the top/bottom)
-- `d`/`u` move the half a screen down/up (and may move the cursor like `ctrl+e`/`ctrl+y`)
+  closer to the top/bottom of the screen than the scrolloff margin)
+- `d`/`u` or `ctrl+d`/`ctrl+u` move half a screen down/up: both the screen, like
+  `ctrl+e`/`ctrl+y`, and the cursor, like `j`/`k`, move by that amount. Nothing moves anymore when
+  the last/first row is displayed
 
 - numbers before a move repeat that move by this amount
-- `${number}g` move the cursor to the `number`th line from the top, `${number}G` from the bottom
+- `${number}g` or `${number}G` move the cursor to the `number`th line from the top (like `${number}G`
+  in vim)
 
 - `enter` edit the current editable area (or the next one if on a line with only non-editable
     elements
