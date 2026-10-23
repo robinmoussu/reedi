@@ -301,30 +301,38 @@ version 0.0.7: interactivity
    - [x] a commit whose summary is RTL Arabic then LTR
    - [x] a commit whose summary is LTR then RTL Arabic
 
-- [ ] Content of the status bar update:
-  gray:
-   - [ ] while a number is pending (see "number prefix" below), it displays `The next command will
-     be repeated <n> times` instead
-- [ ] `ctrl+e`/`ctrl+y` move the screen one line down/up (and move the cursor if it would have gone
-  closer to 5 lines of the top/bottom)
-   - [ ] the screen stops at both ends, like `less`
-   - [ ] the cursor follows the scroll only when it is inside the scrolloff margin; otherwise it
+- [x] Content of the status bar update:
+   - [x] while a number is pending (see "number prefix" below), it displays `The next command will
+     be repeated <n> times` instead, in gray (`<n>` is the number as typed, without
+     its leading zeros; it always says `times`, also for 1)
+- [x] `ctrl+e`/`ctrl+y` move the screen one line down/up (and move the cursor if it would have gone
+  closer to the top/bottom of the screen than the scrolloff margin)
+   - [x] the screen stops at both ends, like `less`
+   - [x] the cursor follows the scroll only when it is inside the scrolloff margin; otherwise it
      keeps its distance from the top/bottom of the screen
-- [ ] `d`/`u` move the half a screen (`height / 2` rows, `height` excluding the status bar) down/up
-  (and may move the cursor like `ctrl+e`/`ctrl+y`). Screen and cursor are clamped at the ends
-- [ ] `g`/`G` move the cursor to first/last line (`G`: last row of the last commit; the screen
+- [x] `d`/`u` or `ctrl+d`/`ctrl+u` move half a screen (`height / 2` rows, `height` excluding the
+  status bar) down/up: both the screen, like `ctrl+e`/`ctrl+y`, and the cursor, like `j`/`k`, move
+  by that amount (the cursor does not move more because of the scroll)
+   - [x] when the last row (for `d`) or the first row (for `u`) is displayed, nothing moves anymore
+   - [x] if the screen can only scroll partially, the cursor moves by the same (shorter) amount
+- [x] `g`/`G` move the cursor to first/last line (`G`: last row of the last commit; the screen
   scrolls just enough to show it)
-- [ ] `J`/`K` or `ctrl+down`/`ctrl+up` jump to the header row of the next/previous commit
-   - [ ] `K` on a row of a commit goes to its header row, and on its header row goes to the header
+- [x] `J`/`K` or `ctrl+down`/`ctrl+up` jump to the header row of the next/previous commit
+   - [x] `K` on a row of a commit goes to its header row, and on its header row goes to the header
      row of the previous commit
-   - [ ] nothing happens on the last/first commit
-- [ ] number prefix:
-   - [ ] repeats `j`/`k`, `up`/`down`, `ctrl+e`/`ctrl+y`, `d`/`u`, `J`/`K`, `ctrl+down`/`ctrl+up`
-     and `tab`/`shift+tab` (`tab`/`shift+tab` do nothing yet, but accept and clear the number)
-   - [ ] `${number}g`/`${number}G`: 1-based row from the top/bottom
-   - [ ] a number too large clamps to the first/last row (or commit)
-   - [ ] a leading `0` is ignored, `0` alone does nothing
-   - [ ] any key that is not a digit or a move (`escape` included) cancels the pending number
+   - [x] on the separator line of a commit (which is the first line of that commit, above its header
+     row), `K` goes to the header row of the previous commit and `J` to the header row of the
+     following commit: with the cursor on the separator line of the commit 5, `K` goes to the header
+     row of the commit 4 and `J` to the one of the commit 6
+   - [x] nothing happens on the last/first commit
+- [x] number prefix:
+   - [x] repeats `j`/`k`, `up`/`down`, `ctrl+e`/`ctrl+y`, `d`/`u`, `ctrl+d`/`ctrl+u`, `J`/`K`,
+     `ctrl+down`/`ctrl+up`
+   - [x] `${number}g`/`${number}G`: 1-based row from the top (like `${number}G` in vim)
+   - [x] a number too large goes to the last row (`g`/`G`), or clamps to the last/first commit
+     (`J`/`K`)
+   - [x] a leading `0` is ignored, `0` alone does nothing
+   - [x] any key that is not a digit or a move (`escape` included) cancels the pending number
 
 version 0.0.x: word-diff and syntax support
 -----------------------------------------
@@ -339,6 +347,7 @@ version 0.0.x: editable areas interactivity
 
 - [ ] Review mode
    - [ ] `left`/`right`
+   - [ ]  `tab`/`shift+tab` (supports number prefix)
    - [ ] the current editable area (or next if on a non-editable area) should be highlighted
       - [ ] $commit_subject
       - [ ] $author
