@@ -58,6 +58,9 @@ const CHUNK_TOO_NARROW: &str = "This chunk cannot be displayed: the terminal is 
 /// another column, and a row starting with a right-to-left text may be displayed right-to-left.
 const LEFT_TO_RIGHT_MARK: char = '\u{200e}';
 
+/// Number of rows of the status bar, on the last line of the screen.
+pub const STATUS_BAR_HEIGHT: u16 = 1;
+
 /// The interaction mode, displayed in the status bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -946,22 +949,79 @@ pub fn commit_index(rows: &[Row], row: usize) -> usize {
         .map_or(0, |row| row.commit_index)
 }
 
-/// Draw `rows` (displaying `commits`), with the status bar on the last line of the screen, and
-/// `error_modal` over them. The status bar displays the commit the cursor is on.
+/// The content of the status bar (after the mode) while the number `count` is pending: the next
+/// command will be repeated `count` times.
+pub fn pending_count_status(count: usize, theme: &Theme) -> Line<'static> {
+    Line::from(Span::styled(
+        format!("The next command will be repeated {count} times"),
+        theme.status_bar_content,
+    ))
+}
+
+/// Row of the header (its first row) of the commit `commit` of `rows`, the rows of the displayed
+/// commits. It is below the separator line of the commit, if any.
+pub fn header_row(rows: &[Row], commit: usize) -> Option<usize> {
+    let first = rows.iter().position(|row| row.commit_index == commit)?;
+    if commit == 0 {
+        Some(first)
+    } else {
+        // The first row of the other commits is the separator line above their header.
+        Some(first + 1)
+    }
+}
+
+/// Row of the header of the commit `count` commits after the one displayed by the row `row` of
+/// `rows`, or of the last commit if there are not enough of them. It is `row` if it belongs to the
+/// last commit.
 ///
-/// `viewport` is first scrolled to fit the screen.
+/// The separator line between two commits is the first line of the next commit: it belongs to
+/// the commit below it.
+pub fn next_commit(rows: &[Row], row: usize, count: usize) -> usize {
+    let last = rows.last().map_or(0, |row| row.commit_index);
+    let commit = commit_index(rows, row);
+    if commit >= last {
+        return row;
+    }
+    header_row(rows, commit.saturating_add(count).min(last)).unwrap_or(row)
+}
+
+/// Row of the header of the commit `count` commits before the one displayed by the row `row` of
+/// `rows`, where the commit displayed by `row` itself counts as the first one if `row` is below
+/// its header. It is the header of the first commit if there are not enough of them, and `row`
+/// if it is on or above the header of the first commit.
+pub fn previous_commit(rows: &[Row], row: usize, count: usize) -> usize {
+    let commit = commit_index(rows, row);
+    let Some(header) = header_row(rows, commit) else {
+        return row;
+    };
+    let commits_back = if row > header {
+        count.saturating_sub(1)
+    } else {
+        count
+    };
+    header_row(rows, commit.saturating_sub(commits_back)).unwrap_or(row)
+}
+
+/// Draw `rows` (displaying `commits`), with the status bar on the last line of the screen, and
+/// `error_modal` over them. The status bar displays the commit the cursor is on, or the number
+/// `pending_count` while there is one.
+///
+/// `viewport` is first scrolled, if needed, to display the cursor on the screen.
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
     commits: &[Commit],
     rows: &[Row],
     viewport: &mut Viewport,
     mode: Mode,
+    pending_count: Option<usize>,
     error_modal: Option<&ErrorModal>,
     theme: &Theme,
 ) {
     let [content, status_bar] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(frame.area());
-    viewport.scroll(rows.len(), content.height.into());
+        Layout::vertical([Constraint::Min(0), Constraint::Length(STATUS_BAR_HEIGHT)])
+            .areas(frame.area());
+    viewport.fit(rows.len(), content.height.into());
     let viewport = *viewport;
     frame.render_widget(
         RowsView {
@@ -971,7 +1031,9 @@ pub fn draw(
         },
         content,
     );
-    let content = if commits.is_empty() {
+    let content = if let Some(count) = pending_count {
+        pending_count_status(count, theme)
+    } else if commits.is_empty() {
         Line::default()
     } else {
         commit_status(commits, commit_index(rows, viewport.cursor), theme)
@@ -1146,6 +1208,40 @@ mod tests {
         error_modal: Option<&ErrorModal>,
         theme: &Theme,
     ) -> Buffer {
+        draw_with(width, height, viewport, None, error_modal, theme).0
+    }
+
+    /// The screen displaying the fake commits and the number `pending_count`, without the
+    /// left-to-right marks.
+    fn render_pending(
+        width: u16,
+        height: u16,
+        viewport: Viewport,
+        pending_count: usize,
+        theme: &Theme,
+    ) -> TestBackend {
+        let buffer = without_left_to_right_marks(
+            &draw_with(width, height, viewport, Some(pending_count), None, theme).0,
+        );
+        let mut backend = TestBackend::new(width, height);
+        let cells = buffer.content.iter().enumerate().map(|(i, cell)| {
+            let (x, y) = (i % usize::from(width), i / usize::from(width));
+            (x as u16, y as u16, cell)
+        });
+        backend.draw(cells).unwrap();
+        backend
+    }
+
+    /// The screen displaying the fake commits, with the left-to-right marks, and the viewport
+    /// after the screen was drawn.
+    fn draw_with(
+        width: u16,
+        height: u16,
+        viewport: Viewport,
+        pending_count: Option<usize>,
+        error_modal: Option<&ErrorModal>,
+        theme: &Theme,
+    ) -> (Buffer, Viewport) {
         let commits = fake::all();
         let rows = rows(&commits, width, theme, &DateDisplay::for_snapshots()).unwrap();
         let mut viewport = viewport;
@@ -1158,12 +1254,13 @@ mod tests {
                     &rows,
                     &mut viewport,
                     Mode::Review,
+                    pending_count,
                     error_modal,
                     theme,
                 )
             })
             .unwrap();
-        terminal.backend().buffer().clone()
+        (terminal.backend().buffer().clone(), viewport)
     }
 
     macro_rules! assert_content_snapshot {
@@ -2718,5 +2815,275 @@ mod tests {
                         assert!(!buffer[position].modifier.contains(Modifier::REVERSED));
                     });
             });
+    }
+
+    #[test]
+    fn header_row_is_the_row_below_the_separator_of_the_commit() {
+        let rows = all_rows(110);
+        commit_starts(110)
+            .into_iter()
+            .enumerate()
+            .for_each(|(commit, start)| {
+                assert_eq!(header_row(&rows, commit), Some(start), "{commit}");
+                if commit > 0 {
+                    assert!(
+                        matches!(rows[start - 1].content, Content::Rule(_)),
+                        "{commit}"
+                    );
+                }
+            });
+    }
+
+    #[test]
+    fn header_row_of_a_missing_commit_is_none() {
+        assert_eq!(header_row(&all_rows(110), fake::all().len()), None);
+        assert_eq!(header_row(&[], 0), None);
+    }
+
+    #[test]
+    fn next_commit_goes_to_the_header_of_the_next_commit() {
+        let rows = all_rows(110);
+        let headers = commit_starts(110);
+        headers.windows(2).enumerate().for_each(|(commit, pair)| {
+            // On the header, then on the second row of the commit, then on its blank last row.
+            [pair[0], pair[0] + 1, pair[1] - 2]
+                .into_iter()
+                .for_each(|row| {
+                    assert_eq!(next_commit(&rows, row, 1), pair[1], "{commit} {row}");
+                });
+        });
+    }
+
+    #[test]
+    fn next_commit_from_the_separator_goes_to_the_commit_below_the_one_it_belongs_to() {
+        // The separator above the 5th commit belongs to it: `J` goes to the 6th commit.
+        let rows = all_rows(110);
+        let headers = commit_starts(110);
+        assert_eq!(next_commit(&rows, headers[4] - 1, 1), headers[5]);
+    }
+
+    #[test]
+    fn next_commit_repeats_and_stops_on_the_last_commit() {
+        let rows = all_rows(110);
+        let headers = commit_starts(110);
+        let last = headers.len() - 1;
+        assert_eq!(next_commit(&rows, 0, 2), headers[2]);
+        assert_eq!(next_commit(&rows, headers[1] + 3, 3), headers[4]);
+        assert_eq!(next_commit(&rows, 0, last), headers[last]);
+        assert_eq!(next_commit(&rows, 0, last + 10), headers[last]);
+        assert_eq!(next_commit(&rows, 0, usize::MAX), headers[last]);
+    }
+
+    #[test]
+    fn next_commit_does_nothing_on_the_last_commit() {
+        let rows = all_rows(110);
+        let last = commit_starts(110).pop().unwrap();
+        // The header, a row in the middle, and the separator below the last commit.
+        [last, last + 2, rows.len() - 2, rows.len() - 1]
+            .into_iter()
+            .for_each(|row| assert_eq!(next_commit(&rows, row, 1), row, "{row}"));
+        assert_eq!(next_commit(&rows, last, 5), last);
+    }
+
+    #[test]
+    fn previous_commit_on_a_row_of_a_commit_goes_to_its_header() {
+        let rows = all_rows(110);
+        let headers = commit_starts(110);
+        headers.windows(2).enumerate().for_each(|(commit, pair)| {
+            [pair[0] + 1, pair[0] + 3, pair[1] - 2]
+                .into_iter()
+                .for_each(|row| {
+                    assert_eq!(previous_commit(&rows, row, 1), pair[0], "{commit} {row}");
+                });
+        });
+    }
+
+    #[test]
+    fn previous_commit_on_a_header_goes_to_the_previous_header() {
+        let rows = all_rows(110);
+        let headers = commit_starts(110);
+        headers
+            .windows(2)
+            .for_each(|pair| assert_eq!(previous_commit(&rows, pair[1], 1), pair[0]));
+    }
+
+    #[test]
+    fn previous_commit_from_the_separator_goes_to_the_header_of_the_commit_above() {
+        // The separator above the 5th commit belongs to it, and is above its header: `K` goes to
+        // the 4th commit.
+        let rows = all_rows(110);
+        let headers = commit_starts(110);
+        assert_eq!(previous_commit(&rows, headers[4] - 1, 1), headers[3]);
+    }
+
+    #[test]
+    fn previous_commit_on_the_separator_below_the_last_commit_goes_to_its_header() {
+        let rows = all_rows(110);
+        let last = commit_starts(110).pop().unwrap();
+        assert_eq!(previous_commit(&rows, rows.len() - 1, 1), last);
+    }
+
+    #[test]
+    fn previous_commit_repeats_and_stops_on_the_first_commit() {
+        let rows = all_rows(110);
+        let headers = commit_starts(110);
+        // The first one goes to the header of the commit, the next ones to the previous commits.
+        assert_eq!(previous_commit(&rows, headers[5] + 3, 2), headers[4]);
+        assert_eq!(previous_commit(&rows, headers[5], 3), headers[2]);
+        assert_eq!(previous_commit(&rows, headers[5] + 3, 5), headers[1]);
+        assert_eq!(previous_commit(&rows, headers[5] + 3, 100), headers[0]);
+        assert_eq!(
+            previous_commit(&rows, headers[5] + 3, usize::MAX),
+            headers[0]
+        );
+    }
+
+    #[test]
+    fn previous_commit_does_nothing_on_the_header_of_the_first_commit() {
+        let rows = all_rows(110);
+        assert_eq!(previous_commit(&rows, 0, 1), 0);
+        assert_eq!(previous_commit(&rows, 0, 5), 0);
+        // On the second row of the first commit, it goes to the header.
+        assert_eq!(previous_commit(&rows, 1, 1), 0);
+        assert_eq!(previous_commit(&rows, 3, 5), 0);
+    }
+
+    #[test]
+    fn pending_count_status_displays_the_number_of_repetitions() {
+        let line = pending_count_status(12, &Theme::monochrome());
+        assert_eq!(text(&line), "The next command will be repeated 12 times");
+    }
+
+    #[test]
+    fn pending_count_status_says_times_even_for_one() {
+        let line = pending_count_status(1, &Theme::monochrome());
+        assert_eq!(text(&line), "The next command will be repeated 1 times");
+    }
+
+    #[test]
+    fn pending_count_status_displays_a_huge_number_in_full() {
+        let line = pending_count_status(usize::MAX, &Theme::monochrome());
+        assert_eq!(
+            text(&line),
+            format!("The next command will be repeated {} times", usize::MAX)
+        );
+    }
+
+    #[test]
+    fn pending_count_status_is_gray_and_not_bold() {
+        [Theme::dark(), Theme::light(), Theme::monochrome()]
+            .iter()
+            .for_each(|theme| {
+                let line = pending_count_status(12, theme);
+                assert!(!line.spans.is_empty());
+                line.spans.iter().for_each(|span| {
+                    assert_eq!(span.style, theme.status_bar_content, "{}", span.content);
+                    assert!(!span.style.add_modifier.contains(Modifier::BOLD));
+                });
+            });
+    }
+
+    #[test]
+    fn status_bar_displays_the_pending_number_instead_of_the_commit() {
+        let expected = " Review  The next command will be repeated 12 times";
+        let backend = render_pending(200, 30, viewport_on(0), 12, &Theme::monochrome());
+        let status_bar = status_bar(&backend);
+        let after = status_bar.strip_prefix(expected).expect(&status_bar);
+        assert!(after.chars().all(|c| c == ' '), "{status_bar:?}");
+        assert!(!status_bar.contains("commit"), "{status_bar}");
+    }
+
+    #[test]
+    fn status_bar_displays_the_commit_again_without_pending_number() {
+        let backend = render(200, 30, viewport_on(0), &Theme::monochrome());
+        let status_bar = status_bar(&backend);
+        assert!(
+            status_bar.contains(&expected_commit_status(0)),
+            "{status_bar}"
+        );
+        assert!(!status_bar.contains("repeated"), "{status_bar}");
+    }
+
+    #[test]
+    fn status_bar_pending_number_is_gray() {
+        [
+            (Theme::dark(), Color::Indexed(248), Color::Reset),
+            (Theme::light(), Color::Indexed(240), Color::Indexed(252)),
+        ]
+        .iter()
+        .for_each(|(theme, gray, background)| {
+            let backend = render_pending(200, 30, viewport_on(0), 12, theme);
+            let content = status_bar_content_cells(&backend);
+            let texts: Vec<_> = content.iter().filter(|cell| cell.symbol() != " ").collect();
+            assert!(!texts.is_empty());
+            texts.iter().for_each(|cell| {
+                assert_eq!(cell.fg, *gray, "{}", cell.symbol());
+                assert_eq!(cell.bg, *background, "{}", cell.symbol());
+                assert!(!cell.modifier.contains(Modifier::BOLD), "{}", cell.symbol());
+            });
+        });
+    }
+
+    #[test]
+    fn status_bar_pending_number_that_does_not_fit_is_cropped_with_an_ellipsis() {
+        let full = " Review  The next command will be repeated 12 times";
+        let backend = render_pending(30, 30, viewport_on(0), 12, &Theme::monochrome());
+        let expected: String = full.chars().take(29).chain(['…']).collect();
+        assert_eq!(status_bar(&backend), expected);
+    }
+
+    #[test]
+    fn draw_keeps_a_cursor_inside_the_scrolloff_margin_where_it_is() {
+        // The cursor is the 3rd row of the screen, and the 27th one on the second screen.
+        [(12, 10), (36, 10)].into_iter().for_each(|(cursor, top)| {
+            let viewport = Viewport { cursor, top };
+            let (_, drawn) = draw_with(110, 30, viewport, None, None, &Theme::monochrome());
+            assert_eq!(drawn, viewport);
+        });
+    }
+
+    #[test]
+    fn draw_scrolls_to_display_a_cursor_below_the_screen() {
+        assert!(all_rows(110).len() > 200);
+        let viewport = Viewport {
+            cursor: 100,
+            top: 0,
+        };
+        let (_, drawn) = draw_with(110, 26, viewport, None, None, &Theme::monochrome());
+        // The rows 76 to 100 are displayed above the status bar.
+        assert_eq!(
+            drawn,
+            Viewport {
+                cursor: 100,
+                top: 76
+            }
+        );
+    }
+
+    #[test]
+    fn draw_scrolls_to_display_a_cursor_above_the_screen() {
+        let viewport = Viewport {
+            cursor: 20,
+            top: 50,
+        };
+        let (_, drawn) = draw_with(110, 26, viewport, None, None, &Theme::monochrome());
+        assert_eq!(
+            drawn,
+            Viewport {
+                cursor: 20,
+                top: 20
+            }
+        );
+    }
+
+    #[test]
+    fn draw_does_not_display_empty_space_after_the_last_row() {
+        let len = all_rows(110).len();
+        let viewport = Viewport {
+            cursor: len - 1,
+            top: len - 1,
+        };
+        let (_, drawn) = draw_with(110, 26, viewport, None, None, &Theme::monochrome());
+        assert_eq!(drawn.top, len - 25);
     }
 }
