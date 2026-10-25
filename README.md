@@ -3,14 +3,13 @@ reedi
 
 `reedi` is a review editor
 
-> Current implentation status is described in `implementation_status.md`
+> Current implementation status is described in `implementation_status.md`
 
 - It is a TUI tool to review unpushed commits.
-- Commits are displayed (with their diff) in topological order (oldest first).
+- Commits are displayed (with their diff) in reverse topological order (oldest first).
 - The general interface is the same than `delta`, but commits messages, author, date and hunks are
   editable.
-- All chunks have syntax and diff-aware coloration (including word-level diff), just like what
-  `delta` does
+- All chunks have syntax and diff-aware coloration (including word-level diff)
 - When saving all changes are applied, as-if an interactive rebase was done (note: maybe using `jj`
   instead of `git rebase` would lead to a better UX).
 - In review mode the closest editable area is highlighted and the cursor visible (if the cursor is
@@ -28,6 +27,20 @@ reedi
 - Likewise commit message, author name and other metadate must be valid utf8 or are replaced by an
   error message.
 - Read git configuration, and re-use its settings
+
+
+Performance:
+- should target for 10 commits with 1000 lines diff (insertion + deletions) each as reported by `git
+  log --stat`:
+  - 500 MB max memory usage
+  - 3-5 second max to open, ideally <1s
+- line-diff (move excluded, so only removed/added) doesn’t have timeout, but is expected to be fast
+  and is computed first
+- move detection + word diff have a common timeout of 1s max per commit
+  - if move detection hit timeout, removed/added is used as fallback
+  - if word-diff hit timeout, the whole line will use the same result as the line-diff
+- a full-file syntax highlight limit of 500ms per file before fallback (per chunk syntax color,
+  with a 50ms timeout per chunk, then no syntax highlight)
 
 ```
 $hash $commit_subject $author $date ($tags, $branches)
@@ -86,7 +99,7 @@ Areas
 
 - The general idea is to have a navigation mode, in which you can read the diffs, execute commands
   and navigate between the editable areas.
-- Editable areas can either be modified using the embeded editor that can use vim (and ideally
+- Editable areas can either be modified using the embedded editor that can use vim (and ideally
   ibm/emacs/helix) style keybinding, or using an external editor (`$VISUAL`, or `EDITOR as
   fallback`).
 - The diffs splits the screen 50/50 (right bigger if odd)
@@ -103,18 +116,6 @@ Expected implementation
 =======================
 
 The software is mainly a lib, with a slim binary who only read the config an command line options.
-
-Syntax highlighting
--------------------
-
-- The language is detected from the file name like `delta`: if the path has an extension or the
-  file name is longer than 4 bytes, the whole file name then the extension are looked up as an
-  extension. The content of the file is never inspected. If nothing matches, the file is plain text
-  (no highlighting).
-- Themes are the same as `delta`’s default:
-    - dark: `Monokai Extended` (dark)
-    - light: `GitHub` (light)
-    - monochrome: black and white only
 
 Interactivity
 -------------
@@ -156,12 +157,12 @@ Review mode:
 - TODO: how is non-linear history displayed
 
 - `j`/`k` or `up`/`down` move the cursor one row. The screen automatically move so that there is
-  always 5 extra rows on top/bottom (unless the beggining/end of the file is reached)
+  always 5 extra rows on top/bottom (unless the beginning/end of the file is reached)
 - `tab`/`shift+tab` or `left`/`right` move the cursor to the next/previous editable area (this does include
     `commit_subject`, `author` and `date` that are on the same line)
 - `g`/`G` move the cursor to first/last line
 - `J`/`K` or `ctrl+down`/`ctrl+up` jumps to the next/previous commit
-- `[`/`]` jumps to the next/prevous merge conflict
+- `[`/`]` jumps to the next/previous merge conflict
 
 - `ctrl+e`/`ctrl+y` move the screen one line down/up (and move the cursor if it would have gone
   closer to the top/bottom of the screen than the scrolloff margin)
@@ -193,14 +194,14 @@ Review mode:
 
 - `v` starts visual mode (available only on a chunk diff)
 - maintaining `shift` and pressing `up`/`down` or `j`/`k` select those lines (like what the visual
-  mode does), and when `shift` is released comment mode is openned on those lines. Same behavior
+  mode does), and when `shift` is released comment mode is opened on those lines. Same behavior
   with click+drag with the mouse
 
 - `m` start move move (available only on a chunk diff). The moved span is all modified lines of the
   current chunk
 - In visual mode, `m` start move mode, and the span are the selected lines
 
-- `b`/`e` adds lines at the beggining/end of the current chunk (possibly merging it with adjacent
+- `b`/`e` adds lines at the beginning/end of the current chunk (possibly merging it with adjacent
 - `space` toggle between expanding all chunks of the current file and restoring their default state
 
 - `!` enters command mode
@@ -211,16 +212,16 @@ Selection (visual mode):
   implemented, it is therefore limited to a single chunk. Once those will be implemented, trying to
   extend a range outside a chunk expand the chunk alongside the selection.
 - `up`/`down` or `j`/`k` extend the selection in that direction
-- `c`/`C` and `enter`/`ctrl+enter`(or `alt+enter`) enters comment mode with the embeded/external
+- `c`/`C` and `enter`/`ctrl+enter`(or `alt+enter`) enters comment mode with the embedded/external
    editor
 - `escape` return to review mode. This is also applies to `shift`-selection and drag-selection
 - `o` switch to the other side of the selection (ie. next `up`/`down` will expand/shrink from the other side)
 
 Comment mode:
 
-- Comment mode open the embeded (or external) editor.
-- Each comment is associated with a span. If comment mode was openned with `c`/`C` it is the whole
-  highlighted area. If it was openned after a selection, the span is the span of the
+- Comment mode open the embedded (or external) editor.
+- Each comment is associated with a span. If comment mode was opened with `c`/`C` it is the whole
+  highlighted area. If it was opened after a selection, the span is the span of the
   selection
 - A non-empty comment create a new editable zone, clearing all its content remote it
 - When exiting comment mode the comment file is updated. TODO: specify the format, but something
@@ -228,6 +229,7 @@ Comment mode:
 - When exiting `reedi` or saving, the human-readable comment file is updated. It should probably be
   a pdf generated with typst, that embeed the before/after state of the code + a few (3?) lines of
   context + the comment
+- comments can also be send to a MCP client (with a disabled-by-default cargo feature)
 
 Search mode:
 
@@ -260,7 +262,7 @@ Command mode:
   modifications had been made using the editor (and the undo tree of the modified files is updated
   accordingly with a single new entry per area)
 
-Edit mode (embeded editor):
+Edit mode (embedded editor):
 
 - Invisible characters are displayed normally (no replacements character)
 - Right-to-left text is reordered and joined by the terminal. The cursor moves in memory order, and
@@ -279,14 +281,14 @@ Edit mode (embeded editor):
 - When editing the `author` field `author <email>` should be used (with autocompletion for the list
   of recent authors), but only the author name is displayed. When entering edit mode, the author
   name is replaced by `author <email>`
-- when entering edit mode, the cursor is put at the beggining of the line the cursor was in review
+- when entering edit mode, the cursor is put at the beginning of the line the cursor was in review
   mode. When exiting edit mode, the cursor stays on the same line.
 
 Merge conflicts:
 
 - Merge conflicts are displayed with the `<<</===/>>>` chunks, and are expected to be fixed
 - A merge conflict indicator is displayed in the status bar
-- `[`/`]` jumps to the next/prevous merge conflict
+- `[`/`]` jumps to the next/previous merge conflict
 - TODO: maybe using `jj` would help for merge conflicts
 
 Move mode:
@@ -377,7 +379,7 @@ Settings
 - Incremental search can be toggled off
 - Scrolloff (by default 5) can be changed
 - external editor (by default `$VISUAL`, then `$EDITOR`) can be changed
-- seach case setting can be set to smartcase (default), ignorecase, and noignorecase
+- search case setting can be set to smartcase (default), ignorecase, and noignorecase
 - search pattern setting can be set to perl regex (default) or literal
 - embedded editor style can be set to vim (default) / emacs / standard / helix
 - tab width is 4 spaces by default
@@ -420,11 +422,119 @@ Settings
     - Selection: purple
     - Move: dark red
 - number of context lines: 3 by default
+- Themes are the same as `delta`’s default:
+  - dark: `Monokai Extended`
+  - light: `GitHub`
+  - monochrome: black and white only
+- matching pair similarity:
+  - within a file: 0.6
+  - within a commit: 0.5
+- embedded bidi support for RTL language on terminal that do not support it: auto (default), enable
+  or disabled (using `unicode-bidi` + terminal detection for auto (and config suggestion for proper
+RTL support if auto is used and RTL languages are used))
+
+Diff model
+----------
+
+All the diff machinery is available as a standalone internal library: `reediif`
+- TODO: validate public interface (as long as this note is here, there is strictly ZERO backward
+  compatibility promise, the goal is to refine the interface)
+
+A chunk is a list of lines, each one being either unchanged, removed, added or moved, with the line
+number of its first line in the before and after version of the file matching the color of the
+background of that line.
+
+Word-level diff:
+- All words of a non-matching pair (so pure deletion, and pure addition) have word-level diff
+  coloration
+
+Moved lines:
+- leading and trailing whitespace is ignored when computing move (but are still displayed as
+  word-level diff)
+- Is a best effort, it is always possible that if a line is moved (with or without modifications
+  inside the line itself), that the old line will be shown as removed and the new as added
+- Moved lines are tracked across files within a single commit
+- Inside a file, if the 4 lines "abcd" become "acbd":
+  - either b or c will be the moved line and the other unmodified
+  - if the inside of b is modified, and not c, then c will always be seen as unmodified and
+    vice-versa
+- Two lines are considered for move-detection only if:
+  - it's in a block of at least 20 alphanumeric characters of consecutive lines (like git)
+  - either:
+    - both lines are in the same file
+    - their respective lines immediately above or below are either:
+      - an exact match
+      - also a moved line pair
+  - said otherwise, if left side have lines "abcdefg", and right side "xBCdEFy", where B,C,E and F
+    are lines with minor difference compared to b,c,e and f respectively, then d will be found by
+    exact match, then C and E by being close enough and with an exact match neighbor, and finally B
+    and F by being close enough with a moved-pair neighbor (cC and eE respectively).
+- Moved lines are numbered using a 26-based alphabetic number (in order of appearance on the
+  left side). Consecutive moved lines share the same letter if they are also consecutive
+  moved lines on the other side. That letter is displayed on the line-number column of the other
+  side.
+- For a line L (on the left) matched with R (on the right):
+  - the right side of L and the left side of R are empty, and contain the letter of the block
+  - if L and R are identical (ignoring whitespace), their respective other sides are empty
+  - if they differ, the other side contains a copy of R and L respectively, with word diff, using
+    the move-copy colorscheme
+
+Duplicated moved lines:
+- If moved lines have multiple valid matches, this means that there is a duplication (or
+  deduplication, or both)
+- For each line, on the copy side, each matching moved line is displayed (in the order of the
+  original), and only the first one gets its letter
+- The copy side is deduplicated
+- On the original line, each word that differs from at least one of the lines of the set of the
+  other side is a diff
+- For each line of the copy side, only words that do not match the original are a diff
+- Examples, with the line 5 on the left matched with the lines 10 and 20 on the right (`x5`, `x10`
+  and `x20` being their content, `(copy)` a line displayed with the move-copy colorscheme, and `a`
+  the letter of the block).
+  - if all three differ:
+    ```
+    │  5 │ x5                    │  a │ x10 (copy)
+    │    │                       │    │ x20 (copy)
+    …
+    │  a │ x5 (copy)             │ 10 │ x10
+    …
+    │  a │ x5 (copy)             │ 20 │ x20
+    ```
+  - if `x5` and `x10` are identical (the copy of `x10` is still displayed on line 5, because the
+    set also contains `x20`, which differs):
+    ```
+    │  5 │ x5                    │  a │ x10 (copy)
+    │    │                       │    │ x20 (copy)
+    …
+    │  a │                       │ 10 │ x10
+    …
+    │  a │ x5 (copy)             │ 20 │ x20
+    ```
+  - if `x10` and `x20` are identical (the copy side of line 5 is deduplicated):
+    ```
+    │  5 │ x5                    │  a │ x10 (copy)
+    …
+    │  a │ x5 (copy)             │ 10 │ x10
+    …
+    │  a │ x5 (copy)             │ 20 │ x20
+    ```
+  - word-level diff, with `[…]` marking a diff:
+    ```
+    │  5 │ [aaa] [bbb] ccc       │  a │ [AAA] bbb ccc (copy)
+    │    │                       │    │ aaa [BBB] ccc (copy)
+    ```
+- Choice between matches:
+  - every valid match is kept (as a duplication), so the result does not depend on the order in
+    which lines are processed, except when only one pair can be displayed side by side:
+    - several candidates in the same group of removed/added lines for the same line
+    - crossing pairs (removed `p`, `q` and added `Q'`, `P'`)
+  - in those cases, the most similar pair is displayed side by side (ties are broken from top to
+    bottom on the left side), and the other one is displayed as moved
 
 Colorscheme
 -----------
 
-The colorscheme follows the current git colorscheme used by delta.
+- The colorscheme for syntax highlighting follows the current git colorscheme used by delta.
 - The line between commits is red (TODO: make it configurable, ideally re-use something from git
   colorscheme that would make sense)
 - `$hash`, `$author`, `$date`, $tags and `$branche` uses git coloration
@@ -436,3 +546,21 @@ The colorscheme follows the current git colorscheme used by delta.
       line wrap, which is not displayed), and non-trailing tabs (including before a line wrap)
     - trailing whitespace (including U+2800, whitespace-only lines, and before a line wrap)
     - all other invisible characters
+
+Line-level diff:
+- change the background color of the whole affected line (including leading and trailing
+  whitespace)
+- moves are blue, move-copy are italic + dim blue, deletion red, addition green
+- monochrome use inverted display for all, move-copy are italic
+
+Word-level diff:
+- light/dark theme use bold + another shade of the same background color
+- monochrome use underline
+
+Syntax highlighting:
+- per language syntax highlight
+- The language is detected from the file name like `delta`: if the path has an extension or the
+  file name is longer than 4 bytes, the whole file name then the extension are looked up as an
+  extension. The content of the file is never inspected. If nothing matches, the file is plain
+  text (no highlighting).
+

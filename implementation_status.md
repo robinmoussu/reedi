@@ -1,8 +1,8 @@
 Prototype
 =========
 
-The software (named "reedi") is in Rust (rust-version: 1.99, edition: 2024). 3rd party dependencies are prefered
-over hand-written code. Everything impremented comes with a test (unit test or integration test,
+The software (named "reedi") is in Rust (rust-version: 1.99, edition: 2024). 3rd party dependencies are preferred
+over hand-written code. Everything implemented comes with a test (unit test or integration test,
 whichever make the more sense).
 
 - unless specified, config file is unused in the prototype, all settings use their default value
@@ -18,29 +18,10 @@ All git-related parsing/display is done using `gix`, but when `gix` lacks the fu
 - all of those should be seen as technical debt, and when a new version of `gix` gains that
   functionality, the associated code should be removed
 - each of those should be documented in `src/gix_compat/compatibility.md`
-- each commit that introduce new compatibility shim should contain `Added git compatibily shim:`
+- each commit that introduce new compatibility shim should contain `Added git compatibility shim:`
   followed by a list of short descriptions of each compatibility shim added, one per line
 
-Diff model
-----------
-
-The diff model does not depend on the library used to access git data. A chunk is a list of lines,
-each one being either unchanged, removed or added, with the line number of its first line in the
-before and after version of the file (like the hunks of a unified diff). All libraries can produce
-it.
-
-Syntax highlighting
--------------------
-
-- Highlighting uses `syntect` with the syntaxes and themes from `bat` (packaged by the `two-face`
-  crate), and the Oniguruma regex engine (`onig`), like `delta`.
-- The before and after versions of each file are loaded in full. Each one is parsed once
-  (`ParseState::parse_line`, which computes the parsing state without computing colors), from its
-  first line up to the last line of its last chunk (never past it). The parsing state reached at
-  the first line of each chunk is used to color that chunk.
-- Parsing a file has a 500ms timeout. If it is reached, the chunks of that file are highlighted
-  without the parsing state of the file, exactly like `delta` does (highlighting restarts from an
-  empty state at each chunk).
+The diff model does not depend on the library used to access git data.
 
 version 0.0.0: general structure
 ------------------------------
@@ -214,7 +195,7 @@ version 0.0.5: theming
    - [x] monochrome: no color, only the terminal default foreground and background (bold is
      kept). The row of the cursor uses reverse video, and the mode name in the status bar uses
      reverse video and bold
-- [x] snapshoot testing use the `monochrome` theme, that only use black and white
+- [x] snapshot testing use the `monochrome` theme, that only use black and white
    - [x] snapshots stay color independent (they only contain the text)
 - [x] dedicated unit tests testing for color validate both light and dark themes
    - [x] the existing color tests are run for both the light and dark themes (not duplicated)
@@ -334,13 +315,73 @@ version 0.0.7: interactivity
    - [x] a leading `0` is ignored, `0` alone does nothing
    - [x] any key that is not a digit or a move (`escape` included) cancels the pending number
 
-version 0.0.x: word-diff and syntax support
------------------------------------------
+version 0.0.8: line-diff, word-diff and syntax highlighting
+-----------------------------------------------------------
 
-- [ ] full diff support:
-   - [ ] modified lines have their background: solid red/green (always active unlike `delta`)
-   - [ ] word-level diff, like `delta`
-- [ ] syntax support
+- timeouts are parameters, so that tests can trigger the fallback; a parsing error falls back the
+  same way as the timeout
+- line diff, word diff and syntax highlight are computed once, when the diffs are built (not when
+  resizing)
+
+- [ ] refactor snapshot testing, so that each fake commit is tested individually
+- [ ] move snapshot testing to `tests/`
+- [ ] unit tests for the layout (blank rows between the header, the body, the files and the
+  chunks), which was only covered by the snapshots
+
+- [ ] Review the whole codebase style and readability
+
+- [ ] extract diff machinery into a new library, `reediif` (a workspace member at the root of the
+  repository, with the same version as `reedi`)
+
+- [ ] extract gix-compat into a new library, `reedi-gix-compat` (a workspace member at the root of the
+  repository, with the same version as `reedi`)
+
+- [ ] fake data update (new commits, displayed first):
+  - [ ] a commit for syntax highlighting:
+    - [ ] a Rust, a C++, a Python and a Markdown file, a file with an unknown extension (plain
+      text) and a `Makefile` (known file name without extension)
+    - [ ] in the C++ file, a multi-line comment (`/* … */`) with a very long text identical
+      before and after, containing a change, with a chunk starting inside the comment
+    - [ ] in the C++ file, a `/*` line added above an unchanged line, so that this line is code
+      on the left and comment on the right
+  - [ ] a commit for moved lines:
+    - [ ] the lines `abcd` become `acbd`, with `b` modified inside
+    - [ ] the same, with `c` modified inside
+    - [ ] a block moved between two files where all lines are identical
+    - [ ] a block moved between two files where a single line is identical
+    - [ ] a moved block shorter than 20 alphanumeric characters (shown as removed/added)
+    - [ ] a duplicated block (one line on the left, two on the right), containing:
+      - [ ] a line where all three are identical
+      - [ ] a line where the two on the right are identical, but differ from the left one
+      - [ ] a line where the left one is identical to one of the right ones, but not the other
+    - [ ] a deduplicated block (two lines on the left, one on the right)
+  - [ ] a commit for word-level diff:
+    - [ ] a paired line with several changed words in each code file
+    - [ ] a reindented-only line
+    - [ ] a line where only inner spaces change
+    - [ ] a line where only an invisible character changes, whose text says so
+
+- [ ] moved line detection
+- [ ] duplicated moved lines
+- [ ] add test that a block moved from one commit to another is not detected as moved
+- [ ] match expected colorscheme (to review after the implementation):
+  - moved line: `#1f1d4d` (dark), `#e0e0ff` (light)
+  - move-copy (italic): `#14132f` (dark), `#f0f0ff` (light)
+- [ ] add test for max time budget per commit
+
+- [ ] word-level diff
+- [ ] match expected colorscheme (to review after the implementation):
+  - removed word: `#901011` (dark), `#ffc0c0` (light)
+  - added word: `#006000` (dark), `#a0efa0` (light)
+  - moved word: `#4545ab` (dark), `#c0c0ff` (light)
+- [ ] invisible characters replacements keep their own style
+- [ ] test for max time budget per commit include word-level diff
+
+- [ ] per language syntax highlighting
+- [ ] use only foreground color, not style, not background
+- [ ] only the lines of the chunks have syntax highlighting (all lines included unmodified)
+- [ ] the `monochrome` theme has no syntax colors
+- [ ] add test for max time budget per file
 
 version 0.0.x: editable areas interactivity
 -----------------------------------------
@@ -366,7 +407,7 @@ version 0.0.x: minimal editing
       - [ ] $date
       - [ ] $commit_message_body
       - [ ] each chunks
-- [ ] Embeded editor
+- [ ] Embedded editor
    - [ ] With syntax highlighting
    - [ ] `ctrl+escape`, `alt+escape` and `escape,escape` should go back to review mode
      - [ ] with modifications
@@ -386,7 +427,7 @@ version 0.0.x: real data (single commit) and syntax highlighting
 version 0.0.x: edition
 ---------------------
 
-- [ ] Embeded editor
+- [ ] Embedded editor
    - [ ] scrolling works if all the text in a single editable area doesn’t fit in a single screen
    - [ ] Applying modifications
      - [ ] modification to an editable area are applied to the last commit (`git commit --amend`)
@@ -396,10 +437,15 @@ version 0.0.x: edition
 version 0.0.x: real data (multiple commits)
 ------------------------------------------
 
-- [ ] Display the same content than `$git log $current_branch $current_branch@{upsteam} -p --reverse` assuming HEAD is attached to `$current_branch` and that has its upstream set.
-- [ ] Embeded editor
+- [ ] Display the same content than `$git log $current_branch $current_branch@{upstream} -p --reverse` assuming HEAD is attached to `$current_branch` and that has its upstream set.
+- [ ] Embedded editor
    - [ ] Applying modifications
      - [ ] modification to an editable area are applied to the proper commit
-     - [ ] diff of future comits are updated
+     - [ ] diff of future commits are updated
      - [ ] merge conflicts are properly displayed
 
+
+Possible improvements:
+- use a tree-sitter diff algorithm (like mergiraf), with line-based fallback (too slow, or no grammar
+  file)
+- make the diff algo configurable?
