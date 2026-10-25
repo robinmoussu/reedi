@@ -350,6 +350,13 @@ version 0.0.8: internal refactoring
    - `reediif`: diff computation, the pairing and the diff data model
    - `reedi`: settings and display (line number width, number of context lines)
 
+version 0.0.9: real data (single commit) and syntax highlighting
+----------------------------------------------------------------
+
+ - [ ] Display the same content as `$git log $current_branch $current_branch@{upstream} -p
+   --reverse` assuming HEAD is attached to `$current_branch` and that has its upstream set.
+ - [ ] `fake::all()` is only used by the `--fake` option
+
 version 0.0.x: line-diff, word-diff and syntax highlighting
 -----------------------------------------------------------
 
@@ -441,15 +448,10 @@ version 0.0.x: minimal editing
    - [ ] fake line numbers are updated if lines are added/removed
    - [ ] adding a new line on the right adds a blank filler (without line number) on the left
 
-version 0.0.x: real data (single commit) and syntax highlighting
-----------------------------------------------------------------
+version 0.0.x: edition (single commit)
+--------------------------------------
 
- - [ ] Display the same content as
-   `%h% s%C(green)% an%C(blue)% ad%C(auto)% d%C(auto)%+N%-C()%+b%-C()`
- - [ ] `fake::all()` is only used by the `--fake` option
-
-version 0.0.x: edition
-----------------------
+Enable edition only in the last commit ("editable areas" of older commit are still unmodifiable)
 
  - [ ] Embedded editor
    - [ ] scrolling works if all the text in a single editable area doesn’t fit in a single screen
@@ -458,11 +460,9 @@ version 0.0.x: edition
      - [ ] it should work even if the number of lines in the patch changes
      - [ ] diffs are updated in real time
 
-version 0.0.x: real data (multiple commits)
+version 0.0.x: editon (multiple commits)
 -------------------------------------------
 
- - [ ] Display the same content as `$git log $current_branch $current_branch@{upstream} -p
-   --reverse` assuming HEAD is attached to `$current_branch` and that has its upstream set.
  - [ ] Embedded editor
    - [ ] Applying modifications
      - [ ] modifications to an editable area are applied to the proper commit
