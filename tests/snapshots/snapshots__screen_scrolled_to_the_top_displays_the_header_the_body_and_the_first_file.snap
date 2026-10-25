@@ -1,6 +1,6 @@
 ---
-source: src/view.rs
-expression: "render_with_error_modal(110, 26, Viewport::default(), Some(&error_modal),\n&Theme::monochrome())"
+source: tests/snapshots.rs
+expression: "screen(fake::file_changes(), 110, 26, viewport, None)"
 ---
 "5e2b9d4 release: install with a shell script instead of the Makefile, and check the downloaded archive Noah   "
 "Petit 28/09/2026                                                                                              "
@@ -12,12 +12,12 @@ expression: "render_with_error_modal(110, 26, Viewport::default(), Some(&error_m
 "──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
 "│  9 │ /// Installs the release archive at `path` in  ↵│  9 │ /// Installs the release archive at `path` in  ↵"
 "│    │ `prefix`.                                       │    │ `prefix`.                                       "
-"│ 10 │ pub fn insta┏ Unknown key in config file: /home/alice/.config/reedi/config.toml ━━┓prefix: &Path) ->  ↵"
-"│    │ io::Result<(┃                                                                     ┃                    "
-"│ 11 │     let arch┃ line 3: `scrolloff = 3`                                             ┃pen(path)?;         "
-"│    │             ┃ line 5: `keys = { quit = "q", down = "j", up = "k" }`               ┃ecksum()? {         "
-"│    │             ┃                                                                     ┃::other("the       ↵"
-"│    │             ┗━━━━━━━━━━━━━━━━━━━━━━ Press any key to close ━━━━━━━━━━━━━━━━━━━━━━━┛nvalid"));          "
+"│ 10 │ pub fn install(path: &Path, prefix: &Path) ->  ↵│ 10 │ pub fn install(path: &Path, prefix: &Path) ->  ↵"
+"│    │ io::Result<()> {                                │    │ io::Result<()> {                                "
+"│ 11 │     let archive = Archive::open(path)?;         │ 11 │     let archive = Archive::open(path)?;         "
+"│    │                                                 │ 12 │     if !archive.has_valid_checksum()? {         "
+"│    │                                                 │ 13 │         return Err(io::Error::other("the       ↵"
+"│    │                                                 │    │ checksum of the archive is invalid"));          "
 "│    │                                                 │ 14 │     }                                           "
 "│ 12 │     archive.extract(prefix)?;                   │ 15 │     archive.extract(prefix)?;                   "
 "│ 13 │     Ok(())                                      │ 16 │     Ok(())                                      "

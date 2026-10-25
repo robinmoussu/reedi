@@ -1,6 +1,6 @@
 ---
-source: src/view.rs
-expression: "render(110, 26, viewport)"
+source: tests/snapshots.rs
+expression: "screen(fake::invisible_characters(), 110, 26, viewport, None)"
 ---
 "──────────────────────────────────────────────────────────────────────────────────────────────────────────────"
 "│ 1 │ //! Emoji made of several characters.            │ 1 │ //! Emoji made of several characters.            "

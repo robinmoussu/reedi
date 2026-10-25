@@ -1,6 +1,6 @@
 ---
-source: src/view.rs
-expression: "render(110, 26, viewport)"
+source: tests/snapshots.rs
+expression: "screen(commit, 110, 26, viewport, None)"
 ---
 "                                                                                                              "
 "The option is named `scrolloff` in vim, using the same name makes it                                          "

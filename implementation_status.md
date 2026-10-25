@@ -320,9 +320,9 @@ version 0.0.7: interactivity
 version 0.0.8: internal refactoring
 -----------------------------------
 
- - [ ] refactor snapshot testing, so that each fake commit is tested individually
- - [ ] move snapshot testing to `tests/`
- - [ ] unit tests for the layout (blank rows between the header, the body, the files and the
+ - [x] refactor snapshot testing, so that each fake commit is tested individually
+ - [x] move snapshot testing to `tests/`
+ - [x] unit tests for the layout (blank rows between the header, the body, the files and the
    hunks), which was only covered by the snapshots
 
  - [ ] Review the whole codebase style and readability
