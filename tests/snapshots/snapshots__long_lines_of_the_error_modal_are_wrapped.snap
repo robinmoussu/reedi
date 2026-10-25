@@ -1,6 +1,6 @@
 ---
-source: src/view.rs
-expression: "render_with_error_modal(40, 12, Viewport::default(), Some(&error_modal),\n&Theme::monochrome())"
+source: tests/snapshots.rs
+expression: "screen(fake::file_changes(), 40, 12, viewport, Some(&error_modal))"
 ---
 "5e2b9d4 release: install with a shell   "
 "script instead of the Makefile, and     "

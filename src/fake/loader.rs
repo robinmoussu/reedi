@@ -76,6 +76,7 @@ pub struct Folder<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FakeDataError {
     /// The name of a folder is not `${reverse_order}_${descriptive_commit_name}`.
+    #[cfg(any(test, feature = "test-support"))]
     InvalidFolderName(String),
     /// A file is neither the metadata nor named `$id_$state_$filename`.
     InvalidFileName(String),
@@ -98,6 +99,7 @@ pub enum FakeDataError {
 impl fmt::Display for FakeDataError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
+            #[cfg(any(test, feature = "test-support"))]
             FakeDataError::InvalidFolderName(name) => write!(f, "invalid folder name: {name}"),
             FakeDataError::InvalidFileName(name) => write!(f, "invalid file name: {name}"),
             FakeDataError::MissingMetadata => write!(f, "missing {METADATA_FILE}"),
@@ -172,6 +174,7 @@ impl Decorations {
 }
 
 /// The index and the description of the commit of the folder `name`.
+#[cfg(any(test, feature = "test-support"))]
 pub fn parse_folder_name(name: &str) -> Result<(usize, &str), FakeDataError> {
     let invalid = || FakeDataError::InvalidFolderName(name.to_string());
     let (index, description) = name.split_at_checked(3).ok_or_else(invalid)?;

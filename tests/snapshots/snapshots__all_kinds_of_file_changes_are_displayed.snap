@@ -1,6 +1,6 @@
 ---
-source: src/view.rs
-expression: "render(110, height as u16, viewport)"
+source: tests/snapshots.rs
+expression: "screen(commit, 110, height as u16, viewport, None)"
 ---
 "5e2b9d4 release: install with a shell script instead of the Makefile, and check the downloaded archive Noah   "
 "Petit 28/09/2026                                                                                              "

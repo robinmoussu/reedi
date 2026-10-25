@@ -391,10 +391,11 @@ mod tests {
     }
 
     #[test]
-    fn first_rows_keep_the_cursor_on_the_first_row() {
+    fn wrapping_at_start_up_keeps_the_cursor_on_the_first_row() {
         let mut viewport = Viewport::default();
         let rows = rewrap(
-            &fake::all(),
+            // Its content does not matter.
+            &[fake::ltr_then_rtl_summary()],
             &[],
             &mut viewport,
             110,
@@ -449,7 +450,8 @@ mod tests {
         let mut viewport = Viewport::default();
         assert!(
             rewrap(
-                &fake::all(),
+                // Its content does not matter.
+                &[fake::ltr_then_rtl_summary()],
                 &[],
                 &mut viewport,
                 0,
@@ -708,9 +710,10 @@ mod tests {
     /// Height of the screen, without the status bar.
     const HEIGHT: usize = 20;
 
-    fn all_rows() -> Vec<Row> {
+    /// The rows of `commits`, on a screen 110 columns wide.
+    fn rows_of(commits: &[Commit]) -> Vec<Row> {
         view::rows(
-            &fake::all(),
+            commits,
             110,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -718,29 +721,43 @@ mod tests {
         .unwrap()
     }
 
-    /// Row of the header of each fake commit.
-    fn headers() -> Vec<usize> {
-        fake::all()
+    /// The rows of a fake commit displayed on at least 70 rows, for the tests moving inside a
+    /// commit (the furthest one displays the rows 30 to 69, on a screen of 40 rows).
+    fn rows_of_a_long_commit() -> Vec<Row> {
+        rows_of(&[fake::file_changes()])
+    }
+
+    /// 3 fake commits displayed on at least 6 rows each, for the tests moving between commits
+    /// (some of them start 3 rows below a header, inside the same commit).
+    fn short_commits() -> [Commit; 3] {
+        [
+            fake::ltr_then_rtl_summary(),
+            fake::rtl_summary(),
+            fake::rtl_then_ltr_summary(),
+        ]
+    }
+
+    /// Row of the header of each commit of `commits`.
+    fn headers(commits: &[Commit]) -> Vec<usize> {
+        commits
             .iter()
             .scan(0, |start, commit| {
                 let first = *start;
-                *start += view::rows(
-                    std::slice::from_ref(commit),
-                    110,
-                    &Theme::monochrome(),
-                    &DateDisplay::for_snapshots(),
-                )
-                .unwrap()
-                .len();
+                *start += rows_of(std::slice::from_ref(commit)).len();
                 Some(first)
             })
             .collect()
     }
 
-    /// `viewport` after `action` repeated `count` times.
-    fn navigated(action: Action, count: Option<usize>, viewport: Viewport) -> Viewport {
+    /// `viewport` after `action` repeated `count` times on `rows`.
+    fn navigated(
+        rows: &[Row],
+        action: Action,
+        count: Option<usize>,
+        viewport: Viewport,
+    ) -> Viewport {
         let mut viewport = viewport;
-        navigate(action, count, &mut viewport, &all_rows(), HEIGHT);
+        navigate(action, count, &mut viewport, rows, HEIGHT);
         viewport
     }
 
@@ -750,326 +767,400 @@ mod tests {
 
     #[test]
     fn navigate_down_and_up_move_the_cursor_row_by_row() {
-        assert_eq!(navigated(Action::Down, None, viewport(3, 0)).cursor, 4);
-        assert_eq!(navigated(Action::Up, None, viewport(3, 0)).cursor, 2);
+        let rows = rows_of_a_long_commit();
+        assert_eq!(
+            navigated(&rows, Action::Down, None, viewport(3, 0)).cursor,
+            4
+        );
+        assert_eq!(navigated(&rows, Action::Up, None, viewport(3, 0)).cursor, 2);
     }
 
     #[test]
     fn navigate_down_and_up_are_repeated() {
-        assert_eq!(navigated(Action::Down, Some(5), viewport(3, 0)).cursor, 8);
-        assert_eq!(navigated(Action::Up, Some(2), viewport(3, 0)).cursor, 1);
+        let rows = rows_of_a_long_commit();
+        assert_eq!(
+            navigated(&rows, Action::Down, Some(5), viewport(3, 0)).cursor,
+            8
+        );
+        assert_eq!(
+            navigated(&rows, Action::Up, Some(2), viewport(3, 0)).cursor,
+            1
+        );
     }
 
     #[test]
     fn navigate_down_and_up_stop_at_the_first_and_last_rows() {
-        let last = all_rows().len() - 1;
+        let rows = rows_of_a_long_commit();
+        let last = rows.len() - 1;
         assert_eq!(
-            navigated(Action::Down, Some(usize::MAX), viewport(3, 0)).cursor,
+            navigated(&rows, Action::Down, Some(usize::MAX), viewport(3, 0)).cursor,
             last
         );
         assert_eq!(
-            navigated(Action::Up, Some(usize::MAX), viewport(30, 20)).cursor,
+            navigated(&rows, Action::Up, Some(usize::MAX), viewport(30, 20)).cursor,
             0
         );
     }
 
     #[test]
     fn navigate_down_scrolls_to_keep_the_scrolloff() {
+        let rows = rows_of_a_long_commit();
         // The 15th row is the 15th row of the screen: the 6th row below it is not displayed.
         assert_eq!(
-            navigated(Action::Down, None, viewport(14, 0)),
+            navigated(&rows, Action::Down, None, viewport(14, 0)),
             viewport(15, 1)
         );
         assert_eq!(
-            navigated(Action::Down, Some(30), viewport(0, 0)),
+            navigated(&rows, Action::Down, Some(30), viewport(0, 0)),
             viewport(30, 16)
         );
     }
 
     #[test]
     fn navigate_up_scrolls_to_keep_the_scrolloff() {
-        assert_eq!(navigated(Action::Up, None, viewport(10, 5)), viewport(9, 4));
+        let rows = rows_of_a_long_commit();
+        assert_eq!(
+            navigated(&rows, Action::Up, None, viewport(10, 5)),
+            viewport(9, 4)
+        );
     }
 
     #[test]
     fn navigate_scroll_down_and_up_do_not_apply_the_scrolloff_to_the_cursor() {
+        let rows = rows_of_a_long_commit();
         // The cursor is the 3rd row of the screen: it keeps its distance from the top.
         assert_eq!(
-            navigated(Action::ScrollDown, None, viewport(12, 10)),
+            navigated(&rows, Action::ScrollDown, None, viewport(12, 10)),
             viewport(13, 11)
         );
         // Then ctrl+y leaves it on its row, now the 4th one of the screen.
         assert_eq!(
-            navigated(Action::ScrollUp, None, viewport(13, 11)),
+            navigated(&rows, Action::ScrollUp, None, viewport(13, 11)),
             viewport(13, 10)
         );
     }
 
     #[test]
     fn navigate_scroll_down_and_up_are_repeated() {
+        let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(Action::ScrollDown, Some(3), viewport(20, 10)),
+            navigated(&rows, Action::ScrollDown, Some(3), viewport(20, 10)),
             viewport(20, 13)
         );
         assert_eq!(
-            navigated(Action::ScrollUp, Some(3), viewport(20, 10)),
+            navigated(&rows, Action::ScrollUp, Some(3), viewport(20, 10)),
             viewport(20, 7)
         );
     }
 
     #[test]
     fn navigate_scroll_stops_at_both_ends() {
-        let len = all_rows().len();
+        let rows = rows_of_a_long_commit();
+        let len = rows.len();
         let end = viewport(len - 5, len - HEIGHT);
-        assert_eq!(navigated(Action::ScrollDown, Some(10), end), end);
+        assert_eq!(navigated(&rows, Action::ScrollDown, Some(10), end), end);
         let start = viewport(5, 0);
-        assert_eq!(navigated(Action::ScrollUp, Some(10), start), start);
+        assert_eq!(navigated(&rows, Action::ScrollUp, Some(10), start), start);
     }
 
     #[test]
     fn navigate_half_page_moves_the_screen_and_the_cursor_by_half_the_height() {
+        let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(Action::HalfPageDown, None, viewport(20, 10)),
+            navigated(&rows, Action::HalfPageDown, None, viewport(20, 10)),
             viewport(30, 20)
         );
         assert_eq!(
-            navigated(Action::HalfPageUp, None, viewport(40, 30)),
+            navigated(&rows, Action::HalfPageUp, None, viewport(40, 30)),
             viewport(30, 20)
         );
     }
 
     #[test]
     fn navigate_half_page_keeps_the_cursor_at_the_same_screen_position() {
+        let rows = rows_of_a_long_commit();
         // Half of a screen of 40 rows is 20 rows.
         let mut viewport = viewport(20, 10);
-        navigate(Action::HalfPageDown, None, &mut viewport, &all_rows(), 40);
+        navigate(Action::HalfPageDown, None, &mut viewport, &rows, 40);
         assert_eq!(viewport, self::viewport(40, 30));
     }
 
     #[test]
     fn navigate_half_page_rounds_the_half_of_an_odd_height_down() {
+        let rows = rows_of_a_long_commit();
         let mut viewport = viewport(20, 10);
-        navigate(Action::HalfPageDown, None, &mut viewport, &all_rows(), 21);
+        navigate(Action::HalfPageDown, None, &mut viewport, &rows, 21);
         assert_eq!(viewport, self::viewport(30, 20));
     }
 
     #[test]
     fn navigate_half_page_is_repeated() {
+        let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(Action::HalfPageDown, Some(3), viewport(20, 10)),
+            navigated(&rows, Action::HalfPageDown, Some(3), viewport(20, 10)),
             viewport(50, 40)
         );
         assert_eq!(
-            navigated(Action::HalfPageUp, Some(2), viewport(40, 30)),
+            navigated(&rows, Action::HalfPageUp, Some(2), viewport(40, 30)),
             viewport(20, 10)
         );
     }
 
     #[test]
     fn navigate_half_page_stops_when_the_last_or_first_row_is_displayed() {
-        let len = all_rows().len();
+        let rows = rows_of_a_long_commit();
+        let len = rows.len();
         // The cursor is not moved anymore, even if it is not on the last row.
         let end = viewport(len - 5, len - HEIGHT);
-        assert_eq!(navigated(Action::HalfPageDown, None, end), end);
-        assert_eq!(navigated(Action::HalfPageDown, Some(3), end), end);
+        assert_eq!(navigated(&rows, Action::HalfPageDown, None, end), end);
+        assert_eq!(navigated(&rows, Action::HalfPageDown, Some(3), end), end);
         let start = viewport(5, 0);
-        assert_eq!(navigated(Action::HalfPageUp, None, start), start);
-        assert_eq!(navigated(Action::HalfPageUp, Some(3), start), start);
+        assert_eq!(navigated(&rows, Action::HalfPageUp, None, start), start);
+        assert_eq!(navigated(&rows, Action::HalfPageUp, Some(3), start), start);
     }
 
     #[test]
     fn navigate_half_page_moves_the_cursor_by_the_scrolled_rows_if_the_screen_stops() {
-        let len = all_rows().len();
+        let rows = rows_of_a_long_commit();
+        let len = rows.len();
         // Only 3 rows are left below the screen.
         let top = len - HEIGHT - 3;
         assert_eq!(
-            navigated(Action::HalfPageDown, None, viewport(top + 10, top)),
+            navigated(&rows, Action::HalfPageDown, None, viewport(top + 10, top)),
             viewport(len - HEIGHT + 10, len - HEIGHT)
         );
         assert_eq!(
-            navigated(Action::HalfPageDown, Some(usize::MAX), viewport(20, 10)),
+            navigated(
+                &rows,
+                Action::HalfPageDown,
+                Some(usize::MAX),
+                viewport(20, 10)
+            ),
             viewport(len - 10, len - HEIGHT)
         );
         assert_eq!(
-            navigated(Action::HalfPageUp, None, viewport(15, 3)),
+            navigated(&rows, Action::HalfPageUp, None, viewport(15, 3)),
             viewport(12, 0)
         );
         assert_eq!(
-            navigated(Action::HalfPageUp, Some(usize::MAX), viewport(20, 10)),
+            navigated(
+                &rows,
+                Action::HalfPageUp,
+                Some(usize::MAX),
+                viewport(20, 10)
+            ),
             viewport(10, 0)
         );
     }
 
     #[test]
     fn navigate_first_goes_to_the_first_row() {
+        let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(Action::First, None, viewport(50, 40)),
+            navigated(&rows, Action::First, None, viewport(50, 40)),
             viewport(0, 0)
         );
     }
 
     #[test]
     fn navigate_first_with_a_number_goes_to_that_row_counted_from_the_top() {
+        let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(Action::First, Some(1), viewport(50, 40)),
+            navigated(&rows, Action::First, Some(1), viewport(50, 40)),
             viewport(0, 0)
         );
         assert_eq!(
-            navigated(Action::First, Some(5), viewport(50, 40)),
+            navigated(&rows, Action::First, Some(5), viewport(50, 40)),
             viewport(4, 0)
         );
         assert_eq!(
-            navigated(Action::First, Some(30), viewport(0, 0)),
+            navigated(&rows, Action::First, Some(30), viewport(0, 0)),
             viewport(29, 15)
         );
     }
 
     #[test]
     fn navigate_first_with_a_too_large_number_goes_to_the_last_row() {
-        let len = all_rows().len();
+        let rows = rows_of_a_long_commit();
+        let len = rows.len();
         assert_eq!(
-            navigated(Action::First, Some(len + 1), viewport(0, 0)),
+            navigated(&rows, Action::First, Some(len + 1), viewport(0, 0)),
             viewport(len - 1, len - HEIGHT)
         );
         assert_eq!(
-            navigated(Action::First, Some(usize::MAX), viewport(0, 0)),
+            navigated(&rows, Action::First, Some(usize::MAX), viewport(0, 0)),
             viewport(len - 1, len - HEIGHT)
         );
     }
 
     #[test]
     fn navigate_last_goes_to_the_last_row_and_scrolls_just_enough_to_display_it() {
-        let len = all_rows().len();
+        let rows = rows_of_a_long_commit();
+        let len = rows.len();
         assert_eq!(
-            navigated(Action::Last, None, viewport(0, 0)),
+            navigated(&rows, Action::Last, None, viewport(0, 0)),
             viewport(len - 1, len - HEIGHT)
         );
         // Already displayed: the screen doesn't move more than needed.
         let almost = viewport(len - 10, len - HEIGHT);
         assert_eq!(
-            navigated(Action::Last, None, almost),
+            navigated(&rows, Action::Last, None, almost),
             viewport(len - 1, len - HEIGHT)
         );
     }
 
     #[test]
     fn navigate_last_with_a_number_goes_to_that_row_counted_from_the_top() {
+        let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(Action::Last, Some(1), viewport(50, 40)),
+            navigated(&rows, Action::Last, Some(1), viewport(50, 40)),
             viewport(0, 0)
         );
         assert_eq!(
-            navigated(Action::Last, Some(5), viewport(50, 40)),
+            navigated(&rows, Action::Last, Some(5), viewport(50, 40)),
             viewport(4, 0)
         );
         // Like `g`.
         assert_eq!(
-            navigated(Action::Last, Some(30), viewport(0, 0)),
-            navigated(Action::First, Some(30), viewport(0, 0))
+            navigated(&rows, Action::Last, Some(30), viewport(0, 0)),
+            navigated(&rows, Action::First, Some(30), viewport(0, 0))
         );
     }
 
     #[test]
     fn navigate_last_with_a_too_large_number_goes_to_the_last_row() {
-        let len = all_rows().len();
+        let rows = rows_of_a_long_commit();
+        let len = rows.len();
         assert_eq!(
-            navigated(Action::Last, Some(len + 1), viewport(0, 0)),
+            navigated(&rows, Action::Last, Some(len + 1), viewport(0, 0)),
             viewport(len - 1, len - HEIGHT)
         );
         assert_eq!(
-            navigated(Action::Last, Some(usize::MAX), viewport(0, 0)),
+            navigated(&rows, Action::Last, Some(usize::MAX), viewport(0, 0)),
             viewport(len - 1, len - HEIGHT)
         );
     }
 
     #[test]
     fn navigate_next_commit_goes_to_the_header_of_the_next_commit() {
-        let headers = headers();
-        let rows = all_rows();
-        let viewport = navigated(Action::NextCommit, None, viewport(0, 0));
+        let commits = short_commits();
+        let rows = rows_of(&commits);
+        let headers = headers(&commits);
+        let viewport = navigated(&rows, Action::NextCommit, None, viewport(0, 0));
         let mut expected = Viewport::default();
         expected.jump(headers[1], rows.len(), HEIGHT);
         assert_eq!(viewport, expected);
         assert_eq!(
-            navigated(Action::NextCommit, None, self::viewport(headers[2] + 3, 0)).cursor,
-            headers[3]
+            navigated(
+                &rows,
+                Action::NextCommit,
+                None,
+                self::viewport(headers[1] + 3, 0)
+            )
+            .cursor,
+            headers[2]
         );
     }
 
     #[test]
     fn navigate_next_commit_from_a_separator_goes_to_the_commit_below_its_own() {
-        let headers = headers();
+        let commits = short_commits();
+        let rows = rows_of(&commits);
+        let headers = headers(&commits);
         assert_eq!(
-            navigated(Action::NextCommit, None, viewport(headers[4] - 1, 0)).cursor,
-            headers[5]
+            navigated(&rows, Action::NextCommit, None, viewport(headers[1] - 1, 0)).cursor,
+            headers[2]
         );
     }
 
     #[test]
     fn navigate_next_commit_is_repeated_and_stops_on_the_last_commit() {
-        let headers = headers();
+        let commits = short_commits();
+        let rows = rows_of(&commits);
+        let headers = headers(&commits);
         assert_eq!(
-            navigated(Action::NextCommit, Some(3), viewport(0, 0)).cursor,
-            headers[3]
+            navigated(&rows, Action::NextCommit, Some(2), viewport(0, 0)).cursor,
+            headers[2]
         );
         assert_eq!(
-            navigated(Action::NextCommit, Some(usize::MAX), viewport(0, 0)).cursor,
+            navigated(&rows, Action::NextCommit, Some(usize::MAX), viewport(0, 0)).cursor,
             *headers.last().unwrap()
         );
     }
 
     #[test]
     fn navigate_next_commit_does_nothing_on_the_last_commit() {
-        let last = *headers().last().unwrap();
+        let commits = short_commits();
+        let rows = rows_of(&commits);
+        let last = *headers(&commits).last().unwrap();
         let before = viewport(last + 2, last - 5);
-        assert_eq!(navigated(Action::NextCommit, None, before), before);
+        assert_eq!(navigated(&rows, Action::NextCommit, None, before), before);
     }
 
     #[test]
     fn navigate_previous_commit_goes_to_the_header_then_to_the_previous_commit() {
-        let headers = headers();
-        let middle = viewport(headers[3] + 3, headers[3]);
-        let middle = navigated(Action::PreviousCommit, None, middle);
-        assert_eq!(middle.cursor, headers[3]);
+        let commits = short_commits();
+        let rows = rows_of(&commits);
+        let headers = headers(&commits);
+        let middle = viewport(headers[2] + 3, headers[2]);
+        let middle = navigated(&rows, Action::PreviousCommit, None, middle);
+        assert_eq!(middle.cursor, headers[2]);
         assert_eq!(
-            navigated(Action::PreviousCommit, None, middle).cursor,
-            headers[2]
+            navigated(&rows, Action::PreviousCommit, None, middle).cursor,
+            headers[1]
         );
     }
 
     #[test]
     fn navigate_previous_commit_from_a_separator_goes_to_the_commit_above_its_own() {
-        let headers = headers();
+        let commits = short_commits();
+        let rows = rows_of(&commits);
+        let headers = headers(&commits);
         assert_eq!(
-            navigated(Action::PreviousCommit, None, viewport(headers[4] - 1, 0)).cursor,
-            headers[3]
+            navigated(
+                &rows,
+                Action::PreviousCommit,
+                None,
+                viewport(headers[2] - 1, 0)
+            )
+            .cursor,
+            headers[1]
         );
     }
 
     #[test]
     fn navigate_previous_commit_is_repeated_and_stops_on_the_first_commit() {
-        let headers = headers();
-        let start = viewport(headers[5], headers[5] - 3);
+        let commits = short_commits();
+        let rows = rows_of(&commits);
+        let headers = headers(&commits);
+        // The first one goes to the header of the commit, the next one to the previous commit.
+        let start = viewport(headers[2] + 3, headers[2]);
         assert_eq!(
-            navigated(Action::PreviousCommit, Some(3), start).cursor,
-            headers[2]
+            navigated(&rows, Action::PreviousCommit, Some(2), start).cursor,
+            headers[1]
         );
         assert_eq!(
-            navigated(Action::PreviousCommit, Some(usize::MAX), start).cursor,
+            navigated(&rows, Action::PreviousCommit, Some(usize::MAX), start).cursor,
             0
         );
     }
 
     #[test]
     fn navigate_previous_commit_does_nothing_on_the_header_of_the_first_commit() {
+        let rows = rows_of(&short_commits());
         let before = viewport(0, 0);
-        assert_eq!(navigated(Action::PreviousCommit, None, before), before);
+        assert_eq!(
+            navigated(&rows, Action::PreviousCommit, None, before),
+            before
+        );
     }
 
     #[test]
     fn navigate_jumps_between_commits_scroll_to_keep_the_scrolloff() {
-        let headers = headers();
-        let viewport = navigated(Action::NextCommit, None, viewport(0, 0));
+        let commits = short_commits();
+        let rows = rows_of(&commits);
+        let headers = headers(&commits);
+        let viewport = navigated(&rows, Action::NextCommit, None, viewport(0, 0));
         assert!(
             viewport.top <= viewport.cursor.saturating_sub(5),
             "{viewport:?}"
@@ -1080,10 +1171,11 @@ mod tests {
 
     #[test]
     fn navigate_ignores_actions_that_are_not_movements() {
+        let rows = rows_of_a_long_commit();
         let before = viewport(20, 10);
         [Action::Quit, Action::Suspend, Action::Digit(3)]
             .into_iter()
-            .for_each(|action| assert_eq!(navigated(action, None, before), before));
+            .for_each(|action| assert_eq!(navigated(&rows, action, None, before), before));
     }
 
     #[test]

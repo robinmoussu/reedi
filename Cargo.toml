@@ -23,5 +23,11 @@ toml = { version = "1.1.8", features = ["preserve_order"] }
 unicode-segmentation = "1.13.3"
 unicode-width = "0.2.2"
 
+[features]
+# The items that only the tests use, so that the integration tests can use them too.
+test-support = []
+
 [dev-dependencies]
 insta = "1.49.0"
+# Enables `test-support` for the integration tests.
+reedi = { path = ".", features = ["test-support"] }

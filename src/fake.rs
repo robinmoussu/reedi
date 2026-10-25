@@ -6,12 +6,21 @@ mod loader;
 use crate::model::Commit;
 
 /// The descriptions of the folders of the fake commits that can be read by name.
+#[cfg(any(test, feature = "test-support"))]
 const FILE_CHANGES: &str = "file_changes";
+#[cfg(any(test, feature = "test-support"))]
 const LINE_WRAPPING: &str = "line_wrapping";
+#[cfg(any(test, feature = "test-support"))]
 const INVISIBLE_CHARACTERS: &str = "invisible_characters";
+#[cfg(any(test, feature = "test-support"))]
 const SCROLLOFF_RENAME: &str = "scrolloff_rename";
+#[cfg(any(test, feature = "test-support"))]
+const SEARCH_RENAME: &str = "search_rename";
+#[cfg(any(test, feature = "test-support"))]
 const RTL_SUMMARY: &str = "rtl_summary";
+#[cfg(any(test, feature = "test-support"))]
 const RTL_THEN_LTR_SUMMARY: &str = "rtl_then_ltr_summary";
+#[cfg(any(test, feature = "test-support"))]
 const LTR_THEN_RTL_SUMMARY: &str = "ltr_then_rtl_summary";
 
 /// All the fake commits, in topological order (oldest first): the folders of
@@ -25,6 +34,7 @@ fn commit_of(folder: &loader::Folder) -> Commit {
 }
 
 /// The fake commit whose folder is described by `description`.
+#[cfg(any(test, feature = "test-support"))]
 fn named(description: &str) -> Commit {
     let folders = loader::embedded();
     let folder = folders
@@ -39,40 +49,53 @@ fn named(description: &str) -> Commit {
 /// A commit with all kinds of file changes: added, deleted, renamed, binary and not valid UTF-8
 /// files, files without newline at their end, and blocks of lines that are only removed or only
 /// added.
+#[cfg(any(test, feature = "test-support"))]
 pub fn file_changes() -> Commit {
     named(FILE_CHANGES)
 }
 
 /// A commit whose lines are too wide for a screen 110 columns wide, in all the areas: header,
 /// body, and code (including wide characters, tabs, trailing whitespace and right-to-left text).
+#[cfg(any(test, feature = "test-support"))]
 pub fn line_wrapping() -> Commit {
     named(LINE_WRAPPING)
 }
 
 /// A commit with all kinds of invisible characters, in all the areas: subject, author, body, code
 /// with consistent and inconsistent line endings.
+#[cfg(any(test, feature = "test-support"))]
 pub fn invisible_characters() -> Commit {
     named(INVISIBLE_CHARACTERS)
 }
 
 /// A commit modifying two chunks of the same file.
+#[cfg(any(test, feature = "test-support"))]
 pub fn scrolloff_rename() -> Commit {
     named(SCROLLOFF_RENAME)
 }
 
+/// A commit modifying one chunk of a file, and three chunks of another one.
+#[cfg(any(test, feature = "test-support"))]
+pub fn search_rename() -> Commit {
+    named(SEARCH_RENAME)
+}
+
 /// A very short commit whose summary is fully in a right-to-left language (Hebrew).
+#[cfg(any(test, feature = "test-support"))]
 pub fn rtl_summary() -> Commit {
     named(RTL_SUMMARY)
 }
 
 /// A very short commit whose summary is in a right-to-left language (Arabic), then in a
 /// left-to-right one.
+#[cfg(any(test, feature = "test-support"))]
 pub fn rtl_then_ltr_summary() -> Commit {
     named(RTL_THEN_LTR_SUMMARY)
 }
 
 /// A very short commit whose summary is in a left-to-right language, then in a right-to-left one
 /// (Arabic).
+#[cfg(any(test, feature = "test-support"))]
 pub fn ltr_then_rtl_summary() -> Commit {
     named(LTR_THEN_RTL_SUMMARY)
 }
@@ -107,6 +130,7 @@ mod tests {
             line_wrapping(),
             invisible_characters(),
             scrolloff_rename(),
+            search_rename(),
             rtl_summary(),
             rtl_then_ltr_summary(),
             ltr_then_rtl_summary(),
@@ -276,23 +300,6 @@ mod tests {
                 c => panic!("{c:?} is neither Hebrew, Arabic nor ASCII"),
             })
             .collect()
-    }
-
-    #[test]
-    fn the_new_short_commits_are_the_first_displayed() {
-        let hashes: Vec<_> = all()
-            .into_iter()
-            .take(3)
-            .map(|commit| commit.hash)
-            .collect();
-        assert_eq!(
-            hashes,
-            [
-                ltr_then_rtl_summary().hash,
-                rtl_then_ltr_summary().hash,
-                rtl_summary().hash,
-            ]
-        );
     }
 
     #[test]

@@ -170,7 +170,7 @@ impl DateDisplay {
 
     /// The display used by the snapshots: `dd/mm/yyyy`, so that they don't depend on the current
     /// date, nor on the locale.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn for_snapshots() -> Self {
         DateDisplay {
             format: DateFormat {
@@ -186,7 +186,7 @@ impl DateDisplay {
 }
 
 /// The current date used by the snapshots.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn snapshot_now() -> Zoned {
     jiff::civil::date(2026, 10, 12)
         .at(14, 32, 7, 0)

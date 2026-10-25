@@ -323,9 +323,9 @@ version 0.0.8: line-diff, word-diff and syntax highlighting
 - line diff, word diff and syntax highlight are computed once, when the diffs are built (not when
   resizing)
 
-- [ ] refactor snapshot testing, so that each fake commit is tested individually
-- [ ] move snapshot testing to `tests/`
-- [ ] unit tests for the layout (blank rows between the header, the body, the files and the
+- [x] refactor snapshot testing, so that each fake commit is tested individually
+- [x] move snapshot testing to `tests/`
+- [x] unit tests for the layout (blank rows between the header, the body, the files and the
   chunks), which was only covered by the snapshots
 
 - [ ] Review the whole codebase style and readability
@@ -421,8 +421,7 @@ version 0.0.x: real data (single commit) and syntax highlighting
 ---------------------------------------------------------------
 
 - [ ] Display the content than `%h% s%C(green)% an%C(blue)% ad%C(auto)% d%C(auto)%+N%-C()%+b%-C()`
-- [ ] the fake data functions of `src/fake.rs` (`all()` and the named ones, like `file_changes()`)
-  are `#[cfg(test)]` and `pub(crate)`
+- [ ] `fake::all()` is only used by the `--fake` option
 
 version 0.0.x: edition
 ---------------------
