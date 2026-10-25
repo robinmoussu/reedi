@@ -6,7 +6,7 @@ reedi
 > Current implementation status is described in `implementation_status.md`
 
 - It is a TUI tool to review unpushed commits.
-- Commits are displayed (with their diff) in reverse topological order (oldest first).
+- Commits are displayed (with their diff) in the order of `git log --reverse` (oldest first).
 - The general interface is the same as `delta`, but commit messages, author, date and hunks are
   editable.
 - All hunks have syntax and diff-aware coloration (including word-level diff)
@@ -24,8 +24,9 @@ reedi
   terminal that supports bidirectional algorithm is used (like GNOME VTE or Konsole).
 - Supports `.gitattributes`
 - Binary files only show a message if they differ. Non-valid utf8 files are treated the same.
-- Likewise commit message, author name and other metadata must be valid utf8 or are replaced by an
-  error message.
+- Commit message, author name and other metadata are converted to utf8 using their `encoding`
+  header, like git. The bytes that are still not valid utf8 are replaced by `�`, displayed with the
+  error style.
 - Read git configuration, and re-use its settings
 
 
@@ -111,6 +112,20 @@ Areas
     number of commits displayed)
     - while a number is pending: `The next command will be repeated <n> times`
 - In light mode, the background of the status bar (but the mode) is light gray
+
+Commit creation
+===============
+
+If the current working directory has uncommited changes (either if there are changes in the index or
+the working directory), then instead of displaying unpushed commit, `reedi` will display the index,
+then the working directory.
+
+In each section:
+- The sha-1 is replaced by "index" and "working directory" (same color)
+- If there is a pre-written commit message, it’s displayed in the index section
+- Other metadatas are not displayed
+- Diff are displayed normally (like `diff --cached` for the index and `diff` for the working
+directory)
 
 Expected implementation
 =======================
@@ -250,7 +265,7 @@ Search mode:
 - `escape` doesn’t save the current search pattern, move back the cursor and screen position to what
   it was before the search
 - `up`/`down` restore the previous/next search pattern
-- default emacs style edition works: `left`/`right`, `ctrl+w`/`alt+d`, `ctrl+b`/`ctrl+f`,
+- default emacs style editing works: `left`/`right`, `ctrl+w`/`alt+d`, `ctrl+b`/`ctrl+f`,
   `alt+b`/`alt+f`, `ctrl+d`/`ctrl+h`, …
 - `alt+e` open the search pattern in the external editor
 
@@ -276,10 +291,10 @@ Edit mode (embedded editor):
   automatically between sessions
 - `ctrl+escape` (or `alt+escape`, or `escape,escape` for old terminals) exit edit mode (reset to
   review mode)
-- If the current edition mode is using vim-style keybinds, the vim mode is displayed in the status
+- If the current editing mode is using vim-style keybinds, the vim mode is displayed in the status
   bar
-- `author` and `date` are validated. During edition, if invalid, with a red background, when exiting
-  edit mode, if still invalid, they are reset to the value before edition (e.g. multiline or invalid
+- `author` and `date` are validated. During editing, if invalid, with a red background, when exiting
+  edit mode, if still invalid, they are reset to the value before editing (e.g. multiline or invalid
   date format).
 - When modified, `date` (if valid) is re-formatted using the current git date format preference
 - When editing the `author` field `author <email>` should be used (with autocompletion for the list

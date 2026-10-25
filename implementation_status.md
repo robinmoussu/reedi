@@ -1,7 +1,7 @@
 Prototype
 =========
 
-The software (named "reedi") is in Rust (rust-version: 1.99, edition: 2024). 3rd party dependencies
+The software (named "reedi") is in Rust (rust-version: 1.100, edition: 2024). 3rd party dependencies
 are preferred over hand-written code. Everything implemented comes with a test (unit test or
 integration test, whichever makes the most sense).
 
@@ -350,6 +350,55 @@ version 0.0.8: internal refactoring
    - `reediif`: diff computation, the pairing and the diff data model
    - `reedi`: settings and display (line number width, number of context lines)
 
+version 0.0.9: real data
+------------------------
+
+ - [ ] Display the same content as `$git log $base..HEAD -p --reverse`, where `$base` is:
+   - during a rebase, the commit the commits are replayed onto (`onto`)
+   - otherwise, if HEAD is attached to `$current_branch` and that has its upstream set, the
+     upstream (possibly a local branch)
+   - otherwise (no upstream, or HEAD detached), `refs/remotes/$remote/HEAD`, where `$remote` is
+     the default remote (the only remote, otherwise `origin`)
+   Details:
+   - the commits are loaded by the library, before entering the alternate screen, so that its
+     errors are displayed like the other errors (`reedi: $message`)
+   - not in a repository, or no `$base`: exit with a clear error message (`reedi: branch $branch
+     has no upstream and there is no $remote/HEAD`, `reedi: HEAD is detached and there is no
+     $remote/HEAD`, or `default remote` instead of `$remote/HEAD` if there is none)
+   - upstream not in the repository: exit with `reedi: the upstream $upstream of branch $branch
+     was never fetched`
+   - HEAD on a branch without commits: exit with `reedi: no commits on $branch`
+   - empty range: exit with
+     - `reedi: no unpushed commits on $branch` (upstream with the same branch name, its remote
+       excluded)
+     - `reedi: no commits on $branch that are not on $upstream` (upstream with another name)
+     - `reedi: no commits on $branch that are not on $remote/HEAD` (no upstream)
+     - `reedi: no commits on HEAD that are not on $remote/HEAD` (HEAD detached)
+     - `reedi: no commits replayed yet onto $short_hash` (during a rebase)
+   - renames are detected like git (`diff.renames`)
+   - binary files are found from the attributes of the repository (`.gitattributes`,
+     `.git/info/attributes`, `core.attributesFile`), then from their content like the fake data
+   - symlinks are diffed as text, like git; mode-only changes and submodule changes are not
+     displayed
+   - merge commits have no diff, like `git log -p`
+   - decorations: `HEAD`, local branches, remote branches and tags (other refs are ignored)
+   - notes are not displayed
+   - the short hash is the shortest unambiguous one, at least `core.abbrev` long
+   - the subject and the body are those of `git log --pretty='%s'` and `--pretty='%b'`
+   - in the metadata, the bytes that are not valid UTF-8 are replaced by `�`
+ - [ ] `fake::all()` is only used by the `--fake` option, whose help doesn't say it's the default
+   anymore
+
+ - [ ] the data model uses the `gix` types instead of its own:
+   - the hash of a commit and the length of its short form: `gix::ObjectId` and
+     `gix::hash::Prefix`
+   - the decorations: `gix::refs::Category`
+
+version 0.0.x: commit creation
+------------------------------
+
+- [ ] If the working directory is dirty, show the index + changes in the working directory instead
+
 version 0.0.x: line-diff, word-diff and syntax highlighting
 -----------------------------------------------------------
 
@@ -436,20 +485,15 @@ version 0.0.x: minimal editing
      - [ ] without modifications
    - [ ] Modification not applied (only stay in memory, visible, but never applied to the working
      directory or git)
-   - [ ] vim integration (using 3rd party crate). Current mode ("edition/insert" or
-     "edition/normal", …) is displayed in the status bar
+   - [ ] vim integration (using 3rd party crate). Current mode ("editing/insert" or
+     "editing/normal", …) is displayed in the status bar
    - [ ] fake line numbers are updated if lines are added/removed
    - [ ] adding a new line on the right adds a blank filler (without line number) on the left
 
-version 0.0.x: real data (single commit) and syntax highlighting
-----------------------------------------------------------------
+version 0.0.x: editing (single commit)
+--------------------------------------
 
- - [ ] Display the same content as
-   `%h% s%C(green)% an%C(blue)% ad%C(auto)% d%C(auto)%+N%-C()%+b%-C()`
- - [ ] `fake::all()` is only used by the `--fake` option
-
-version 0.0.x: edition
-----------------------
+Enable editing only in the last commit ("editable areas" of older commit are still unmodifiable)
 
  - [ ] Embedded editor
    - [ ] scrolling works if all the text in a single editable area doesn’t fit in a single screen
@@ -458,16 +502,26 @@ version 0.0.x: edition
      - [ ] it should work even if the number of lines in the patch changes
      - [ ] diffs are updated in real time
 
-version 0.0.x: real data (multiple commits)
--------------------------------------------
+version 0.0.x: editing (multiple commits)
+-----------------------------------------
 
- - [ ] Display the same content as `$git log $current_branch $current_branch@{upstream} -p
-   --reverse` assuming HEAD is attached to `$current_branch` and that has its upstream set.
  - [ ] Embedded editor
    - [ ] Applying modifications
      - [ ] modifications to an editable area are applied to the proper commit
      - [ ] diffs of future commits are updated
      - [ ] merge conflicts are properly displayed
+
+version 0.0.x: real data details
+--------------------------------
+
+ - [ ] mode-only changes and submodule changes are displayed
+ - [ ] decorations honour `log.decorate` and `log.excludeDecoration`
+ - [ ] notes (`refs/notes/commits`) are displayed, like `git log`
+ - [ ] merge commits display the changes that are in neither parent, like
+   `git log -p --remerge-diff`
+ - [ ] commit metadata is converted to UTF-8 using its `encoding` header, like git
+ - [ ] the `�` that replace the bytes of the metadata that are not valid UTF-8 use the `error`
+   style (not the `�` of the commit)
 
 
 Possible improvements:
