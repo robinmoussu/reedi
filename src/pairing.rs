@@ -1,4 +1,4 @@
-//! Pairing of the removed and added lines of a chunk, like `delta` (with its default settings)
+//! Pairing of the removed and added lines of a hunk, like `delta` (with its default settings)
 //! does: a removed line is displayed next to an added line only if they are similar enough.
 
 use std::iter;
@@ -8,8 +8,8 @@ use regex::Regex;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::model::Chunk;
 use crate::model::DiffLine;
+use crate::model::Hunk;
 use crate::model::LineKind;
 
 /// Maximum distance (between 0 and 1, see [`distance`]) between a removed and an added line for
@@ -27,21 +27,21 @@ const INSERTION_COST: usize = 2;
 /// Extra cost for starting a new group of deleted or inserted tokens.
 const INITIAL_MISMATCH_PENALTY: usize = 1;
 
-/// A row of a chunk: the indexes (in [`Chunk::lines`]) of the lines displayed in each half.
+/// A row of a hunk: the indexes (in [`Hunk::lines`]) of the lines displayed in each half.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pair {
     pub before: Option<usize>,
     pub after: Option<usize>,
 }
 
-/// The rows of `chunk`, in order.
+/// The rows of `hunk`, in order.
 ///
 /// An unchanged line is displayed in both halves. The removed and added lines between two
 /// unchanged lines are paired greedily: each removed line is paired with the first following added
 /// line that is similar enough, and the added lines skipped to find it are unpaired. A removed line
 /// with no similar added line is unpaired.
-pub fn pairs(chunk: &Chunk) -> Vec<Pair> {
-    let lines: Vec<_> = chunk.lines.iter().enumerate().collect();
+pub fn pairs(hunk: &Hunk) -> Vec<Pair> {
+    let lines: Vec<_> = hunk.lines.iter().enumerate().collect();
     lines
         .chunk_by(|(_, a), (_, b)| {
             (a.kind == LineKind::Unchanged) == (b.kind == LineKind::Unchanged)
@@ -59,7 +59,7 @@ pub fn pairs(chunk: &Chunk) -> Vec<Pair> {
                 after: Some(index),
             });
             let modified = pair_modified(
-                &chunk.lines,
+                &hunk.lines,
                 &indexes(LineKind::Removed),
                 &indexes(LineKind::Added),
             );
@@ -280,8 +280,8 @@ mod tests {
         }
     }
 
-    fn chunk(lines: &[(LineKind, &str)]) -> Chunk {
-        Chunk {
+    fn hunk(lines: &[(LineKind, &str)]) -> Hunk {
+        Hunk {
             before_first_line: 1,
             after_first_line: 1,
             lines: lines.iter().map(|(kind, text)| line(*kind, text)).collect(),
@@ -290,7 +290,7 @@ mod tests {
 
     /// The pairs, as `(before, after)` tuples.
     fn pairs_of(lines: &[(LineKind, &str)]) -> Vec<(Option<usize>, Option<usize>)> {
-        pairs(&chunk(lines))
+        pairs(&hunk(lines))
             .into_iter()
             .map(|pair| (pair.before, pair.after))
             .collect()

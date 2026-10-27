@@ -327,7 +327,7 @@ version 0.0.8: internal refactoring
 
  - [-] Review the whole codebase style and readability
    - [x] `README.md` and `implementation_status.md`: typos and naming uniformization
-   - [ ] "chunk" renamed "hunk" in the code, `README.md` (with its definition) and
+   - [x] "chunk" renamed "hunk" in the code, `README.md` (with its definition) and
      `implementation_status.md`
    - [ ] improve naming
    - [ ] duplication and simplification

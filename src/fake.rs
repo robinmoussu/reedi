@@ -68,13 +68,13 @@ pub fn invisible_characters() -> Commit {
     named(INVISIBLE_CHARACTERS)
 }
 
-/// A commit modifying two chunks of the same file.
+/// A commit modifying two hunks of the same file.
 #[cfg(any(test, feature = "test-support"))]
 pub fn scrolloff_rename() -> Commit {
     named(SCROLLOFF_RENAME)
 }
 
-/// A commit modifying one chunk of a file, and three chunks of another one.
+/// A commit modifying one hunk of a file, and three hunks of another one.
 #[cfg(any(test, feature = "test-support"))]
 pub fn search_rename() -> Commit {
     named(SEARCH_RENAME)
@@ -260,8 +260,8 @@ mod tests {
     #[test]
     fn some_lines_are_only_removed_or_only_added() {
         let release = &file_changes().files[0];
-        let kinds = |chunk: usize| -> Vec<_> {
-            release.chunks[chunk]
+        let kinds = |hunk: usize| -> Vec<_> {
+            release.hunks[hunk]
                 .lines
                 .iter()
                 .map(|line| line.kind)
@@ -277,7 +277,7 @@ mod tests {
         let files = file_changes().files;
         let missing = |path: &str| -> Vec<_> {
             let file = files.iter().find(|file| file.path == path).unwrap();
-            let lines = file.chunks.iter().flat_map(|chunk| &chunk.lines);
+            let lines = file.hunks.iter().flat_map(|hunk| &hunk.lines);
             lines
                 .filter(|line| line.missing_newline)
                 .map(|line| line.kind)
@@ -370,8 +370,8 @@ mod tests {
         .for_each(|commit| {
             assert_eq!(commit.files.len(), 1, "{}", commit.subject);
             let file = &commit.files[0];
-            assert_eq!(file.chunks.len(), 1, "{}", commit.subject);
-            let lines = &file.chunks[0].lines;
+            assert_eq!(file.hunks.len(), 1, "{}", commit.subject);
+            let lines = &file.hunks[0].lines;
             let kinds: Vec<_> = lines.iter().map(|line| line.kind).collect();
             assert_eq!(kinds, [LineKind::Removed, LineKind::Added]);
             assert!(lines.iter().all(|line| line.text.is_ascii()));

@@ -604,7 +604,7 @@ mod tests {
             ("01_after_a.txt", b"one\r\ntwo"),
         ];
         let commit = load(&metadata(""), files).unwrap();
-        let lines = commit.files[0].chunks.iter().flat_map(|chunk| &chunk.lines);
+        let lines = commit.files[0].hunks.iter().flat_map(|hunk| &hunk.lines);
         assert!(lines.clone().any(|line| line.text.ends_with('\r')));
         assert!(lines.clone().any(|line| line.missing_newline));
     }
@@ -669,7 +669,7 @@ mod tests {
                 FileContentType::Text
             ]
         );
-        assert!(commit.files[0].chunks.is_empty());
+        assert!(commit.files[0].hunks.is_empty());
     }
 
     #[test]
