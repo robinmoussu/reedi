@@ -335,7 +335,7 @@ version 0.0.8: line-diff, word-diff and syntax highlighting
    - [x] "chunk" renamed "hunk" in the code, `README.md` (with its definition) and
      `implementation_status.md`
    - [x] improve naming
-   - [ ] duplication and simplification
+   - [-] duplication and simplification
    - [ ] iterators instead of loops
    - [ ] constants and comments of the arguments
    - [ ] parameters and enums

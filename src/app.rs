@@ -208,7 +208,7 @@ pub fn run(
             })?;
             let event = event::read()?;
             let command = if error_modal.is_some() {
-                handle(&event, &mut error_modal);
+                close_on_key_press(&event, &mut error_modal);
                 None
             } else {
                 count.apply(&event)
@@ -242,17 +242,10 @@ fn rewrap(
     Ok(new_rows)
 }
 
-/// The action triggered by `event`, if any. While `error_modal` is displayed, a key press only
-/// closes it.
-fn handle(event: &Event, error_modal: &mut Option<ErrorModal>) -> Option<Action> {
-    match error_modal {
-        Some(_) => {
-            if matches!(event, Event::Key(key) if key.is_press()) {
-                *error_modal = None;
-            }
-            None
-        }
-        None => action(event),
+/// Close `error_modal` if `event` is a key press.
+fn close_on_key_press(event: &Event, error_modal: &mut Option<ErrorModal>) {
+    if matches!(event, Event::Key(key) if key.is_press()) {
+        *error_modal = None;
     }
 }
 
@@ -473,9 +466,11 @@ mod tests {
     }
 
     #[test]
-    fn key_press_only_closes_the_error_modal() {
+    fn key_press_closes_the_error_modal() {
         let mut error_modal = error_modal();
-        assert_eq!(handle(&key(KeyCode::Char('q')), &mut error_modal), None);
+        // `q` quits when no error modal is displayed: pressing it must close the modal, whatever
+        // the action of the key.
+        close_on_key_press(&key(KeyCode::Char('q')), &mut error_modal);
         assert_eq!(error_modal, None);
     }
 
@@ -487,18 +482,9 @@ mod tests {
             KeyModifiers::NONE,
             KeyEventKind::Release,
         ));
-        assert_eq!(handle(&release, &mut error_modal), None);
-        assert_eq!(handle(&Event::Resize(80, 24), &mut error_modal), None);
+        close_on_key_press(&release, &mut error_modal);
+        close_on_key_press(&Event::Resize(80, 24), &mut error_modal);
         assert!(error_modal.is_some());
-    }
-
-    #[test]
-    fn keys_are_active_without_error_modal() {
-        let mut error_modal = None;
-        assert_eq!(
-            handle(&key(KeyCode::Char('q')), &mut error_modal),
-            Some(Action::Quit)
-        );
     }
 
     #[test]
