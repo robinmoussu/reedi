@@ -330,7 +330,7 @@ version 0.0.8: internal refactoring
    - [x] "chunk" renamed "hunk" in the code, `README.md` (with its definition) and
      `implementation_status.md`
    - [x] improve naming
-   - [ ] duplication and simplification
+   - [-] duplication and simplification
    - [ ] iterators instead of loops, and `for` loops instead of iterators that only call `for_each`
      or `try_for_each`
    - [ ] constants and comments of the arguments
