@@ -36,9 +36,9 @@ version 0.0.0: general structure
    - [x] extra header field (tags, branches, what `git log --pretty='%d'` generates). Use `(HEAD ->
      main, tag: v1.0, origin/main)` for the fake data.
    - [x] $commit_message_body
-   - [x] 2 chunks, same file (both halves with fake line numbers), fake file name
+   - [x] 2 hunks, same file (both halves with fake line numbers), fake file name
  - [x] status bar display the current mode (`Review` only for the moment)
- - [x] Chunks do not have any diff logic, nor line wrapping support the fake data is short enough
+ - [x] Hunks do not have any diff logic, nor line wrapping support the fake data is short enough
    with no unpaired lines
  - [x] no cursor yet
  - [x] No semantic/diff syntax highlighting yet (nor extra symbol like `+/-` on the diff), but other
@@ -50,7 +50,7 @@ version 0.0.1: minimal interactivity
 
  - [x] add cursor (no editable-area highlight support)
  - [x] fake data update:
-   - [x] Add a second (older) commit with 2 modified files and 1+3 chunks
+   - [x] Add a second (older) commit with 2 modified files and 1+3 hunks
  - [x] Review mode
    - [x] scrolling works if all the text doesn’t fit in a single screen
    - [x] `j`/`k` and `up`/`down`
@@ -111,9 +111,9 @@ version 0.0.3: line wrapping
    - [x] break opportunities are computed on the original text, and the replacement character of
      the last character before a break stays on the row before the break if it fits
  - [x] a text area too narrow to display a grapheme cluster of its line:
-   - [x] in a diff, a clear error message is displayed in place of the chunk
+   - [x] in a diff, a clear error message is displayed in place of the hunk
    - [x] elsewhere, `reedi` exits with a clear error message
-   - [x] if the error message displayed in place of the chunk cannot be displayed, `reedi` exits
+   - [x] if the error message displayed in place of the hunk cannot be displayed, `reedi` exits
      with a clear error message
  - [x] the cursor moves row by row
  - [x] when the width of the screen changes, the cursor stays at the same screen position, on the
@@ -147,9 +147,9 @@ version 0.0.4: diff-aware internal architecture
    - [x] added, deleted, binary file changed and renamed files use the same kind of display as
      `delta`
    - [x] binary files only display their file name, as `$file (binary file)` (like `delta`), with no
-     chunks
+     hunks
    - [x] whether a file is valid UTF-8 is checked by `reedi`. Files that are not only display their
-     file name, as `$file (invalid utf-8 content)` (with the error color), with no chunks
+     file name, as `$file (invalid utf-8 content)` (with the error color), with no hunks
    - [x] if only one side is missing the newline at the end of the file, the last lines are paired,
      and the half missing it has an extra row below the last line of both sides, displaying
      `\ No newline at end of file` in the error color, with an empty line number column
@@ -328,11 +328,11 @@ version 0.0.8: line-diff, word-diff and syntax highlighting
  - [x] refactor snapshot testing, so that each fake commit is tested individually
  - [x] move snapshot testing to `tests/`
  - [x] unit tests for the layout (blank rows between the header, the body, the files and the
-   chunks), which was only covered by the snapshots
+   hunks), which was only covered by the snapshots
 
  - [-] Review the whole codebase style and readability
    - [x] `README.md` and `implementation_status.md`: typos and naming uniformization
-   - [ ] "chunk" renamed "hunk" in the code, `README.md` (with its definition) and
+   - [x] "chunk" renamed "hunk" in the code, `README.md` (with its definition) and
      `implementation_status.md`
    - [ ] naming
    - [ ] duplication and simplification
@@ -353,7 +353,7 @@ version 0.0.8: line-diff, word-diff and syntax highlighting
      - [ ] a Rust, a C++, a Python and a Markdown file, a file with an unknown extension (plain
        text) and a `Makefile` (known file name without extension)
      - [ ] in the C++ file, a multi-line comment (`/* … */`) with a very long text identical
-       before and after, containing a change, with a chunk starting inside the comment
+       before and after, containing a change, with a hunk starting inside the comment
      - [ ] in the C++ file, a `/*` line added above an unchanged line, so that this line is code
        on the left and comment on the right
    - [ ] a commit for moved lines:
@@ -391,7 +391,7 @@ version 0.0.8: line-diff, word-diff and syntax highlighting
 
  - [ ] per language syntax highlighting
  - [ ] use only foreground color, not style, not background
- - [ ] only the lines of the chunks have syntax highlighting (all lines included unmodified)
+ - [ ] only the lines of the hunks have syntax highlighting (all lines included unmodified)
  - [ ] the `monochrome` theme has no syntax colors
  - [ ] add test for max time budget per file
 
@@ -406,7 +406,7 @@ version 0.0.x: editable areas interactivity
      - [ ] $author
      - [ ] $date
      - [ ] $commit_message_body
-     - [ ] each chunk
+     - [ ] each hunk
 
 version 0.0.x: minimal editing
 ------------------------------
@@ -418,7 +418,7 @@ version 0.0.x: minimal editing
      - [ ] $author
      - [ ] $date
      - [ ] $commit_message_body
-     - [ ] each chunk
+     - [ ] each hunk
  - [ ] Embedded editor
    - [ ] With syntax highlighting
    - [ ] `ctrl+escape`, `alt+escape` and `escape,escape` should go back to review mode

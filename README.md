@@ -9,7 +9,7 @@ reedi
 - Commits are displayed (with their diff) in reverse topological order (oldest first).
 - The general interface is the same as `delta`, but commit messages, author, date and hunks are
   editable.
-- All chunks have syntax and diff-aware coloration (including word-level diff)
+- All hunks have syntax and diff-aware coloration (including word-level diff)
 - When saving all changes are applied, as-if an interactive rebase was done (note: maybe using `jj`
   instead of `git rebase` would lead to a better UX).
 - In review mode the closest editable area is highlighted and the cursor visible (if the cursor is
@@ -39,8 +39,8 @@ Performance:
 - move detection + word diff have a common timeout of 1s max per commit
   - if move detection hit timeout, removed/added is used as fallback
   - if word-diff hit timeout, the whole line will use the same result as the line-diff
-- a full-file syntax highlight limit of 500ms per file before fallback (per chunk syntax color,
-  with a 50ms timeout per chunk, then no syntax highlight)
+- a full-file syntax highlight limit of 500ms per file before fallback (per hunk syntax color,
+  with a 50ms timeout per hunk, then no syntax highlight)
 
 ```
 $hash $commit_subject $author $date ($tags, $branches)
@@ -84,7 +84,7 @@ $file
 $status_line
 ```
 
-For exact template and colors, inspiration should be taken from `delta` (except for chunk header `@@
+For exact template and colors, inspiration should be taken from `delta` (except for hunk header `@@
 -a,b +c,d @@` which is not shown).
 
 Areas
@@ -95,7 +95,7 @@ Areas
 - `$commit_message_body` is editable
 - `$author` (author name) and `$date` (author date, using current git date format) are editable
 - `$line` is non-editable and automatically updated both in the before (left) and after (right). The
-  width of this field fits the largest number of that chunk.
+  width of this field fits the largest number of that hunk.
 
 - The general idea is to have a navigation mode, in which you can read the diffs, execute commands
   and navigate between the editable areas.
@@ -193,26 +193,26 @@ Review mode:
 - `w` or `ctrl+s` save the current git state (by default the state when opening `reedi`)
 - `ctrl+r` undo all changes and restore the saved git state after a confirmation dialog
 
-- `v` starts visual mode (available only on a chunk diff)
+- `v` starts visual mode (available only on a hunk diff)
 - maintaining `shift` and pressing `up`/`down` or `j`/`k` select those lines (like what the visual
   mode does), and when `shift` is released comment mode is opened on those lines. Same behavior
   with click+drag with the mouse
 
-- `m` starts move mode (available only on a chunk diff). The moved span is all modified lines of the
-  current chunk
+- `m` starts move mode (available only on a hunk diff). The moved span is all modified lines of the
+  current hunk
 - In visual mode, `m` starts move mode, and the span is the selected lines
 
-- `b`/`e` adds lines at the beginning/end of the current chunk (possibly merging it with adjacent
-  chunks)
-- `space` toggle between expanding all chunks of the current file and restoring their default state
+- `b`/`e` adds lines at the beginning/end of the current hunk (possibly merging it with adjacent
+  hunks)
+- `space` toggle between expanding all hunks of the current file and restoring their default state
 
 - `!` enters command mode
 
 Selection (visual mode):
 
 - selection can only be done in a single file, with a continuous range of lines. TODO: Until `b`/`e`
-  are implemented, it is therefore limited to a single chunk. Once those will be implemented, trying
-  to extend a range outside a chunk expand the chunk alongside the selection.
+  are implemented, it is therefore limited to a single hunk. Once those will be implemented, trying
+  to extend a range outside a hunk expand the hunk alongside the selection.
 - `up`/`down` or `j`/`k` extend the selection in that direction
 - `c`/`C` and `enter`/`ctrl+enter`(or `alt+enter`) enters comment mode with the embedded/external
   editor
@@ -290,7 +290,7 @@ Edit mode (embedded editor):
 
 Merge conflicts:
 
-- Merge conflicts are displayed with the `<<</===/>>>` chunks, and are expected to be fixed
+- Merge conflicts are displayed with the `<<</===/>>>` hunks, and are expected to be fixed
 - A merge conflict indicator is displayed in the status bar
 - `[`/`]` jumps to the next/previous merge conflict
 - TODO: maybe using `jj` would help for merge conflicts
@@ -298,7 +298,7 @@ Merge conflicts:
 Move mode:
 
 - `k`/`j` and `up`/`down` move the current span to the previous/next commit
-- in move mode, all files/chunks are hidden, except for the current span and its surrounding context
+- in move mode, all files/hunks are hidden, except for the current span and its surrounding context
 
 Terminal protocol:
 - Use kitty protocol by default, with a fallback for non-kitty-aware terminals
@@ -353,7 +353,7 @@ displaying the part of a line that did not fit on the previous row.
     - the last column of each half is always reserved for the `↵` marker, which is displayed on
       each row followed by a continuation row of the same line
     - continuation rows display the line number column without number (`│    │`, as wide as the
-      line number column of the chunk)
+      line number column of the hunk)
     - if one side of a line wraps on more rows than the other, the shorter side is padded with rows
       displaying only the line number column without number
 - The header, the commit message and the file names are wrapped the same way, but without `↵`
@@ -365,7 +365,7 @@ displaying the part of a line that did not fit on the previous row.
   displayed on either side of its left-to-right part. Rows are still left-aligned.
 - A text area too narrow to display a grapheme cluster of its line (0 column, or 1 column for a wide
   character) cannot be wrapped. In a diff, a clear error message is displayed in place of the
-  chunk. Elsewhere, or if this error message cannot be displayed either, `reedi` exits with a clear
+  hunk. Elsewhere, or if this error message cannot be displayed either, `reedi` exits with a clear
   error message.
 
 Settings
@@ -438,11 +438,15 @@ Settings
 Diff model
 ----------
 
+A hunk is a group of modified lines of a file, with the unchanged lines around them (the context),
+like the `@@` sections of `git diff`. Changes separated by few enough unchanged lines are in the
+same hunk.
+
 All the diff machinery is available as a standalone internal library: `reediif`
 - TODO: validate public interface (as long as this note is here, there is strictly ZERO backward
   compatibility promise, the goal is to refine the interface)
 
-A chunk is a list of lines, each one being either unchanged, removed, added or moved, with the line
+A hunk is a list of lines, each one being either unchanged, removed, added or moved, with the line
 number of its first line in the before and after version of the file matching the color of the
 background of that line.
 

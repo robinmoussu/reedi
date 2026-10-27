@@ -159,7 +159,7 @@ fn jump_to_commit(row: usize, viewport: &mut Viewport, len: usize, height: usize
 /// key is pressed.
 ///
 /// Like `less`, the alternate screen is used, and the screen is redrawn when its size changes.
-/// Fails if a text area outside of the chunks is too narrow to display a grapheme cluster of its
+/// Fails if a text area outside of the hunks is too narrow to display a grapheme cluster of its
 /// line.
 pub fn run(
     settings: &Settings,
@@ -444,8 +444,8 @@ mod tests {
     }
 
     #[test]
-    // A chunk that's too narrow does not stop the application, but it will be replaced by the
-    // CHUNK_TOO_NARROW message
+    // A hunk that's too narrow does not stop the application, but it will be replaced by the
+    // HUNK_TOO_NARROW message
     fn rewrapping_to_a_too_narrow_screen_is_an_error() {
         let mut viewport = Viewport::default();
         assert!(

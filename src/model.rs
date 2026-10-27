@@ -58,9 +58,9 @@ pub enum FileChange {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileContentType {
     Text,
-    /// At least one version is binary. The file has no chunks.
+    /// At least one version is binary. The file has no hunks.
     Binary,
-    /// At least one version is not valid UTF-8. The file has no chunks.
+    /// At least one version is not valid UTF-8. The file has no hunks.
     InvalidUtf8,
 }
 
@@ -72,20 +72,20 @@ pub struct FileDiff {
     pub path: BString,
     pub change: FileChange,
     pub content: FileContentType,
-    pub chunks: Vec<Chunk>,
+    pub hunks: Vec<Hunk>,
 }
 
 impl FileDiff {
     /// Whether a version of the file mixes line endings (with and without a carriage return), or
     /// whether the before and after versions use different line endings.
     ///
-    /// Only the lines of the chunks are known, so they are the only ones compared. A line missing
+    /// Only the lines of the hunks are known, so they are the only ones compared. A line missing
     /// its newline has no line ending, so it is ignored.
     pub fn has_inconsistent_line_endings(&self) -> bool {
         let mut crlf = self
-            .chunks
+            .hunks
             .iter()
-            .flat_map(|chunk| &chunk.lines)
+            .flat_map(|hunk| &hunk.lines)
             .filter(|line| !line.missing_newline)
             .map(|line| line.text.ends_with('\r'));
         crlf.next()
@@ -93,7 +93,7 @@ impl FileDiff {
     }
 }
 
-/// Whether a line of a chunk is in the before version of the file, in the after version, or in
+/// Whether a line of a hunk is in the before version of the file, in the after version, or in
 /// both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LineKind {
@@ -102,7 +102,7 @@ pub enum LineKind {
     Added,
 }
 
-/// A line of a chunk.
+/// A line of a hunk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffLine {
     pub kind: LineKind,
@@ -113,7 +113,7 @@ pub struct DiffLine {
     pub missing_newline: bool,
 }
 
-/// The line numbers of a line of a chunk, in the versions of the file it is in.
+/// The line numbers of a line of a hunk, in the versions of the file it is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LineNumbers {
     pub before: Option<usize>,
@@ -123,15 +123,15 @@ pub struct LineNumbers {
 /// A contiguous range of lines, with the modified lines and the unchanged lines around them (like
 /// the hunks of a unified diff).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Chunk {
-    /// Line number (starting at 1) of the first line of the chunk in the before version.
+pub struct Hunk {
+    /// Line number (starting at 1) of the first line of the hunk in the before version.
     pub before_first_line: usize,
-    /// Line number (starting at 1) of the first line of the chunk in the after version.
+    /// Line number (starting at 1) of the first line of the hunk in the after version.
     pub after_first_line: usize,
     pub lines: Vec<DiffLine>,
 }
 
-impl Chunk {
+impl Hunk {
     /// The line numbers of each line of `lines`.
     pub fn line_numbers(&self) -> Vec<LineNumbers> {
         self.lines
@@ -156,7 +156,7 @@ impl Chunk {
             .collect()
     }
 
-    /// Number of digits needed to display all the line numbers of this chunk.
+    /// Number of digits needed to display all the line numbers of this hunk.
     pub fn line_number_width(&self) -> usize {
         let largest = self
             .line_numbers()
@@ -172,7 +172,7 @@ impl Chunk {
     /// version.
     ///
     /// If a version of the file doesn't end with a newline, but not the other one, their last
-    /// lines are different, so they are both in the last chunk.
+    /// lines are different, so they are both in the last hunk.
     pub fn shows_missing_newline(&self, index: usize) -> bool {
         let line = &self.lines[index];
         let other = match line.kind {
@@ -211,11 +211,11 @@ mod tests {
         }
     }
 
-    /// A chunk replacing `before` by `after`.
-    fn chunk(before: &[&str], after: &[&str]) -> Chunk {
+    /// A hunk replacing `before` by `after`.
+    fn hunk(before: &[&str], after: &[&str]) -> Hunk {
         let removed = before.iter().map(|text| line(LineKind::Removed, text));
         let added = after.iter().map(|text| line(LineKind::Added, text));
-        Chunk {
+        Hunk {
             before_first_line: 1,
             after_first_line: 1,
             lines: removed.chain(added).collect(),
@@ -227,7 +227,7 @@ mod tests {
             path: "a".into(),
             change: FileChange::Modified,
             content: FileContentType::Text,
-            chunks: vec![chunk(before, after)],
+            hunks: vec![hunk(before, after)],
         }
     }
 
@@ -252,13 +252,13 @@ mod tests {
     #[test]
     fn line_missing_its_newline_has_no_line_ending() {
         let mut file = file(&["a\r", "b"], &["a\r", "b\r"]);
-        file.chunks[0].lines[1].missing_newline = true;
+        file.hunks[0].lines[1].missing_newline = true;
         assert!(!file.has_inconsistent_line_endings());
     }
 
-    /// A chunk of `len` unchanged lines, starting at `first_line` in both versions.
-    fn unchanged(first_line: usize, len: usize) -> Chunk {
-        Chunk {
+    /// A hunk of `len` unchanged lines, starting at `first_line` in both versions.
+    fn unchanged(first_line: usize, len: usize) -> Hunk {
+        Hunk {
             before_first_line: first_line,
             after_first_line: first_line,
             lines: vec![line(LineKind::Unchanged, ""); len],
@@ -267,10 +267,10 @@ mod tests {
 
     #[test]
     fn line_numbers_skip_the_lines_missing_in_a_version() {
-        let mut chunk = chunk(&["a", "b"], &["c"]);
-        chunk.lines.insert(0, line(LineKind::Unchanged, "z"));
-        chunk.after_first_line = 10;
-        let numbers: Vec<_> = chunk
+        let mut hunk = hunk(&["a", "b"], &["c"]);
+        hunk.lines.insert(0, line(LineKind::Unchanged, "z"));
+        hunk.after_first_line = 10;
+        let numbers: Vec<_> = hunk
             .line_numbers()
             .into_iter()
             .map(|numbers| (numbers.before, numbers.after))
@@ -294,29 +294,29 @@ mod tests {
 
     #[test]
     fn line_number_width_uses_the_largest_version() {
-        let mut chunk = unchanged(95, 3);
-        chunk.after_first_line = 98;
-        assert_eq!(chunk.line_number_width(), 3);
-        let mut chunk = unchanged(98, 3);
-        chunk.after_first_line = 95;
-        assert_eq!(chunk.line_number_width(), 3);
+        let mut hunk = unchanged(95, 3);
+        hunk.after_first_line = 98;
+        assert_eq!(hunk.line_number_width(), 3);
+        let mut hunk = unchanged(98, 3);
+        hunk.after_first_line = 95;
+        assert_eq!(hunk.line_number_width(), 3);
     }
 
     #[test]
     fn missing_newline_is_shown_if_only_one_version_misses_it() {
-        let mut chunk = chunk(&["a"], &["a"]);
-        chunk.lines[0].missing_newline = true;
-        assert!(chunk.shows_missing_newline(0));
-        assert!(!chunk.shows_missing_newline(1));
-        chunk.lines[1].missing_newline = true;
-        assert!(!chunk.shows_missing_newline(0));
-        assert!(!chunk.shows_missing_newline(1));
+        let mut hunk = hunk(&["a"], &["a"]);
+        hunk.lines[0].missing_newline = true;
+        assert!(hunk.shows_missing_newline(0));
+        assert!(!hunk.shows_missing_newline(1));
+        hunk.lines[1].missing_newline = true;
+        assert!(!hunk.shows_missing_newline(0));
+        assert!(!hunk.shows_missing_newline(1));
     }
 
     #[test]
     fn missing_newline_of_an_unchanged_line_is_not_shown() {
-        let mut chunk = unchanged(1, 1);
-        chunk.lines[0].missing_newline = true;
-        assert!(!chunk.shows_missing_newline(0));
+        let mut hunk = unchanged(1, 1);
+        hunk.lines[0].missing_newline = true;
+        assert!(!hunk.shows_missing_newline(0));
     }
 }
