@@ -325,8 +325,8 @@ version 0.0.8: internal refactoring
  - [x] unit tests for the layout (blank rows between the header, the body, the files and the
    hunks), which was only covered by the snapshots
 
- - [ ] Review the whole codebase style and readability
-   - [ ] `README.md` and `implementation_status.md`: typos and naming uniformization
+ - [-] Review the whole codebase style and readability
+   - [x] `README.md` and `implementation_status.md`: typos and naming uniformization
    - [ ] "chunk" renamed "hunk" in the code, `README.md` (with its definition) and
      `implementation_status.md`
    - [ ] improve naming
