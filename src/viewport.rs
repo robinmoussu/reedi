@@ -30,14 +30,17 @@ impl Viewport {
         self.cursor = self.cursor.saturating_sub(1);
     }
 
-    /// Move the cursor `rows` rows down, stopping on the last of `len` rows.
-    pub fn down_by(&mut self, rows: usize, len: usize) {
-        self.cursor = self.cursor.saturating_add(rows).min(len.saturating_sub(1));
+    /// Move the cursor `rows_count` rows down, stopping on the last of `len` rows.
+    pub fn down_by(&mut self, rows_count: usize, len: usize) {
+        self.cursor = self
+            .cursor
+            .saturating_add(rows_count)
+            .min(len.saturating_sub(1));
     }
 
-    /// Move the cursor `rows` rows up, stopping on the first row.
-    pub fn up_by(&mut self, rows: usize) {
-        self.cursor = self.cursor.saturating_sub(rows);
+    /// Move the cursor `rows_count` rows up, stopping on the first row.
+    pub fn up_by(&mut self, rows_count: usize) {
+        self.cursor = self.cursor.saturating_sub(rows_count);
     }
 
     /// Move the cursor to the row `cursor` (or to the last of `len` rows if it is further), then
@@ -59,65 +62,65 @@ impl Viewport {
             .min(len.saturating_sub(height));
     }
 
-    /// Move the screen `lines` lines down (`ctrl+e`), one line at a time, stopping when its last
-    /// row is the last of `len` rows, like `less`.
+    /// Move the screen `lines_count` lines down (`ctrl+e`), one line at a time, stopping when its
+    /// last row is the last of `len` rows, like `less`.
     ///
     /// For each line, the cursor stays on its row, unless it is at most `SCROLLOFF` rows below the
     /// top of the screen (inside the margin, or about to enter it): it then moves down with the
     /// screen, so that it keeps its distance from the top.
-    pub fn scroll_down(&mut self, lines: usize, len: usize, height: usize) {
+    pub fn scroll_down(&mut self, lines_count: usize, len: usize, height: usize) {
         let height = height.max(1);
-        let lines = lines.min(len.saturating_sub(height).saturating_sub(self.top));
+        let lines_count = lines_count.min(len.saturating_sub(height).saturating_sub(self.top));
         // The cursor stays on its row until it is `scrolloff` rows from the top, then it moves
         // with the screen.
         let distance = self.cursor.saturating_sub(self.top);
-        let staying = lines.min(distance.saturating_sub(scrolloff(height)));
-        self.top += lines;
-        self.cursor += lines - staying;
+        let staying = lines_count.min(distance.saturating_sub(scrolloff(height)));
+        self.top += lines_count;
+        self.cursor += lines_count - staying;
     }
 
-    /// Move the screen `lines` lines up (`ctrl+y`), one line at a time, stopping when its first row
-    /// is the first row, like `less`.
+    /// Move the screen `lines_count` lines up (`ctrl+y`), one line at a time, stopping when its
+    /// first row is the first row, like `less`.
     ///
     /// For each line, the cursor stays on its row, unless it is at most `SCROLLOFF` rows above the
     /// bottom of the screen (inside the margin, or about to enter it): it then moves up with the
     /// screen, so that it keeps its distance from the bottom.
-    pub fn scroll_up(&mut self, lines: usize, height: usize) {
+    pub fn scroll_up(&mut self, lines_count: usize, height: usize) {
         let height = height.max(1);
-        let lines = lines.min(self.top);
+        let lines_count = lines_count.min(self.top);
         // The cursor stays on its row until it is `scrolloff` rows from the bottom, then it moves
         // with the screen.
         let distance = self.cursor.saturating_sub(self.top);
         let lowest_allowed = height - 1 - scrolloff(height);
-        let staying = lines.min(lowest_allowed.saturating_sub(distance));
-        self.top -= lines;
-        self.cursor = self.cursor.saturating_sub(lines - staying);
+        let staying = lines_count.min(lowest_allowed.saturating_sub(distance));
+        self.top -= lines_count;
+        self.cursor = self.cursor.saturating_sub(lines_count - staying);
     }
 
-    /// Move half the screen (`height / 2` rows, `times` times) down (`d`): the screen scrolls like
+    /// Move half the screen (`height / 2` rows, `count` times) down (`d`): the screen scrolls like
     /// with [`Viewport::scroll_down`], and the cursor moves down by the same number of rows, like
     /// with [`Viewport::down_by`], instead of following the scroll. Nothing moves anymore when the
     /// last of `len` rows is displayed, and a scroll that would go further than that is shortened.
-    pub fn half_page_down(&mut self, times: usize, len: usize, height: usize) {
-        let rows = (height / 2).saturating_mul(times);
-        let rows = rows.min(len.saturating_sub(height).saturating_sub(self.top));
-        if rows > 0 {
-            self.top += rows;
-            self.down_by(rows, len);
+    pub fn half_page_down(&mut self, count: usize, len: usize, height: usize) {
+        let rows_count = (height / 2).saturating_mul(count);
+        let rows_count = rows_count.min(len.saturating_sub(height).saturating_sub(self.top));
+        if rows_count > 0 {
+            self.top += rows_count;
+            self.down_by(rows_count, len);
             self.scroll(len, height);
         }
     }
 
-    /// Move half the screen (`height / 2` rows, `times` times) up (`u`): the screen scrolls like
+    /// Move half the screen (`height / 2` rows, `count` times) up (`u`): the screen scrolls like
     /// with [`Viewport::scroll_up`], and the cursor moves up by the same number of rows, like with
     /// [`Viewport::up_by`], instead of following the scroll. Nothing moves anymore when the first
     /// row is displayed, and a scroll that would go further than that is shortened.
-    pub fn half_page_up(&mut self, times: usize, len: usize, height: usize) {
-        let rows = (height / 2).saturating_mul(times);
-        let rows = rows.min(self.top);
-        if rows > 0 {
-            self.top -= rows;
-            self.up_by(rows);
+    pub fn half_page_up(&mut self, count: usize, len: usize, height: usize) {
+        let rows_count = (height / 2).saturating_mul(count);
+        let rows_count = rows_count.min(self.top);
+        if rows_count > 0 {
+            self.top -= rows_count;
+            self.up_by(rows_count);
             self.scroll(len, height);
         }
     }

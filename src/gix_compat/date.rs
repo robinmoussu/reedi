@@ -22,53 +22,50 @@ pub const MONTHS: [&str; 12] = [
 /// `time` relative to `now`, like `git log --date=relative`: `3 hours ago`, translated with
 /// `locale`.
 pub fn relative(time: Time, now: &Zoned, locale: &Locale) -> String {
-    let Ok(mut diff) = u64::try_from(now.timestamp().as_second() - time.seconds) else {
+    let Ok(seconds) = u64::try_from(now.timestamp().as_second() - time.seconds) else {
         return locale.translate("in the future");
     };
-    let count =
+    let translated =
         |singular: &str, plural: &str, count: u64| locale.translate_plural(singular, plural, count);
-    if diff < 90 {
-        return count("%lu second ago", "%lu seconds ago", diff);
+    if seconds < 90 {
+        return translated("%lu second ago", "%lu seconds ago", seconds);
     }
-    // Minutes.
-    diff = (diff + 30) / 60;
-    if diff < 90 {
-        return count("%lu minute ago", "%lu minutes ago", diff);
+    let minutes = (seconds + 30) / 60;
+    if minutes < 90 {
+        return translated("%lu minute ago", "%lu minutes ago", minutes);
     }
-    // Hours.
-    diff = (diff + 30) / 60;
-    if diff < 36 {
-        return count("%lu hour ago", "%lu hours ago", diff);
+    let hours = (minutes + 30) / 60;
+    if hours < 36 {
+        return translated("%lu hour ago", "%lu hours ago", hours);
     }
-    // Days.
-    diff = (diff + 12) / 24;
-    if diff < 14 {
-        return count("%lu day ago", "%lu days ago", diff);
+    let days = (hours + 12) / 24;
+    if days < 14 {
+        return translated("%lu day ago", "%lu days ago", days);
     }
     // Weeks, for the past 10 weeks or so.
-    if diff < 70 {
-        return count("%lu week ago", "%lu weeks ago", (diff + 3) / 7);
+    if days < 70 {
+        return translated("%lu week ago", "%lu weeks ago", (days + 3) / 7);
     }
     // Months, for the past 12 months or so.
-    if diff < 365 {
-        return count("%lu month ago", "%lu months ago", (diff + 15) / 30);
+    if days < 365 {
+        return translated("%lu month ago", "%lu months ago", (days + 15) / 30);
     }
     // Years and months, for 5 years or so.
-    if diff < 1825 {
-        let total_months = (diff * 12 * 2 + 365) / (365 * 2);
+    if days < 1825 {
+        let total_months = (days * 12 * 2 + 365) / (365 * 2);
         let (years, months) = (total_months / 12, total_months % 12);
-        let years_text = count("%lu year", "%lu years", years);
+        let years_text = translated("%lu year", "%lu years", years);
         if months == 0 {
-            return count("%lu year ago", "%lu years ago", years);
+            return translated("%lu year ago", "%lu years ago", years);
         }
-        return count("%s, %lu month ago", "%s, %lu months ago", months).replacen(
+        return translated("%s, %lu month ago", "%s, %lu months ago", months).replacen(
             "%s",
             &years_text,
             1,
         );
     }
     // Only years.
-    count("%lu year ago", "%lu years ago", (diff + 183) / 365)
+    translated("%lu year ago", "%lu years ago", (days + 183) / 365)
 }
 
 /// `offset` as git stores it in a number: `+0200` is 200.

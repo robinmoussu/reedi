@@ -42,7 +42,7 @@ impl<'a> Segment<'a> {
 pub struct TextRow {
     /// Position of the first character displayed on the row, in bytes, in the concatenation of
     /// the segments of the line (without their hidden carriage returns).
-    pub start: usize,
+    pub start_byte: usize,
     /// Number of columns used by the pieces (at most the width of the text area).
     pub columns_count: usize,
     /// The displayed pieces, with the index of their segment.
@@ -73,7 +73,7 @@ impl Error for TooNarrow {}
 /// A cluster, with the index of its segment.
 #[derive(Debug, Clone)]
 struct Item {
-    segment: usize,
+    segment_index: usize,
     /// See [`Segment::markup`].
     markup: bool,
     cluster: Cluster,
@@ -84,7 +84,7 @@ struct Item {
 /// Place `item` at `column` if it fits in `width` columns, and move `column` after it.
 ///
 /// A tab whose spaces up to the next tab stop don't fit is displayed alone, and ends the row.
-fn fits(item: &Item, column: &mut usize, width: usize) -> bool {
+fn place_if_fits(item: &Item, column: &mut usize, width: usize) -> bool {
     let item_width = item.cluster.width(*column);
     if *column + item_width <= width {
         *column += item_width;
@@ -131,7 +131,7 @@ fn layout(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
         let ends_row = if column + body_width <= width {
             column += body_width;
             i = body_end;
-            while i < word_end && fits(&items[i], &mut column, width) {
+            while i < word_end && place_if_fits(&items[i], &mut column, width) {
                 i += 1;
             }
             i < word_end
@@ -139,7 +139,7 @@ fn layout(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
             true
         } else {
             // A word wider than the text area is split after its last cluster that fits.
-            while i < body_end && fits(&items[i], &mut column, width) {
+            while i < body_end && place_if_fits(&items[i], &mut column, width) {
                 i += 1;
             }
             true
@@ -260,9 +260,9 @@ fn text_row(
                 let column = groups.last().map_or(0, |(_, pieces)| pieces.column);
                 if groups
                     .last()
-                    .is_none_or(|(segment, _)| *segment != item.segment)
+                    .is_none_or(|(segment_index, _)| *segment_index != item.segment_index)
                 {
-                    groups.push((item.segment, Pieces::new(column)));
+                    groups.push((item.segment_index, Pieces::new(column)));
                 }
                 let (_, pieces) = groups.last_mut().expect("a group was just pushed");
                 item.cluster
@@ -270,12 +270,15 @@ fn text_row(
                 groups
             });
     TextRow {
-        start: items.first().map_or(0, |item| item.cluster.range.start),
+        start_byte: items.first().map_or(0, |item| item.cluster.range.start),
         columns_count: groups.last().map_or(0, |(_, pieces)| pieces.column),
         pieces: groups
             .into_iter()
-            .flat_map(|(segment, pieces)| {
-                pieces.pieces.into_iter().map(move |piece| (segment, piece))
+            .flat_map(|(segment_index, pieces)| {
+                pieces
+                    .pieces
+                    .into_iter()
+                    .map(move |piece| (segment_index, piece))
             })
             .collect(),
     }
@@ -307,7 +310,7 @@ pub fn wrap(
     let items: Vec<Item> = texts
         .iter()
         .enumerate()
-        .scan(0, |offset, (segment, text)| {
+        .scan(0, |offset, (segment_index, text)| {
             let start = *offset;
             *offset += text.len();
             // The hidden carriage returns are already removed.
@@ -315,19 +318,19 @@ pub fn wrap(
             Some(
                 clusters
                     .into_iter()
-                    .map(move |cluster| (segment, start, cluster)),
+                    .map(move |cluster| (segment_index, start, cluster)),
             )
         })
         .flatten()
-        .map(|(segment, start, cluster)| {
+        .map(|(segment_index, start, cluster)| {
             let range = start + cluster.range.start..start + cluster.range.end;
             Item {
-                segment,
-                markup: segments[segment].markup,
+                segment_index,
+                markup: segments[segment_index].markup,
                 break_after: opportunities.binary_search(&range.end).is_ok(),
                 cluster: Cluster {
                     range,
-                    trailing: cluster.trailing && !segments[segment].markup,
+                    trailing: cluster.trailing && !segments[segment_index].markup,
                     ..cluster
                 },
             }
@@ -556,7 +559,7 @@ mod tests {
             rows,
             [
                 TextRow {
-                    start: 0,
+                    start_byte: 0,
                     columns_count: 8,
                     pieces: vec![
                         (0, piece("abc", Kind::Text)),
@@ -566,7 +569,7 @@ mod tests {
                     ],
                 },
                 TextRow {
-                    start: 8,
+                    start_byte: 8,
                     columns_count: 2,
                     pieces: vec![(2, piece("gh", Kind::Text))],
                 },
@@ -599,7 +602,7 @@ mod tests {
             rows,
             [
                 TextRow {
-                    start: 0,
+                    start_byte: 0,
                     columns_count: 7,
                     pieces: vec![
                         (0, piece("a", Kind::Text)),
@@ -609,7 +612,7 @@ mod tests {
                     ],
                 },
                 TextRow {
-                    start: 7,
+                    start_byte: 7,
                     columns_count: 4,
                     pieces: vec![(3, piece("  c ", Kind::Text))],
                 },
@@ -622,7 +625,7 @@ mod tests {
         let starts: Vec<_> = wrap(&[Segment::new("the quick brown")], FinalCr::Shown, 10)
             .unwrap()
             .into_iter()
-            .map(|row| row.start)
+            .map(|row| row.start_byte)
             .collect();
         assert_eq!(starts, [0, 10]);
     }

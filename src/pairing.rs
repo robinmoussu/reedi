@@ -243,18 +243,33 @@ fn distance(before: &str, after: &str) -> f64 {
     let width = |tokens: &[&str]| tokens.concat().trim().width();
     let (_, _, changed, total) = operations(&x, &y).into_iter().fold(
         (0, 0, 0, 0),
-        |(x_offset, y_offset, changed, total), (operation, n)| match operation {
+        |(x_offset, y_offset, changed, total), (operation, tokens_count)| match operation {
             Operation::Deletion => {
-                let width = width(&x[x_offset..x_offset + n]);
-                (x_offset + n, y_offset, changed + width, total + width)
+                let width = width(&x[x_offset..x_offset + tokens_count]);
+                (
+                    x_offset + tokens_count,
+                    y_offset,
+                    changed + width,
+                    total + width,
+                )
             }
             Operation::Insertion => {
-                let width = width(&y[y_offset..y_offset + n]);
-                (x_offset, y_offset + n, changed + width, total + width)
+                let width = width(&y[y_offset..y_offset + tokens_count]);
+                (
+                    x_offset,
+                    y_offset + tokens_count,
+                    changed + width,
+                    total + width,
+                )
             }
             Operation::NoOp => {
-                let width = width(&x[x_offset..x_offset + n]);
-                (x_offset + n, y_offset + n, changed, total + 2 * width)
+                let width = width(&x[x_offset..x_offset + tokens_count]);
+                (
+                    x_offset + tokens_count,
+                    y_offset + tokens_count,
+                    changed,
+                    total + 2 * width,
+                )
             }
         },
     );

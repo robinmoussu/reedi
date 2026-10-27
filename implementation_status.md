@@ -250,11 +250,11 @@ Second commit with only the restructuring of fake data:
      - any relevant toml comments for that fake commit
      - `gitattributes` (using the full name for each file, so before/after can be
        differentiated)
-   - [x] all files in the before/after states, named `$id_$state_$filename`, where:
+   - [x] all files in the before/after versions, named `$id_$version_$path`, where:
      - `$id`: index of the pair (the order in which they are displayed, starting from `01`)
-     - `$state`: "before" or "after" (a "before" file without "after" is a deletion, the reverse is
-       an addition, multiple "before"/"after" with the same `id` should fail tests)
-     - `$filename`: name of the file in the fake commit (use `__` for path separation)
+     - `$version`: "before" or "after" (a "before" file without "after" is a deletion, the reverse
+       is an addition, multiple "before"/"after" with the same `id` should fail tests)
+     - `$path`: path of the file in the fake commit (use `__` for path separation)
  - [x] `etc/fake_commits/**` is covered by a single glob in `.gitattributes` (`-text -whitespace`)
    and `.editorconfig`, so that git and editors never modify the bytes of the fake data
 
@@ -334,7 +334,7 @@ version 0.0.8: line-diff, word-diff and syntax highlighting
    - [x] `README.md` and `implementation_status.md`: typos and naming uniformization
    - [x] "chunk" renamed "hunk" in the code, `README.md` (with its definition) and
      `implementation_status.md`
-   - [ ] naming
+   - [x] improve naming
    - [ ] duplication and simplification
    - [ ] iterators instead of loops
    - [ ] constants and comments of the arguments

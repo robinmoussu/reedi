@@ -88,7 +88,7 @@ mod tests {
     /// A new repository whose only commit is at `TIME` and whose configuration has
     /// `log.date = $value` (if any), opened without the global and system configuration (so that
     /// the tests don't depend on the configuration of the user).
-    fn repository(value: Option<&str>) -> (Git, gix::Repository) {
+    fn repository_with_a_commit_at_time(value: Option<&str>) -> (Git, gix::Repository) {
         let now: Timestamp = "2026-10-12T17:32:07+02:00".parse().unwrap();
         let git = Git::new(
             &now.to_zoned(TimeZone::get("America/New_York").unwrap()),
@@ -115,7 +115,7 @@ mod tests {
             "format:%d/%m/%Y",
         ];
         values.into_iter().for_each(|value| {
-            let (git, repository) = repository(Some(value));
+            let (git, repository) = repository_with_a_commit_at_time(Some(value));
             let format = log_date_of(&repository).unwrap().unwrap();
             let environment = Environment {
                 now: "2026-10-12T17:32:07+02:00"
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn log_date_is_read_from_the_repository() {
-        let (_git, repository) = repository(Some("iso-local"));
+        let (_git, repository) = repository_with_a_commit_at_time(Some("iso-local"));
         let iso_local = DateFormat {
             style: DateStyle::Iso,
             local: true,
@@ -144,14 +144,14 @@ mod tests {
 
     #[test]
     fn log_date_is_unset() {
-        let (_git, repository) = repository(None);
+        let (_git, repository) = repository_with_a_commit_at_time(None);
         assert_eq!(log_date_of(&repository).unwrap(), None);
     }
 
     /// An invalid `log.date` is refused by `git log` too.
     #[test]
     fn invalid_log_date_is_an_error() {
-        let (git, repository) = repository(Some("bogus"));
+        let (git, repository) = repository_with_a_commit_at_time(Some("bogus"));
         assert!(git.author_date(None).is_err());
         let error = log_date_of(&repository).unwrap_err();
         assert!(matches!(

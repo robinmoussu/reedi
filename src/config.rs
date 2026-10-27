@@ -37,7 +37,7 @@ pub struct UnknownKey {
     pub key: String,
     pub value: toml::Value,
     /// The line of the key in the file, starting at 1.
-    pub line: usize,
+    pub line_number: usize,
 }
 
 impl fmt::Display for UnknownKey {
@@ -95,7 +95,7 @@ impl<'de> Visitor<'de> for UnknownKeys<'_> {
             if let Some(value) = self.keys.remove(key.get_ref()) {
                 unknown_keys.push(UnknownKey {
                     // The span of the key is in bytes.
-                    line: self.text[..key.span().start].matches('\n').count() + 1,
+                    line_number: self.text[..key.span().start].matches('\n').count() + 1,
                     key: key.into_inner(),
                     value,
                 });
@@ -225,7 +225,7 @@ mod tests {
         let keys: Vec<_> = file
             .unknown_keys
             .iter()
-            .map(|unknown_key| (unknown_key.line, unknown_key.to_string()))
+            .map(|unknown_key| (unknown_key.line_number, unknown_key.to_string()))
             .collect();
         assert_eq!(
             keys,
@@ -237,18 +237,21 @@ mod tests {
     }
 
     /// A path in the temporary directory, unique to this process and to `name`.
-    fn temporary(name: &str) -> PathBuf {
+    fn temporary_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("reedi-{}-{name}", process::id()))
     }
 
     #[test]
     fn missing_file_has_no_settings_set() {
-        assert_eq!(read(&temporary("missing")).unwrap(), ConfigFile::default());
+        assert_eq!(
+            read(&temporary_path("missing")).unwrap(),
+            ConfigFile::default()
+        );
     }
 
     #[test]
     fn file_is_read() {
-        let path = temporary("config.toml");
+        let path = temporary_path("config.toml");
         fs::write(&path, "colorscheme = \"light\"\n").unwrap();
         let file = read(&path);
         fs::remove_file(&path).unwrap();
@@ -266,7 +269,7 @@ mod tests {
 
     #[test]
     fn invalid_file_is_an_error_naming_the_file() {
-        let path = temporary("invalid.toml");
+        let path = temporary_path("invalid.toml");
         fs::write(&path, "colorscheme = \"blue\"\n").unwrap();
         let error = read(&path);
         fs::remove_file(&path).unwrap();
