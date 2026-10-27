@@ -212,39 +212,42 @@ pub fn display(time: Time, format: &DateFormat, environment: &Environment) -> St
         Offset::from_seconds(time.offset).map_or(TimeZone::UTC, TimeZone::fixed)
     };
     let zoned = timestamp.to_zoned(zone);
-    let tz = hhmm(zoned.offset().seconds());
+    let offset_hhmm = hhmm(zoned.offset().seconds());
     let weekday = WEEKDAYS[usize::try_from(zoned.weekday().to_sunday_zero_offset()).unwrap_or(0)];
     let month = MONTHS[usize::try_from(zoned.month() - 1).unwrap_or(0)];
     let (year, day, month_number) = (zoned.year(), zoned.day(), zoned.month());
-    let (hour, minute, second) = (zoned.hour(), zoned.minute(), zoned.second());
+    let time_of_day = format!(
+        "{:02}:{:02}:{:02}",
+        zoned.hour(),
+        zoned.minute(),
+        zoned.second()
+    );
     match &format.style {
         DateStyle::Unix => time.seconds.to_string(),
-        DateStyle::Raw => format!("{} {tz:+05}", time.seconds),
+        DateStyle::Raw => format!("{} {offset_hhmm:+05}", time.seconds),
         DateStyle::Relative => gix_compat::date::relative(time, now, &environment.locale),
         DateStyle::Human => gix_compat::date::human(time, now, format.local, &environment.locale),
         DateStyle::Short => format!("{year:04}-{month_number:02}-{day:02}"),
-        DateStyle::Iso => format!(
-            "{year:04}-{month_number:02}-{day:02} {hour:02}:{minute:02}:{second:02} {tz:+05}"
-        ),
+        DateStyle::Iso => {
+            format!("{year:04}-{month_number:02}-{day:02} {time_of_day} {offset_hhmm:+05}")
+        }
         DateStyle::IsoStrict => {
-            let offset = if tz == 0 {
+            let offset = if offset_hhmm == 0 {
                 "Z".to_string()
             } else {
-                format!("{:+03}:{:02}", tz / 100, (tz % 100).abs())
+                format!("{:+03}:{:02}", offset_hhmm / 100, (offset_hhmm % 100).abs())
             };
-            format!(
-                "{year:04}-{month_number:02}-{day:02}T{hour:02}:{minute:02}:{second:02}{offset}"
-            )
+            format!("{year:04}-{month_number:02}-{day:02}T{time_of_day}{offset}")
         }
         DateStyle::Rfc => {
-            format!("{weekday}, {day} {month} {year} {hour:02}:{minute:02}:{second:02} {tz:+05}")
+            format!("{weekday}, {day} {month} {year} {time_of_day} {offset_hhmm:+05}")
         }
         DateStyle::Default => {
-            let date = format!("{weekday} {month} {day} {hour:02}:{minute:02}:{second:02} {year}");
+            let date = format!("{weekday} {month} {day} {time_of_day} {year}");
             if format.local {
                 date
             } else {
-                format!("{date} {tz:+05}")
+                format!("{date} {offset_hhmm:+05}")
             }
         }
         DateStyle::Strftime(pattern) => environment.locale.strftime(pattern, &zoned, format.local),
@@ -288,7 +291,7 @@ mod tests {
     }
 
     /// A repository where the current date is `now` in `timezone`, whose only commit is at `TIME`.
-    fn git(now: &str, timezone: &str, locale: &str) -> Git {
+    fn repository_with_a_commit_at_time(now: &str, timezone: &str, locale: &str) -> Git {
         let git = Git::new(&zoned(now, timezone), locale);
         git.commit_at(TIME);
         git
@@ -323,7 +326,8 @@ mod tests {
             ("format:%Y %Z", strftime("%Y %Z", false)),
             ("format-local:%Y %H %Z", strftime("%Y %H %Z", true)),
         ];
-        let git = git("2026-10-12T17:32:07+02:00", "Europe/Paris", "C");
+        let git =
+            repository_with_a_commit_at_time("2026-10-12T17:32:07+02:00", "Europe/Paris", "C");
         formats.into_iter().for_each(|(text, expected)| {
             assert!(git.author_date(Some(text)).is_ok(), "git --date={text}");
             assert_eq!(text.parse(), Ok(expected), "--date={text}");
@@ -340,7 +344,8 @@ mod tests {
     /// The date formats that git refuses are errors, worded like git.
     #[test]
     fn date_formats_refused_by_git_are_errors() {
-        let git = git("2026-10-12T17:32:07+02:00", "Europe/Paris", "C");
+        let git =
+            repository_with_a_commit_at_time("2026-10-12T17:32:07+02:00", "Europe/Paris", "C");
         let refused = [
             (
                 "local-local",
@@ -408,7 +413,7 @@ mod tests {
     #[test]
     fn dates_are_displayed_like_git_log() {
         let now = "2026-10-12T17:32:07+02:00";
-        let git = git(now, "America/New_York", "C");
+        let git = repository_with_a_commit_at_time(now, "America/New_York", "C");
         let environment = environment(now, "America/New_York");
         let formats = [
             "default",
@@ -470,7 +475,7 @@ mod tests {
             ["Europe/Paris", "America/New_York"]
                 .into_iter()
                 .for_each(|timezone| {
-                    let git = git(now, timezone, "C");
+                    let git = repository_with_a_commit_at_time(now, timezone, "C");
                     let environment = environment(now, timezone);
                     formats.into_iter().for_each(|text| {
                         let format = text.parse().unwrap();
@@ -493,7 +498,7 @@ mod tests {
             return;
         };
         let now = "2026-10-12T17:32:07+02:00";
-        let git = git(now, "Europe/Paris", "fr_FR.UTF-8");
+        let git = repository_with_a_commit_at_time(now, "Europe/Paris", "fr_FR.UTF-8");
         let environment = Environment {
             now: zoned(now, "Europe/Paris"),
             locale,

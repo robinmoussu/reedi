@@ -158,9 +158,11 @@ mod tests {
         file(state("a", before), state("a", after), false, CONTEXT)
     }
 
-    /// The lines `first..=last`, each one ending with a newline.
-    fn numbered(first: usize, last: usize) -> String {
-        (first..=last).map(|n| format!("{n}\n")).collect()
+    /// The lines `first_number..=last_number`, each one ending with a newline.
+    fn numbered(first_number: usize, last_number: usize) -> String {
+        (first_number..=last_number)
+            .map(|number| format!("{number}\n"))
+            .collect()
     }
 
     /// The kind and text of the lines of `hunk`.

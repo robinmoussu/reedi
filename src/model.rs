@@ -167,14 +167,14 @@ impl Hunk {
         largest.to_string().len()
     }
 
-    /// Whether `\ No newline at end of file` is displayed because of the `index`-th line: only one
-    /// of the versions of the file doesn't end with a newline, and the line is the last one of this
-    /// version.
+    /// Whether `\ No newline at end of file` is displayed because of the `line_index`-th line: only
+    /// one of the versions of the file doesn't end with a newline, and the line is the last one of
+    /// this version.
     ///
     /// If a version of the file doesn't end with a newline, but not the other one, their last
     /// lines are different, so they are both in the last hunk.
-    pub fn shows_missing_newline(&self, index: usize) -> bool {
-        let line = &self.lines[index];
+    pub fn shows_missing_newline(&self, line_index: usize) -> bool {
+        let line = &self.lines[line_index];
         let other = match line.kind {
             LineKind::Unchanged => return false,
             LineKind::Removed => LineKind::Added,

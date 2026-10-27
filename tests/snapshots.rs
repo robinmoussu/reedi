@@ -54,8 +54,11 @@ fn screen(
         cell.set_symbol(&symbol);
     });
     let mut backend = TestBackend::new(width, height);
-    let cells = buffer.content.iter().enumerate().map(|(i, cell)| {
-        let (x, y) = (i % usize::from(width), i / usize::from(width));
+    let cells = buffer.content.iter().enumerate().map(|(cell_index, cell)| {
+        let (x, y) = (
+            cell_index % usize::from(width),
+            cell_index / usize::from(width),
+        );
         (x as u16, y as u16, cell)
     });
     backend.draw(cells).unwrap();
@@ -79,10 +82,10 @@ fn rows_count(commit: &Commit, width: u16) -> usize {
 
 /// An error modal displaying 2 unknown keys of the config file.
 fn unknown_keys_error_modal() -> ErrorModal {
-    let unknown_key = |key: &str, value: &str, line| UnknownKey {
+    let unknown_key = |key: &str, value: &str, line_number| UnknownKey {
         key: key.to_string(),
         value: value.parse().unwrap(),
-        line,
+        line_number,
     };
     ErrorModal::UnknownKeys {
         path: "/home/alice/.config/reedi/config.toml".into(),

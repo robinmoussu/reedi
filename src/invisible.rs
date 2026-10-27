@@ -361,9 +361,15 @@ mod tests {
         pieces.pieces
     }
 
-    /// The pieces displaying the `index`-th cluster of `line`, at `column`.
-    fn cluster_at(line: &str, index: usize, column: usize, wrap: Wrap, room: usize) -> Vec<Piece> {
-        let cluster = clusters(line, FinalCr::Shown).remove(index);
+    /// The pieces displaying the `cluster_index`-th cluster of `line`, at `column`.
+    fn cluster_at(
+        line: &str,
+        cluster_index: usize,
+        column: usize,
+        wrap: Wrap,
+        room: usize,
+    ) -> Vec<Piece> {
+        let cluster = clusters(line, FinalCr::Shown).remove(cluster_index);
         let mut pieces = Pieces::new(column);
         cluster.push(&mut pieces, wrap, room);
         pieces.pieces

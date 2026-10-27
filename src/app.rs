@@ -112,33 +112,35 @@ fn navigate(
     height: usize,
 ) {
     let len = rows.len();
-    let times = count.unwrap_or(1);
+    let repeat_count = count.unwrap_or(1);
     match action {
         Action::Down => {
-            viewport.down_by(times, len);
+            viewport.down_by(repeat_count, len);
             viewport.scroll(len, height);
         }
         Action::Up => {
-            viewport.up_by(times);
+            viewport.up_by(repeat_count);
             viewport.scroll(len, height);
         }
-        Action::ScrollDown => viewport.scroll_down(times, len, height),
-        Action::ScrollUp => viewport.scroll_up(times, height),
-        Action::HalfPageDown => viewport.half_page_down(times, len, height),
-        Action::HalfPageUp => viewport.half_page_up(times, len, height),
-        Action::First => viewport.jump(times.saturating_sub(1), len, height),
+        Action::ScrollDown => viewport.scroll_down(repeat_count, len, height),
+        Action::ScrollUp => viewport.scroll_up(repeat_count, height),
+        Action::HalfPageDown => viewport.half_page_down(repeat_count, len, height),
+        Action::HalfPageUp => viewport.half_page_up(repeat_count, len, height),
+        Action::First => viewport.jump(repeat_count.saturating_sub(1), len, height),
         Action::Last => {
-            let row = count.map_or(len.saturating_sub(1), |row| row.saturating_sub(1));
-            viewport.jump(row, len, height);
+            let row_index = count.map_or(len.saturating_sub(1), |row_number| {
+                row_number.saturating_sub(1)
+            });
+            viewport.jump(row_index, len, height);
         }
-        Action::NextCommit => jump_to_commit(
-            view::next_commit(rows, viewport.cursor, times),
+        Action::NextCommit => jump_unless_already_on(
+            view::next_commit(rows, viewport.cursor, repeat_count),
             viewport,
             len,
             height,
         ),
-        Action::PreviousCommit => jump_to_commit(
-            view::previous_commit(rows, viewport.cursor, times),
+        Action::PreviousCommit => jump_unless_already_on(
+            view::previous_commit(rows, viewport.cursor, repeat_count),
             viewport,
             len,
             height,
@@ -147,10 +149,11 @@ fn navigate(
     }
 }
 
-/// Move the cursor to the row `row`, unless it is already on it.
-fn jump_to_commit(row: usize, viewport: &mut Viewport, len: usize, height: usize) {
-    if row != viewport.cursor {
-        viewport.jump(row, len, height);
+/// Move the cursor to the row `row_index` like [`Viewport::jump`], unless it is already on it
+/// (the screen then doesn't scroll).
+fn jump_unless_already_on(row_index: usize, viewport: &mut Viewport, len: usize, height: usize) {
+    if row_index != viewport.cursor {
+        viewport.jump(row_index, len, height);
     }
 }
 
@@ -387,7 +390,7 @@ mod tests {
         viewport.down(rows.len());
         // The header of the first commit is displayed on 2 rows.
         assert_eq!(viewport.cursor, 1);
-        assert_eq!(rows[1].line, rows[0].line);
+        assert_eq!(rows[1].line_index, rows[0].line_index);
     }
 
     #[test]
@@ -421,7 +424,7 @@ mod tests {
         // line).
         let cursor = narrow
             .iter()
-            .position(|row| row.line == 2 && row.start != Start::Whole(0))
+            .position(|row| row.line_index == 2 && row.start != Start::Whole(0))
             .unwrap();
         let mut viewport = Viewport {
             cursor,
@@ -437,7 +440,7 @@ mod tests {
         )
         .unwrap();
         // The first line of the body is displayed on a single row.
-        assert_eq!(wide[viewport.cursor].line, 2);
+        assert_eq!(wide[viewport.cursor].line_index, 2);
         assert_eq!(viewport.cursor, view::find(&wide, narrow[cursor].anchor()));
         // At the same screen position.
         assert_eq!(viewport.cursor - viewport.top, 3);
@@ -563,7 +566,7 @@ mod tests {
         });
     }
 
-    fn typed(count: &mut Count, keys: &str) {
+    fn type_keys(count: &mut Count, keys: &str) {
         keys.chars()
             .for_each(|c| assert_eq!(count.apply(&key(KeyCode::Char(c))), None, "{c}"));
     }
@@ -572,16 +575,16 @@ mod tests {
     fn typed_digits_build_a_pending_number() {
         let mut count = Count::default();
         assert_eq!(count.pending(), None);
-        typed(&mut count, "1");
+        type_keys(&mut count, "1");
         assert_eq!(count.pending(), Some(1));
-        typed(&mut count, "2");
+        type_keys(&mut count, "2");
         assert_eq!(count.pending(), Some(12));
     }
 
     #[test]
     fn the_pending_number_is_given_to_the_next_command_and_cleared() {
         let mut count = Count::default();
-        typed(&mut count, "5");
+        type_keys(&mut count, "5");
         assert_eq!(
             count.apply(&key(KeyCode::Char('j'))),
             Some((Action::Down, Some(5)))
@@ -605,18 +608,18 @@ mod tests {
     #[test]
     fn a_leading_zero_is_ignored() {
         let mut count = Count::default();
-        typed(&mut count, "0");
+        type_keys(&mut count, "0");
         assert_eq!(count.pending(), None);
-        typed(&mut count, "05");
+        type_keys(&mut count, "05");
         assert_eq!(count.pending(), Some(5));
-        typed(&mut count, "0");
+        type_keys(&mut count, "0");
         assert_eq!(count.pending(), Some(50));
     }
 
     #[test]
     fn zero_alone_does_nothing() {
         let mut count = Count::default();
-        typed(&mut count, "0");
+        type_keys(&mut count, "0");
         assert_eq!(
             count.apply(&key(KeyCode::Char('j'))),
             Some((Action::Down, None))
@@ -626,7 +629,7 @@ mod tests {
     #[test]
     fn a_too_large_number_saturates() {
         let mut count = Count::default();
-        typed(&mut count, &"9".repeat(40));
+        type_keys(&mut count, &"9".repeat(40));
         assert_eq!(count.pending(), Some(usize::MAX));
         assert_eq!(
             count.apply(&key(KeyCode::Char('j'))),
@@ -647,7 +650,7 @@ mod tests {
         .iter()
         .for_each(|event| {
             let mut count = Count::default();
-            typed(&mut count, "5");
+            type_keys(&mut count, "5");
             assert_eq!(count.apply(event), None, "{event:?}");
             assert_eq!(count.pending(), None, "{event:?}");
             assert_eq!(
@@ -688,7 +691,7 @@ mod tests {
         .into_iter()
         .for_each(|(event, expected)| {
             let mut count = Count::default();
-            typed(&mut count, "3");
+            type_keys(&mut count, "3");
             assert_eq!(count.apply(&event), Some((expected, Some(3))), "{event:?}");
         });
     }
@@ -701,7 +704,7 @@ mod tests {
             KeyEventKind::Release,
         ));
         let mut count = Count::default();
-        typed(&mut count, "5");
+        type_keys(&mut count, "5");
         assert_eq!(count.apply(&release), None);
         assert_eq!(count.apply(&Event::Resize(80, 24)), None);
         assert_eq!(count.pending(), Some(5));
@@ -737,14 +740,14 @@ mod tests {
         ]
     }
 
-    /// Row of the header of each commit of `commits`.
-    fn headers(commits: &[Commit]) -> Vec<usize> {
+    /// Index of the first row of the header of each commit of `commits`.
+    fn header_row_indexes(commits: &[Commit]) -> Vec<usize> {
         commits
             .iter()
-            .scan(0, |start, commit| {
-                let first = *start;
-                *start += rows_of(std::slice::from_ref(commit)).len();
-                Some(first)
+            .scan(0, |next_header_row_index, commit| {
+                let header_row_index = *next_header_row_index;
+                *next_header_row_index += rows_of(std::slice::from_ref(commit)).len();
+                Some(header_row_index)
             })
             .collect()
     }
@@ -791,10 +794,10 @@ mod tests {
     #[test]
     fn navigate_down_and_up_stop_at_the_first_and_last_rows() {
         let rows = rows_of_a_long_commit();
-        let last = rows.len() - 1;
+        let last_row_index = rows.len() - 1;
         assert_eq!(
             navigated(&rows, Action::Down, Some(usize::MAX), viewport(3, 0)).cursor,
-            last
+            last_row_index
         );
         assert_eq!(
             navigated(&rows, Action::Up, Some(usize::MAX), viewport(30, 20)).cursor,
@@ -1045,7 +1048,7 @@ mod tests {
     fn navigate_next_commit_goes_to_the_header_of_the_next_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits);
-        let headers = headers(&commits);
+        let headers = header_row_indexes(&commits);
         let viewport = navigated(&rows, Action::NextCommit, None, viewport(0, 0));
         let mut expected = Viewport::default();
         expected.jump(headers[1], rows.len(), HEIGHT);
@@ -1066,7 +1069,7 @@ mod tests {
     fn navigate_next_commit_from_a_separator_goes_to_the_commit_below_its_own() {
         let commits = short_commits();
         let rows = rows_of(&commits);
-        let headers = headers(&commits);
+        let headers = header_row_indexes(&commits);
         assert_eq!(
             navigated(&rows, Action::NextCommit, None, viewport(headers[1] - 1, 0)).cursor,
             headers[2]
@@ -1077,7 +1080,7 @@ mod tests {
     fn navigate_next_commit_is_repeated_and_stops_on_the_last_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits);
-        let headers = headers(&commits);
+        let headers = header_row_indexes(&commits);
         assert_eq!(
             navigated(&rows, Action::NextCommit, Some(2), viewport(0, 0)).cursor,
             headers[2]
@@ -1092,8 +1095,8 @@ mod tests {
     fn navigate_next_commit_does_nothing_on_the_last_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits);
-        let last = *headers(&commits).last().unwrap();
-        let before = viewport(last + 2, last - 5);
+        let last_header_row_index = *header_row_indexes(&commits).last().unwrap();
+        let before = viewport(last_header_row_index + 2, last_header_row_index - 5);
         assert_eq!(navigated(&rows, Action::NextCommit, None, before), before);
     }
 
@@ -1101,7 +1104,7 @@ mod tests {
     fn navigate_previous_commit_goes_to_the_header_then_to_the_previous_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits);
-        let headers = headers(&commits);
+        let headers = header_row_indexes(&commits);
         let middle = viewport(headers[2] + 3, headers[2]);
         let middle = navigated(&rows, Action::PreviousCommit, None, middle);
         assert_eq!(middle.cursor, headers[2]);
@@ -1115,7 +1118,7 @@ mod tests {
     fn navigate_previous_commit_from_a_separator_goes_to_the_commit_above_its_own() {
         let commits = short_commits();
         let rows = rows_of(&commits);
-        let headers = headers(&commits);
+        let headers = header_row_indexes(&commits);
         assert_eq!(
             navigated(
                 &rows,
@@ -1132,7 +1135,7 @@ mod tests {
     fn navigate_previous_commit_is_repeated_and_stops_on_the_first_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits);
-        let headers = headers(&commits);
+        let headers = header_row_indexes(&commits);
         // The first one goes to the header of the commit, the next one to the previous commit.
         let start = viewport(headers[2] + 3, headers[2]);
         assert_eq!(
@@ -1159,7 +1162,7 @@ mod tests {
     fn navigate_jumps_between_commits_scroll_to_keep_the_scrolloff() {
         let commits = short_commits();
         let rows = rows_of(&commits);
-        let headers = headers(&commits);
+        let headers = header_row_indexes(&commits);
         let viewport = navigated(&rows, Action::NextCommit, None, viewport(0, 0));
         assert!(
             viewport.top <= viewport.cursor.saturating_sub(5),

@@ -47,7 +47,7 @@ pub enum Version {
     After,
 }
 
-/// The name of a file of a fake commit, `$id_$state_$filename`.
+/// The name of a file of a fake commit, `$id_$version_$path`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileName {
     /// The index of the pair of files, starting from 1.
@@ -78,7 +78,7 @@ pub enum FakeDataError {
     /// The name of a folder is not `${reverse_order}_${descriptive_commit_name}`.
     #[cfg(any(test, feature = "test-support"))]
     InvalidFolderName(String),
-    /// A file is neither the metadata nor named `$id_$state_$filename`.
+    /// A file is neither the metadata nor named `$id_$version_$path`.
     InvalidFileName(String),
     MissingMetadata,
     /// The metadata is not valid TOML, has an unknown or missing key, or an invalid value.
@@ -245,7 +245,7 @@ fn is_binary(attributes: &str) -> Option<bool> {
 
 /// The files of the folder of a fake commit with the same id: its before and after versions.
 #[derive(Default)]
-struct Pair<'a> {
+struct Versions<'a> {
     before: Option<RawFile<'a>>,
     after: Option<RawFile<'a>>,
     before_path: String,
@@ -266,13 +266,13 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
         .iter()
         .find(|file| file.name == METADATA_FILE)
         .ok_or(FakeDataError::MissingMetadata)?;
-    let mut pairs: BTreeMap<usize, Pair> = BTreeMap::new();
+    let mut versions_by_id: BTreeMap<usize, Versions> = BTreeMap::new();
     for file in files.iter().filter(|file| file.name != METADATA_FILE) {
         let name = parse_file_name(file.name)?;
-        let pair = pairs.entry(name.id).or_default();
+        let versions = versions_by_id.entry(name.id).or_default();
         let (slot, path) = match name.version {
-            Version::Before => (&mut pair.before, &mut pair.before_path),
-            Version::After => (&mut pair.after, &mut pair.after_path),
+            Version::Before => (&mut versions.before, &mut versions.before_path),
+            Version::After => (&mut versions.after, &mut versions.after_path),
         };
         if slot.replace(*file).is_some() {
             return Err(FakeDataError::DuplicateFile {
@@ -282,8 +282,8 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
         }
         *path = name.path;
     }
-    let last_id = pairs.keys().next_back().copied().unwrap_or(0);
-    if let Some(missing) = (1..=last_id).find(|id| !pairs.contains_key(id)) {
+    let last_id = versions_by_id.keys().next_back().copied().unwrap_or(0);
+    if let Some(missing) = (1..=last_id).find(|id| !versions_by_id.contains_key(id)) {
         return Err(FakeDataError::MissingId(missing));
     }
 
@@ -310,23 +310,23 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
         file.and_then(|file| metadata.gitattributes.get(file.name))
             .and_then(|attributes| is_binary(attributes))
     };
-    let files: Vec<FileDiff> = pairs
+    let files: Vec<FileDiff> = versions_by_id
         .values()
-        .map(|pair| {
+        .map(|versions| {
             let has_nul =
                 |file: &Option<RawFile>| file.is_some_and(|file| file.content.contains(&0));
             // Like git: the attributes decide, otherwise a NUL byte makes a file binary.
-            let declared = [attributes(&pair.before), attributes(&pair.after)];
+            let declared = [attributes(&versions.before), attributes(&versions.after)];
             let binary = if declared.contains(&Some(true)) {
                 true
             } else if declared.contains(&Some(false)) {
                 false
             } else {
-                has_nul(&pair.before) || has_nul(&pair.after)
+                has_nul(&versions.before) || has_nul(&versions.after)
             };
             diff::file(
-                state(&pair.before, &pair.before_path),
-                state(&pair.after, &pair.after_path),
+                state(&versions.before, &versions.before_path),
+                state(&versions.after, &versions.after_path),
                 binary,
                 diff::CONTEXT,
             )
