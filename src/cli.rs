@@ -6,7 +6,7 @@ use std::fmt;
 use clap::Parser;
 use jiff::Timestamp;
 use jiff::Zoned;
-use jiff::tz::Offset;
+use jiff::fmt::strtime;
 use jiff::tz::TimeZone;
 
 use crate::date;
@@ -71,26 +71,12 @@ fn parse_timezone(text: &str) -> Result<TimeZone, CliError> {
     if let Ok(timezone) = TimeZone::get(text) {
         return Ok(timezone);
     }
-    let invalid = || CliError::InvalidTimezone(text.to_string());
-    let sign = match text.chars().next() {
-        Some('+') => 1,
-        Some('-') => -1,
-        _ => return Err(invalid()),
-    };
-    let digits = text[1..].replacen(':', "", 1);
-    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(invalid());
-    }
-    let (hours, minutes) = match digits.len() {
-        2 => (digits.as_str(), "00"),
-        4 => digits.split_at(2),
-        _ => return Err(invalid()),
-    };
-    let seconds =
-        sign * (hours.parse::<i32>().unwrap() * 3600 + minutes.parse::<i32>().unwrap() * 60);
-    Offset::from_seconds(seconds)
+    // `%z` parses `-0530`, and `%:::z` parses `+02:00` and `+02`.
+    ["%z", "%:::z"]
+        .into_iter()
+        .find_map(|format| strtime::parse(format, text).ok()?.offset())
         .map(TimeZone::fixed)
-        .map_err(|_| invalid())
+        .ok_or_else(|| CliError::InvalidTimezone(text.to_string()))
 }
 
 impl fmt::Display for CliError {

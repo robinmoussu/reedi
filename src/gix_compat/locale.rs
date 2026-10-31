@@ -63,12 +63,7 @@ fn expand_timezone(pattern: &str, zoned: &Zoned, local: bool) -> String {
             continue;
         }
         match chars.next() {
-            Some('z') => {
-                let seconds = zoned.offset().seconds();
-                let minutes = seconds.abs() / 60;
-                let sign = if seconds < 0 { '-' } else { '+' };
-                expanded += &format!("{sign}{:02}{:02}", minutes / 60, minutes % 60);
-            }
+            Some('z') => expanded += &zoned.strftime("%z").to_string(),
             Some('Z') => {
                 if local {
                     let info = zoned.time_zone().to_offset_info(zoned.timestamp());

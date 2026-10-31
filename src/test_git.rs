@@ -5,8 +5,14 @@ use std::process::Command;
 use std::process::Output;
 
 use gix::date::Time;
+use jiff::Timestamp;
 use jiff::Zoned;
+use jiff::tz::Offset;
+use jiff::tz::TimeZone;
 use tempfile::TempDir;
+
+use crate::gix_compat::date::RAW_FORMAT;
+use crate::gix_compat::date::parse_raw;
 
 /// A new repository, and the environment `git` runs in. The configuration of the user is not
 /// read, so that the tests don't depend on it.
@@ -83,15 +89,12 @@ impl Git {
 
     /// A commit authored at `time`.
     pub fn commit_at(&self, time: Time) {
-        let sign = if time.offset < 0 { '-' } else { '+' };
-        let minutes = time.offset.abs() / 60;
-        let date = format!(
-            "{} {sign}{:02}{:02}",
-            time.seconds,
-            minutes / 60,
-            minutes % 60
-        );
-        self.commit_with_date(&date).unwrap();
+        let offset = Offset::from_seconds(time.offset).unwrap();
+        let zoned = Timestamp::from_second(time.seconds)
+            .unwrap()
+            .to_zoned(TimeZone::fixed(offset));
+        self.commit_with_date(&zoned.strftime(RAW_FORMAT).to_string())
+            .unwrap();
     }
 
     /// The author date of the last commit, displayed by `git log` with `--date=$format` (or with
@@ -112,14 +115,6 @@ impl Git {
 
     /// The author date of the last commit, as stored (`--date=raw`).
     pub fn author_time(&self) -> Time {
-        let raw = self.author_date(Some("raw")).unwrap();
-        let (seconds, offset) = raw.split_once(' ').unwrap();
-        let sign = if offset.starts_with('-') { -1 } else { 1 };
-        let hours: i32 = offset[1..3].parse().unwrap();
-        let minutes: i32 = offset[3..5].parse().unwrap();
-        Time {
-            seconds: seconds.parse().unwrap(),
-            offset: sign * (hours * 60 + minutes) * 60,
-        }
+        parse_raw(&self.author_date(Some("raw")).unwrap()).unwrap()
     }
 }

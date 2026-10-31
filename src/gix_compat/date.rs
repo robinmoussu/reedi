@@ -7,6 +7,7 @@ use std::process::Command;
 use gix::date::Time;
 use jiff::Timestamp;
 use jiff::Zoned;
+use jiff::fmt::strtime;
 use jiff::tz::Offset;
 use jiff::tz::TimeZone;
 
@@ -18,6 +19,9 @@ pub const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"
 pub const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
+
+/// The `strftime` format of a date as git stores it (`--date=raw`): `1791808327 +0200`.
+pub const RAW_FORMAT: &str = "%s %z";
 
 /// `time` relative to `now`, like `git log --date=relative`: `3 hours ago`, translated with
 /// `locale`.
@@ -68,12 +72,6 @@ pub fn relative(time: Time, now: &Zoned, locale: &Locale) -> String {
     translated("%lu year ago", "%lu years ago", (days + 183) / 365)
 }
 
-/// `offset` as git stores it in a number: `+0200` is 200.
-pub fn hhmm(offset_seconds: i32) -> i32 {
-    let minutes = offset_seconds.abs() / 60;
-    offset_seconds.signum() * (minutes / 60 * 100 + minutes % 60)
-}
-
 /// `time` displayed like `git log --date=human`, `now` being the current date and timezone:
 /// relative for recent dates, otherwise without the parts that are the same as `now`. If `local`,
 /// `time` is displayed in the timezone of `now`.
@@ -103,8 +101,7 @@ pub fn human(time: Time, now: &Zoned, local: bool, locale: &Locale) -> String {
         return relative(time, now, locale);
     }
 
-    let hide_timezone =
-        local || hhmm(date.offset().seconds()) == hhmm(now.offset().seconds()) || !hide_date;
+    let hide_timezone = local || date.offset() == now.offset() || !hide_date;
     let mut text = String::new();
     if same_year {
         let weekday = usize::try_from(date.weekday().to_sunday_zero_offset()).unwrap_or_default();
@@ -121,7 +118,7 @@ pub fn human(time: Time, now: &Zoned, local: bool, locale: &Locale) -> String {
         text += &format!(" {}", date.year());
     }
     if !hide_timezone {
-        text += &format!(" {:+05}", hhmm(date.offset().seconds()));
+        text += &format!(" {}", date.strftime("%z"));
     }
     text
 }
@@ -164,15 +161,15 @@ pub fn parse(input: &str, now: &Zoned) -> Option<Time> {
         &date,
     ])?;
     let output = git(&["log", "-1", "--format=%ad", "--date=raw"])?;
-    // `$seconds $offset`
-    let raw = String::from_utf8(output.stdout).ok()?;
-    let (seconds, offset) = raw.trim_end().split_once(' ')?;
-    let sign = if offset.starts_with('-') { -1 } else { 1 };
-    let hours: i32 = offset.get(1..3)?.parse().ok()?;
-    let minutes: i32 = offset.get(3..5)?.parse().ok()?;
+    parse_raw(String::from_utf8(output.stdout).ok()?.trim_end())
+}
+
+/// `text`, a date as git stores it (see [`RAW_FORMAT`]).
+pub fn parse_raw(text: &str) -> Option<Time> {
+    let parsed = strtime::parse(RAW_FORMAT, text).ok()?;
     Some(Time {
-        seconds: seconds.parse().ok()?,
-        offset: sign * (hours * 60 + minutes) * 60,
+        seconds: parsed.to_timestamp().ok()?.as_second(),
+        offset: parsed.offset()?.seconds(),
     })
 }
 
@@ -182,10 +179,6 @@ fn posix_timezone(now: &Zoned) -> String {
     if let Some(name) = now.time_zone().iana_name() {
         return name.to_string();
     }
-    let seconds = now.offset().seconds();
-    let minutes = seconds.abs() / 60;
-    let sign = if seconds < 0 { '-' } else { '+' };
-    let inverted = if seconds < 0 { '+' } else { '-' };
-    let (hours, minutes) = (minutes / 60, minutes % 60);
-    format!("<{sign}{hours:02}{minutes:02}>{inverted}{hours}:{minutes:02}")
+    let inverted = now.with_time_zone(TimeZone::fixed(-now.offset()));
+    format!("<{}>{}", now.strftime("%z"), inverted.strftime("%:z"))
 }
