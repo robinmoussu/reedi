@@ -305,6 +305,10 @@ mod tests {
     use ratatui::crossterm::event::KeyEventKind;
 
     use super::*;
+    use crate::test_support::header_row_indexes;
+    use crate::test_support::rows_of;
+    use crate::test_support::short_commits;
+    use crate::test_support::viewport;
     use crate::view::Start;
 
     fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
@@ -699,46 +703,15 @@ mod tests {
         assert_eq!(count.pending(), Some(5));
     }
 
+    /// Width of the screen.
+    const WIDTH: u16 = 110;
     /// Height of the screen, without the status bar.
     const HEIGHT: usize = 20;
-
-    /// The rows of `commits`, on a screen 110 columns wide.
-    fn rows_of(commits: &[Commit]) -> Vec<Row> {
-        view::rows(
-            commits,
-            110,
-            &Theme::monochrome(),
-            &DateDisplay::for_snapshots(),
-        )
-        .unwrap()
-    }
 
     /// The rows of a fake commit displayed on at least 70 rows, for the tests moving inside a
     /// commit (the furthest one displays the rows 30 to 69, on a screen of 40 rows).
     fn rows_of_a_long_commit() -> Vec<Row> {
-        rows_of(&[fake::file_changes()])
-    }
-
-    /// 3 fake commits displayed on at least 6 rows each, for the tests moving between commits
-    /// (some of them start 3 rows below a header, inside the same commit).
-    fn short_commits() -> [Commit; 3] {
-        [
-            fake::ltr_then_rtl_summary(),
-            fake::rtl_summary(),
-            fake::rtl_then_ltr_summary(),
-        ]
-    }
-
-    /// Index of the first row of the header of each commit of `commits`.
-    fn header_row_indexes(commits: &[Commit]) -> Vec<usize> {
-        commits
-            .iter()
-            .scan(0, |next_header_row_index, commit| {
-                let header_row_index = *next_header_row_index;
-                *next_header_row_index += rows_of(std::slice::from_ref(commit)).len();
-                Some(header_row_index)
-            })
-            .collect()
+        rows_of(&[fake::file_changes()], WIDTH)
     }
 
     /// `viewport` after `action` repeated `count` times on `rows`.
@@ -751,10 +724,6 @@ mod tests {
         let mut viewport = viewport;
         navigate(action, count, &mut viewport, rows, HEIGHT);
         viewport
-    }
-
-    fn viewport(cursor: usize, top: usize) -> Viewport {
-        Viewport { cursor, top }
     }
 
     #[test]
@@ -1036,8 +1005,8 @@ mod tests {
     #[test]
     fn navigate_next_commit_goes_to_the_header_of_the_next_commit() {
         let commits = short_commits();
-        let rows = rows_of(&commits);
-        let headers = header_row_indexes(&commits);
+        let rows = rows_of(&commits, WIDTH);
+        let headers = header_row_indexes(&commits, WIDTH);
         let viewport = navigated(&rows, Action::NextCommit, None, viewport(0, 0));
         let mut expected = Viewport::default();
         expected.jump(headers[1], rows.len(), HEIGHT);
@@ -1057,8 +1026,8 @@ mod tests {
     #[test]
     fn navigate_next_commit_from_a_separator_goes_to_the_commit_below_its_own() {
         let commits = short_commits();
-        let rows = rows_of(&commits);
-        let headers = header_row_indexes(&commits);
+        let rows = rows_of(&commits, WIDTH);
+        let headers = header_row_indexes(&commits, WIDTH);
         assert_eq!(
             navigated(&rows, Action::NextCommit, None, viewport(headers[1] - 1, 0)).cursor,
             headers[2]
@@ -1068,8 +1037,8 @@ mod tests {
     #[test]
     fn navigate_next_commit_is_repeated_and_stops_on_the_last_commit() {
         let commits = short_commits();
-        let rows = rows_of(&commits);
-        let headers = header_row_indexes(&commits);
+        let rows = rows_of(&commits, WIDTH);
+        let headers = header_row_indexes(&commits, WIDTH);
         assert_eq!(
             navigated(&rows, Action::NextCommit, Some(2), viewport(0, 0)).cursor,
             headers[2]
@@ -1083,8 +1052,8 @@ mod tests {
     #[test]
     fn navigate_next_commit_does_nothing_on_the_last_commit() {
         let commits = short_commits();
-        let rows = rows_of(&commits);
-        let last_header_row_index = *header_row_indexes(&commits).last().unwrap();
+        let rows = rows_of(&commits, WIDTH);
+        let last_header_row_index = *header_row_indexes(&commits, WIDTH).last().unwrap();
         let before = viewport(last_header_row_index + 2, last_header_row_index - 5);
         assert_eq!(navigated(&rows, Action::NextCommit, None, before), before);
     }
@@ -1092,8 +1061,8 @@ mod tests {
     #[test]
     fn navigate_previous_commit_goes_to_the_header_then_to_the_previous_commit() {
         let commits = short_commits();
-        let rows = rows_of(&commits);
-        let headers = header_row_indexes(&commits);
+        let rows = rows_of(&commits, WIDTH);
+        let headers = header_row_indexes(&commits, WIDTH);
         let middle = viewport(headers[2] + 3, headers[2]);
         let middle = navigated(&rows, Action::PreviousCommit, None, middle);
         assert_eq!(middle.cursor, headers[2]);
@@ -1106,8 +1075,8 @@ mod tests {
     #[test]
     fn navigate_previous_commit_from_a_separator_goes_to_the_commit_above_its_own() {
         let commits = short_commits();
-        let rows = rows_of(&commits);
-        let headers = header_row_indexes(&commits);
+        let rows = rows_of(&commits, WIDTH);
+        let headers = header_row_indexes(&commits, WIDTH);
         assert_eq!(
             navigated(
                 &rows,
@@ -1123,8 +1092,8 @@ mod tests {
     #[test]
     fn navigate_previous_commit_is_repeated_and_stops_on_the_first_commit() {
         let commits = short_commits();
-        let rows = rows_of(&commits);
-        let headers = header_row_indexes(&commits);
+        let rows = rows_of(&commits, WIDTH);
+        let headers = header_row_indexes(&commits, WIDTH);
         // The first one goes to the header of the commit, the next one to the previous commit.
         let start = viewport(headers[2] + 3, headers[2]);
         assert_eq!(
@@ -1139,7 +1108,7 @@ mod tests {
 
     #[test]
     fn navigate_previous_commit_does_nothing_on_the_header_of_the_first_commit() {
-        let rows = rows_of(&short_commits());
+        let rows = rows_of(&short_commits(), WIDTH);
         let before = viewport(0, 0);
         assert_eq!(
             navigated(&rows, Action::PreviousCommit, None, before),
@@ -1150,8 +1119,8 @@ mod tests {
     #[test]
     fn navigate_jumps_between_commits_scroll_to_keep_the_scrolloff() {
         let commits = short_commits();
-        let rows = rows_of(&commits);
-        let headers = header_row_indexes(&commits);
+        let rows = rows_of(&commits, WIDTH);
+        let headers = header_row_indexes(&commits, WIDTH);
         let viewport = navigated(&rows, Action::NextCommit, None, viewport(0, 0));
         assert!(
             viewport.top <= viewport.cursor.saturating_sub(5),
