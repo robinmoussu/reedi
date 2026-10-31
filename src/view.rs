@@ -58,7 +58,7 @@ const HUNK_TOO_NARROW: &str = "This hunk cannot be displayed: the terminal is to
 /// Terminals reordering bidirectional text do it for the whole row. Without it, the punctuation
 /// and numbers next to a right-to-left text (like Persian) would be moved with it, even from
 /// another column, and a row starting with a right-to-left text may be displayed right-to-left.
-const LEFT_TO_RIGHT_MARK: char = '\u{200e}';
+pub(crate) const LEFT_TO_RIGHT_MARK: char = '\u{200e}';
 
 /// Number of rows of the status bar, on the last line of the screen.
 pub const STATUS_BAR_HEIGHT: u16 = 1;
@@ -1073,13 +1073,18 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use ratatui::Terminal;
-    use ratatui::backend::Backend;
     use ratatui::backend::TestBackend;
     use ratatui::style::Color;
     use ratatui::style::Modifier;
 
     use super::*;
     use crate::fake;
+    use crate::test_support::backend_without_left_to_right_marks;
+    use crate::test_support::header_row_indexes;
+    use crate::test_support::rows_of;
+    use crate::test_support::short_commits;
+    use crate::test_support::unknown_settings_error_modal;
+    use crate::test_support::without_left_to_right_marks;
     use crate::theme::Theme;
 
     fn commit_rows(commit: &Commit, width: u16, theme: &Theme) -> Vec<Row> {
@@ -1157,16 +1162,6 @@ mod tests {
         [Theme::dark(), Theme::light()]
     }
 
-    /// `buffer`, without the left-to-right marks, which are invisible in the snapshots.
-    fn without_left_to_right_marks(buffer: &Buffer) -> Buffer {
-        let mut buffer = buffer.clone();
-        buffer.content.iter_mut().for_each(|cell| {
-            let symbol = cell.symbol().replace(LEFT_TO_RIGHT_MARK, "");
-            cell.set_symbol(&symbol);
-        });
-        buffer
-    }
-
     /// The screen displaying `commits`, without the left-to-right marks.
     fn render(
         commits: &[Commit],
@@ -1219,22 +1214,6 @@ mod tests {
             theme,
         );
         backend_without_left_to_right_marks(&buffer)
-    }
-
-    /// A backend displaying `buffer`, without the left-to-right marks.
-    fn backend_without_left_to_right_marks(buffer: &Buffer) -> TestBackend {
-        let buffer = without_left_to_right_marks(buffer);
-        let width = buffer.area.width;
-        let mut backend = TestBackend::new(width, buffer.area.height);
-        let cells = buffer.content.iter().enumerate().map(|(cell_index, cell)| {
-            let (x, y) = (
-                cell_index % usize::from(width),
-                cell_index / usize::from(width),
-            );
-            (x as u16, y as u16, cell)
-        });
-        backend.draw(cells).unwrap();
-        backend
     }
 
     /// The screen displaying `commits`, with the left-to-right marks, and the viewport after the
@@ -1297,16 +1276,6 @@ mod tests {
     /// matter.
     fn short_commit() -> Commit {
         fake::ltr_then_rtl_summary()
-    }
-
-    /// 3 fake commits displayed on at least 6 rows each, for the tests displaying several commits
-    /// (some of them move the cursor 3 rows below a header, inside the same commit).
-    fn short_commits() -> [Commit; 3] {
-        [
-            fake::ltr_then_rtl_summary(),
-            fake::rtl_summary(),
-            fake::rtl_then_ltr_summary(),
-        ]
     }
 
     /// The order of the commits is kept: they are given in reverse topological order (oldest
@@ -2229,30 +2198,6 @@ mod tests {
         });
     }
 
-    /// Index of the first row of the header of each commit of `commits`, on a screen `width`
-    /// columns wide.
-    fn header_row_indexes(commits: &[Commit], width: u16) -> Vec<usize> {
-        commits
-            .iter()
-            .scan(0, |next_header_row_index, commit| {
-                let header_row_index = *next_header_row_index;
-                *next_header_row_index += commit_rows(commit, width, &Theme::monochrome()).len();
-                Some(header_row_index)
-            })
-            .collect()
-    }
-
-    /// All the rows of `commits`, on a screen `width` columns wide.
-    fn rows_of(commits: &[Commit], width: u16) -> Vec<Row> {
-        rows(
-            commits,
-            width,
-            &Theme::monochrome(),
-            &DateDisplay::for_snapshots(),
-        )
-        .unwrap()
-    }
-
     /// A viewport whose first row and cursor are the row `row_index`.
     fn viewport_on(row_index: usize) -> Viewport {
         Viewport {
@@ -2762,22 +2707,6 @@ mod tests {
         commit.files[0].path = "a\u{a0}b".into();
         let rows = commit_rows(&commit, 110, &Theme::monochrome());
         assert_eq!(text_of_row(&rows[5]).0, "a⍽b");
-    }
-
-    /// An error modal displaying 2 unrecognized settings of the config file.
-    fn unknown_settings_error_modal() -> ErrorModal {
-        let unknown_setting = |key: &str, value: &str, line_number| UnknownSetting {
-            key: key.to_string(),
-            value: value.parse().unwrap(),
-            line_number,
-        };
-        ErrorModal::UnknownSettings {
-            path: "/home/alice/.config/reedi/config.toml".into(),
-            unknown_settings: vec![
-                unknown_setting("scrolloff", "3", 3),
-                unknown_setting("keys", "{ quit = \"q\", down = \"j\", up = \"k\" }", 5),
-            ],
-        }
     }
 
     /// The position of the top left corner of the error modal displayed on `backend`.

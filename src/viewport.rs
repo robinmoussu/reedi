@@ -153,10 +153,7 @@ impl Viewport {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn viewport(cursor: usize, top: usize) -> Viewport {
-        Viewport { cursor, top }
-    }
+    use crate::test_support::viewport;
 
     #[test]
     fn cursor_stops_on_the_first_and_last_rows() {

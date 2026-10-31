@@ -14,6 +14,8 @@ pub mod pairing;
 pub mod settings;
 #[cfg(test)]
 mod test_git;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub mod theme;
 pub mod view;
 pub mod viewport;

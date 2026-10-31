@@ -5,20 +5,18 @@
 //! (which has its own unit tests too).
 
 use ratatui::Terminal;
-use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
-use reedi::config::UnknownSetting;
 use reedi::date::DateDisplay;
 use reedi::fake;
 use reedi::model::Commit;
+use reedi::test_support::backend_without_left_to_right_marks;
+use reedi::test_support::rows_of;
+use reedi::test_support::unknown_settings_error_modal;
 use reedi::theme::Theme;
 use reedi::view;
 use reedi::view::ErrorModal;
 use reedi::view::Mode;
 use reedi::viewport::Viewport;
-
-/// Invisible in the snapshots, so removed from them.
-const LEFT_TO_RIGHT_MARK: char = '\u{200e}';
 
 /// The text of the screen `width` × `height` displaying `commit` and `error_modal` from
 /// `viewport`, without the left-to-right marks, and without its last row, the status bar.
@@ -48,52 +46,10 @@ fn screen(
             )
         })
         .unwrap();
-    let mut buffer = terminal.backend().buffer().clone();
-    buffer.content.iter_mut().for_each(|cell| {
-        let symbol = cell.symbol().replace(LEFT_TO_RIGHT_MARK, "");
-        cell.set_symbol(&symbol);
-    });
-    let mut backend = TestBackend::new(width, height);
-    let cells = buffer.content.iter().enumerate().map(|(cell_index, cell)| {
-        let (x, y) = (
-            cell_index % usize::from(width),
-            cell_index / usize::from(width),
-        );
-        (x as u16, y as u16, cell)
-    });
-    backend.draw(cells).unwrap();
-    let screen = backend.to_string();
+    let screen = backend_without_left_to_right_marks(terminal.backend().buffer()).to_string();
     let mut rows: Vec<_> = screen.lines().collect();
     rows.pop();
     rows.join("\n")
-}
-
-/// The number of rows displaying `commit` on a screen `width` columns wide.
-fn rows_count(commit: &Commit, width: u16) -> usize {
-    view::rows(
-        std::slice::from_ref(commit),
-        width,
-        &Theme::monochrome(),
-        &DateDisplay::for_snapshots(),
-    )
-    .unwrap()
-    .len()
-}
-
-/// An error modal displaying 2 unrecognized settings of the config file.
-fn unknown_settings_error_modal() -> ErrorModal {
-    let unknown_setting = |key: &str, value: &str, line_number| UnknownSetting {
-        key: key.to_string(),
-        value: value.parse().unwrap(),
-        line_number,
-    };
-    ErrorModal::UnknownSettings {
-        path: "/home/alice/.config/reedi/config.toml".into(),
-        unknown_settings: vec![
-            unknown_setting("scrolloff", "3", 3),
-            unknown_setting("keys", "{ quit = \"q\", down = \"j\", up = \"k\" }", 5),
-        ],
-    }
 }
 
 #[test]
@@ -113,7 +69,7 @@ fn small_screen_is_wrapped_and_cropped() {
 fn screen_scrolled_to_the_end_displays_the_last_rows() {
     let commit = fake::scrolloff_rename();
     let viewport = Viewport {
-        cursor: rows_count(&commit, 110) - 1,
+        cursor: rows_of(std::slice::from_ref(&commit), 110).len() - 1,
         top: 0,
     };
     insta::assert_snapshot!(screen(commit, 110, 26, viewport, None));
@@ -122,7 +78,7 @@ fn screen_scrolled_to_the_end_displays_the_last_rows() {
 #[test]
 fn all_kinds_of_file_changes_are_displayed() {
     let commit = fake::file_changes();
-    let height = rows_count(&commit, 110) + 1;
+    let height = rows_of(std::slice::from_ref(&commit), 110).len() + 1;
     let viewport = Viewport { cursor: 5, top: 0 };
     insta::assert_snapshot!(screen(commit, 110, height as u16, viewport, None));
 }
