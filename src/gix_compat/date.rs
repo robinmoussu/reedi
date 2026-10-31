@@ -73,19 +73,12 @@ pub fn human(time: Time, now: &Zoned, local: bool, locale: &Locale) -> String {
 
     let same_year = date.year() == now.year();
     let same_month = same_year && date.month() == now.month();
-    let mut hide_date = false;
-    let mut hide_weekday = false;
-    if same_month && date.day() == now.day() {
-        hide_date = true;
-        hide_weekday = true;
-    } else if same_month && date.day() < now.day() && date.day() + 5 > now.day() {
-        // A few days ago: only the weekday.
-        hide_date = true;
-    }
     // Today: only the relative time.
-    if hide_weekday {
+    if same_month && date.day() == now.day() {
         return relative(time, now, locale);
     }
+    // A few days ago: only the weekday.
+    let hide_date = same_month && date.day() < now.day() && date.day() + 5 > now.day();
 
     let hide_timezone = local || date.offset() == now.offset() || !hide_date;
     let mut text = String::new();
