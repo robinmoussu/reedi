@@ -7,7 +7,7 @@
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
-use reedi::config::UnknownKey;
+use reedi::config::UnknownSetting;
 use reedi::date::DateDisplay;
 use reedi::fake;
 use reedi::model::Commit;
@@ -80,18 +80,18 @@ fn rows_count(commit: &Commit, width: u16) -> usize {
     .len()
 }
 
-/// An error modal displaying 2 unknown keys of the config file.
-fn unknown_keys_error_modal() -> ErrorModal {
-    let unknown_key = |key: &str, value: &str, line_number| UnknownKey {
+/// An error modal displaying 2 unrecognized settings of the config file.
+fn unknown_settings_error_modal() -> ErrorModal {
+    let unknown_setting = |key: &str, value: &str, line_number| UnknownSetting {
         key: key.to_string(),
         value: value.parse().unwrap(),
         line_number,
     };
-    ErrorModal::UnknownKeys {
+    ErrorModal::UnknownSettings {
         path: "/home/alice/.config/reedi/config.toml".into(),
-        unknown_keys: vec![
-            unknown_key("scrolloff", "3", 3),
-            unknown_key("keys", "{ quit = \"q\", down = \"j\", up = \"k\" }", 5),
+        unknown_settings: vec![
+            unknown_setting("scrolloff", "3", 3),
+            unknown_setting("keys", "{ quit = \"q\", down = \"j\", up = \"k\" }", 5),
         ],
     }
 }
@@ -156,7 +156,7 @@ fn invisible_characters_of_the_diff_lines_are_replaced() {
 
 #[test]
 fn error_modal_is_displayed_over_the_commits() {
-    let error_modal = unknown_keys_error_modal();
+    let error_modal = unknown_settings_error_modal();
     let viewport = Viewport { cursor: 5, top: 0 };
     insta::assert_snapshot!(screen(
         fake::file_changes(),
@@ -169,7 +169,7 @@ fn error_modal_is_displayed_over_the_commits() {
 
 #[test]
 fn long_lines_of_the_error_modal_are_wrapped() {
-    let error_modal = unknown_keys_error_modal();
+    let error_modal = unknown_settings_error_modal();
     let viewport = Viewport { cursor: 5, top: 0 };
     insta::assert_snapshot!(screen(
         fake::file_changes(),
