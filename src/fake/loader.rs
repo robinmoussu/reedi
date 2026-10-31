@@ -26,6 +26,10 @@ pub const METADATA_FILE: &str = "metadata.toml";
 /// `git commit --date`, it is always absolute, like the dates stored by git.
 const DATE_FORMAT: &str = "%Y-%m-%d %H:%M:%S %z";
 
+/// The number of digits of the index starting the names of the folders and files of the fake
+/// commits (`01_`).
+const INDEX_DIGITS_COUNT: usize = 2;
+
 /// The number of hexadecimal characters of a full hash (SHA-1).
 const HASH_LEN: usize = 40;
 
@@ -173,30 +177,30 @@ impl Decorations {
     }
 }
 
+/// The index starting `name` (`INDEX_DIGITS_COUNT` digits followed by `_`), and the rest of
+/// `name`.
+fn split_index(name: &str) -> Option<(usize, &str)> {
+    let digits = name.get(..INDEX_DIGITS_COUNT)?;
+    let rest = name.get(INDEX_DIGITS_COUNT..)?.strip_prefix('_')?;
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((digits.parse().ok()?, rest))
+}
+
 /// The index and the description of the commit of the folder `name`.
 #[cfg(any(test, feature = "test-support"))]
 pub fn parse_folder_name(name: &str) -> Result<(usize, &str), FakeDataError> {
-    let invalid = || FakeDataError::InvalidFolderName(name.to_string());
-    let (index, description) = name.split_at_checked(3).ok_or_else(invalid)?;
-    let digits = index.strip_suffix('_').ok_or_else(invalid)?;
-    if digits.len() != 2
-        || !digits.bytes().all(|byte| byte.is_ascii_digit())
-        || description.is_empty()
-    {
-        return Err(invalid());
+    match split_index(name) {
+        Some((index, description)) if !description.is_empty() => Ok((index, description)),
+        _ => Err(FakeDataError::InvalidFolderName(name.to_string())),
     }
-    Ok((digits.parse().map_err(|_| invalid())?, description))
 }
 
 /// The id, the version and the path of the file `name`.
 pub fn parse_file_name(name: &str) -> Result<FileName, FakeDataError> {
     let invalid = || FakeDataError::InvalidFileName(name.to_string());
-    let (id, rest) = name.split_at_checked(3).ok_or_else(invalid)?;
-    let digits = id.strip_suffix('_').ok_or_else(invalid)?;
-    if digits.len() != 2 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(invalid());
-    }
-    let id: usize = digits.parse().map_err(|_| invalid())?;
+    let (id, rest) = split_index(name).ok_or_else(invalid)?;
     let (version, path) = if let Some(path) = rest.strip_prefix("before_") {
         (Version::Before, path)
     } else if let Some(path) = rest.strip_prefix("after_") {
