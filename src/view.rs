@@ -1,6 +1,8 @@
 //! Rendering of the commits and of the status bar.
 
 use std::iter;
+use std::ops::Div;
+use std::ops::Sub;
 use std::path::PathBuf;
 
 use gix::bstr::ByteSlice;
@@ -176,8 +178,7 @@ impl Row {
                 buf.set_string(area.x, area.y, rule, *style);
             }
             Content::Split { left, right } => {
-                let left_width = area.width / 2;
-                let right_width = area.width - left_width;
+                let (left_width, right_width) = split_in_half(area.width);
                 set_line(buf, area.x, area.y, left, left_width);
                 set_line(buf, area.x + left_width, area.y, right, right_width);
                 if left_width > 0 {
@@ -496,6 +497,17 @@ fn missing_newline_rows(
         .collect())
 }
 
+/// Widths of the left and right halves of a split row `width` columns wide: the right one gets
+/// the extra column of an odd width.
+fn split_in_half<Width>(width: impl Into<Width>) -> (Width, Width)
+where
+    Width: Copy + From<u8> + Div<Output = Width> + Sub<Output = Width>,
+{
+    let width = width.into();
+    let left_width = width / Width::from(2);
+    (left_width, width - left_width)
+}
+
 /// Width of the text area of a half of a split row, `width` columns wide, whose line number column
 /// is `number_width` wide.
 fn text_width(width: usize, number_width: usize) -> usize {
@@ -620,8 +632,7 @@ impl<'a> Rows<'a> {
     fn hunk_rows(&self, hunk: &Hunk, final_cr: FinalCr) -> Result<Vec<Row>, TooNarrow> {
         let number_width = hunk.line_number_width();
         let numbers = hunk.line_numbers();
-        let left_width = usize::from(self.width / 2);
-        let right_width = usize::from(self.width) - left_width;
+        let (left_width, right_width) = split_in_half::<usize>(self.width);
         let half = |index: Option<usize>, number: fn(&LineNumbers) -> Option<usize>, width| {
             index.map_or(Ok(Vec::new()), |index| {
                 half_rows(
