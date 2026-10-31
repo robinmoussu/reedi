@@ -22,7 +22,7 @@ use ratatui::widgets::Widget;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
-use crate::config::UnknownKey;
+use crate::config::UnknownSetting;
 use crate::date::DateDisplay;
 use crate::invisible::FinalCr;
 use crate::invisible::Kind;
@@ -840,16 +840,16 @@ fn cropped(line: Line<'static>, width: usize) -> Line<'static> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ErrorModal {
     /// The keys of the config file at `path` that are not settings.
-    UnknownKeys {
+    UnknownSettings {
         path: PathBuf,
-        unknown_keys: Vec<UnknownKey>,
+        unknown_settings: Vec<UnknownSetting>,
     },
 }
 
 impl ErrorModal {
     fn title(&self) -> String {
         match self {
-            ErrorModal::UnknownKeys { path, .. } => {
+            ErrorModal::UnknownSettings { path, .. } => {
                 format!("Unknown key in config file: {}", path.display())
             }
         }
@@ -857,9 +857,13 @@ impl ErrorModal {
 
     fn lines(&self) -> Vec<String> {
         match self {
-            ErrorModal::UnknownKeys { unknown_keys, .. } => unknown_keys
+            ErrorModal::UnknownSettings {
+                unknown_settings, ..
+            } => unknown_settings
                 .iter()
-                .map(|unknown_key| format!("line {}: {unknown_key}", unknown_key.line_number))
+                .map(|unknown_setting| {
+                    format!("line {}: {unknown_setting}", unknown_setting.line_number)
+                })
                 .collect(),
         }
     }
@@ -2760,18 +2764,18 @@ mod tests {
         assert_eq!(text_of_row(&rows[5]).0, "a⍽b");
     }
 
-    /// An error modal displaying 2 unknown keys of the config file.
-    fn unknown_keys_error_modal() -> ErrorModal {
-        let unknown_key = |key: &str, value: &str, line_number| UnknownKey {
+    /// An error modal displaying 2 unrecognized settings of the config file.
+    fn unknown_settings_error_modal() -> ErrorModal {
+        let unknown_setting = |key: &str, value: &str, line_number| UnknownSetting {
             key: key.to_string(),
             value: value.parse().unwrap(),
             line_number,
         };
-        ErrorModal::UnknownKeys {
+        ErrorModal::UnknownSettings {
             path: "/home/alice/.config/reedi/config.toml".into(),
-            unknown_keys: vec![
-                unknown_key("scrolloff", "3", 3),
-                unknown_key("keys", "{ quit = \"q\", down = \"j\", up = \"k\" }", 5),
+            unknown_settings: vec![
+                unknown_setting("scrolloff", "3", 3),
+                unknown_setting("keys", "{ quit = \"q\", down = \"j\", up = \"k\" }", 5),
             ],
         }
     }
@@ -2789,7 +2793,7 @@ mod tests {
 
     #[test]
     fn border_of_the_error_modal_has_the_error_style_and_its_title_in_reverse_video() {
-        let error_modal = unknown_keys_error_modal();
+        let error_modal = unknown_settings_error_modal();
         themes().iter().for_each(|theme| {
             let backend = render_with_error_modal(
                 &[short_commit()],
@@ -2822,7 +2826,7 @@ mod tests {
 
     #[test]
     fn title_of_the_error_modal_is_in_reverse_video_without_colors() {
-        let error_modal = unknown_keys_error_modal();
+        let error_modal = unknown_settings_error_modal();
         let backend = render_with_error_modal(
             &[short_commit()],
             110,
@@ -2843,7 +2847,7 @@ mod tests {
 
     #[test]
     fn bottom_border_of_the_error_modal_tells_how_to_close_it() {
-        let error_modal = unknown_keys_error_modal();
+        let error_modal = unknown_settings_error_modal();
         themes().iter().for_each(|theme| {
             let backend = render_with_error_modal(
                 &[short_commit()],
@@ -2878,7 +2882,7 @@ mod tests {
 
     #[test]
     fn inside_of_the_error_modal_has_the_default_background() {
-        let error_modal = unknown_keys_error_modal();
+        let error_modal = unknown_settings_error_modal();
         [Theme::dark(), Theme::light(), Theme::monochrome()]
             .iter()
             .for_each(|theme| {

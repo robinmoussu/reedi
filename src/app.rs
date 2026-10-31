@@ -14,7 +14,7 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal;
 use ratatui::crossterm::terminal::EnterAlternateScreen;
 
-use crate::config::UnknownKey;
+use crate::config::UnknownSetting;
 use crate::date::DateDisplay;
 use crate::fake;
 use crate::model::Commit;
@@ -157,19 +157,22 @@ fn jump_unless_already_on(row_index: usize, viewport: &mut Viewport, len: usize,
     }
 }
 
-/// Display the commits with `settings` until `q` or `ctrl+c` is pressed, and the `unknown_keys` of
-/// the config file (its path, and at least one key) in an error modal over them, if any, until a
-/// key is pressed.
+/// Display the commits with `settings` until `q` or `ctrl+c` is pressed, and the
+/// `unknown_settings` of the config file (its path, and at least one setting) in an error modal
+/// over them, if any, until a key is pressed.
 ///
 /// Like `less`, the alternate screen is used, and the screen is redrawn when its size changes.
 /// Fails if a text area outside of the hunks is too narrow to display a grapheme cluster of its
 /// line.
 pub fn run(
     settings: &Settings,
-    unknown_keys: Option<(PathBuf, Vec<UnknownKey>)>,
+    unknown_settings: Option<(PathBuf, Vec<UnknownSetting>)>,
 ) -> io::Result<()> {
     let mut error_modal =
-        unknown_keys.map(|(path, unknown_keys)| ErrorModal::UnknownKeys { path, unknown_keys });
+        unknown_settings.map(|(path, unknown_settings)| ErrorModal::UnknownSettings {
+            path,
+            unknown_settings,
+        });
     let commits = fake::all();
     let mut rows = Vec::new();
     let mut size = None;
@@ -459,9 +462,9 @@ mod tests {
     }
 
     fn error_modal() -> Option<ErrorModal> {
-        Some(ErrorModal::UnknownKeys {
+        Some(ErrorModal::UnknownSettings {
             path: "config.toml".into(),
-            unknown_keys: Vec::new(),
+            unknown_settings: Vec::new(),
         })
     }
 
