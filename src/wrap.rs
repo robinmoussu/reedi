@@ -89,9 +89,7 @@ fn place_if_fits(item: &Item, column: &mut usize, width: usize) -> bool {
     if *column + item_width <= width {
         *column += item_width;
         true
-    } else if matches!(item.cluster.content, Content::Contextual(Contextual::Tab))
-        && *column < width
-    {
+    } else if item.cluster.is_tab() && *column < width {
         *column = width;
         true
     } else {
@@ -161,7 +159,7 @@ fn layout(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
 fn blanks_count<'a>(items: impl Iterator<Item = &'a Item>) -> usize {
     items
         .take_while(|item| item.cluster.is_contextual())
-        .filter(|item| !matches!(item.cluster.content, Content::Contextual(Contextual::Tab)))
+        .filter(|item| !item.cluster.is_tab())
         .count()
 }
 
@@ -214,20 +212,14 @@ impl RowBreaks {
     fn wrap(&self, row: &[Item], i: usize) -> Wrap {
         let item = &row[i];
         // The only space or U+2800 around a break.
-        let single = |blanks: Option<usize>| {
-            blanks == Some(1)
-                && !matches!(item.cluster.content, Content::Contextual(Contextual::Tab))
-        };
+        let single = |blanks: Option<usize>| blanks == Some(1) && !item.cluster.is_tab();
         let ends_row = i >= self.ending_whitespace_start;
         let starts_row = i < self.leading_whitespace_end;
         if item.markup {
             Wrap::None
         } else if ends_row && single(self.blanks_after) {
             Wrap::Single
-        } else if ends_row
-            && (!matches!(item.cluster.content, Content::Contextual(Contextual::Tab))
-                || i + 1 == row.len())
-        {
+        } else if ends_row && (!item.cluster.is_tab() || i + 1 == row.len()) {
             Wrap::BeforeBreak
         } else if starts_row && single(self.blanks_before) {
             Wrap::Single

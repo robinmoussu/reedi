@@ -119,6 +119,10 @@ impl Cluster {
         matches!(self.content, Content::Contextual(_))
     }
 
+    pub fn is_tab(&self) -> bool {
+        matches!(self.content, Content::Contextual(Contextual::Tab))
+    }
+
     /// Number of columns used when displayed at `column`, if it is not next to a break.
     ///
     /// Next to a break, it never uses more columns (see [`Cluster::push`]). This is what allows
