@@ -13,13 +13,6 @@ use jiff::tz::TimeZone;
 
 use crate::gix_compat::locale::Locale;
 
-/// The English names of the weekdays and months, never translated by git, starting with Sunday
-/// and January.
-pub const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-pub const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
 /// The `strftime` format of a date as git stores it (`--date=raw`): `1791808327 +0200`.
 pub const RAW_FORMAT: &str = "%s %z";
 
@@ -76,14 +69,7 @@ pub fn relative(time: Time, now: &Zoned, locale: &Locale) -> String {
 /// relative for recent dates, otherwise without the parts that are the same as `now`. If `local`,
 /// `time` is displayed in the timezone of `now`.
 pub fn human(time: Time, now: &Zoned, local: bool, locale: &Locale) -> String {
-    let timezone = if local {
-        now.time_zone().clone()
-    } else {
-        Offset::from_seconds(time.offset).map_or(TimeZone::UTC, TimeZone::fixed)
-    };
-    let date = Timestamp::from_second(time.seconds)
-        .unwrap_or_default()
-        .to_zoned(timezone);
+    let date = to_zoned(time, now, local);
 
     let same_year = date.year() == now.year();
     let same_month = same_year && date.month() == now.month();
@@ -103,24 +89,36 @@ pub fn human(time: Time, now: &Zoned, local: bool, locale: &Locale) -> String {
 
     let hide_timezone = local || date.offset() == now.offset() || !hide_date;
     let mut text = String::new();
+    // The names of the weekdays and months of `jiff` are in English, like the ones of git, which
+    // never translates them.
     if same_year {
-        let weekday = usize::try_from(date.weekday().to_sunday_zero_offset()).unwrap_or_default();
-        text += &format!("{} ", WEEKDAYS[weekday]);
+        text += &date.strftime("%a ").to_string();
     }
     if !hide_date {
-        let month = usize::try_from(date.month() - 1).unwrap_or_default();
-        text += &format!("{} {} ", MONTHS[month], date.day());
+        text += &date.strftime("%b %-d ").to_string();
     }
     if same_year {
-        text += &format!("{:02}:{:02}", date.hour(), date.minute());
+        text += &date.strftime("%H:%M").to_string();
     } else {
         text.truncate(text.trim_end().len());
-        text += &format!(" {}", date.year());
+        text += &date.strftime(" %Y").to_string();
     }
     if !hide_timezone {
-        text += &format!(" {}", date.strftime("%z"));
+        text += &date.strftime(" %z").to_string();
     }
     text
+}
+
+/// `time` in the timezone of `now` if `local`, otherwise with its own offset.
+pub fn to_zoned(time: Time, now: &Zoned, local: bool) -> Zoned {
+    let timezone = if local {
+        now.time_zone().clone()
+    } else {
+        Offset::from_seconds(time.offset).map_or(TimeZone::UTC, TimeZone::fixed)
+    };
+    Timestamp::from_second(time.seconds)
+        .unwrap_or_default()
+        .to_zoned(timezone)
 }
 
 /// `input` parsed by `git`, like `git commit --date` does (`approxidate` in git's `date.c`, which

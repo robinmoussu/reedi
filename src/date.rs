@@ -5,15 +5,14 @@ use std::fmt;
 use std::str::FromStr;
 
 use gix::date::Time;
-use jiff::Timestamp;
 use jiff::Zoned;
 use jiff::tz::Offset;
+#[cfg(any(test, feature = "test-support"))]
 use jiff::tz::TimeZone;
 
 use crate::gix_compat;
-use crate::gix_compat::date::MONTHS;
 use crate::gix_compat::date::RAW_FORMAT;
-use crate::gix_compat::date::WEEKDAYS;
+use crate::gix_compat::date::to_zoned;
 use crate::gix_compat::locale::Locale;
 
 /// Prefix of the date formats that depend on whether the output is a terminal.
@@ -205,51 +204,22 @@ pub fn parse(input: &str, now: &Zoned) -> Result<Time, DateParseError> {
 /// `time`, displayed with `format` like `git log --date=` does.
 pub fn display(time: Time, format: &DateFormat, environment: &Environment) -> String {
     let now = &environment.now;
-    let timestamp = Timestamp::from_second(time.seconds).unwrap_or_default();
-    let zone = if format.local {
-        now.time_zone().clone()
-    } else {
-        Offset::from_seconds(time.offset).map_or(TimeZone::UTC, TimeZone::fixed)
-    };
-    let zoned = timestamp.to_zoned(zone);
-    let offset_hhmm = zoned.strftime("%z");
-    let weekday = WEEKDAYS[usize::try_from(zoned.weekday().to_sunday_zero_offset()).unwrap_or(0)];
-    let month = MONTHS[usize::try_from(zoned.month() - 1).unwrap_or(0)];
-    let (year, day, month_number) = (zoned.year(), zoned.day(), zoned.month());
-    let time_of_day = format!(
-        "{:02}:{:02}:{:02}",
-        zoned.hour(),
-        zoned.minute(),
-        zoned.second()
-    );
+    let zoned = to_zoned(time, now, format.local);
+    // The names of the weekdays and months of `jiff` are in English, like the ones of git, which
+    // never translates them.
+    let formatted = |format: &str| zoned.strftime(format).to_string();
     match &format.style {
         DateStyle::Unix => time.seconds.to_string(),
-        DateStyle::Raw => zoned.strftime(RAW_FORMAT).to_string(),
+        DateStyle::Raw => formatted(RAW_FORMAT),
         DateStyle::Relative => gix_compat::date::relative(time, now, &environment.locale),
         DateStyle::Human => gix_compat::date::human(time, now, format.local, &environment.locale),
-        DateStyle::Short => format!("{year:04}-{month_number:02}-{day:02}"),
-        DateStyle::Iso => {
-            format!("{year:04}-{month_number:02}-{day:02} {time_of_day} {offset_hhmm}")
-        }
-        DateStyle::IsoStrict => {
-            let offset = if zoned.offset() == Offset::UTC {
-                "Z".to_string()
-            } else {
-                zoned.strftime("%:z").to_string()
-            };
-            format!("{year:04}-{month_number:02}-{day:02}T{time_of_day}{offset}")
-        }
-        DateStyle::Rfc => {
-            format!("{weekday}, {day} {month} {year} {time_of_day} {offset_hhmm}")
-        }
-        DateStyle::Default => {
-            let date = format!("{weekday} {month} {day} {time_of_day} {year}");
-            if format.local {
-                date
-            } else {
-                format!("{date} {offset_hhmm}")
-            }
-        }
+        DateStyle::Short => formatted("%Y-%m-%d"),
+        DateStyle::Iso => formatted("%Y-%m-%d %H:%M:%S %z"),
+        DateStyle::IsoStrict if zoned.offset() == Offset::UTC => formatted("%Y-%m-%dT%H:%M:%SZ"),
+        DateStyle::IsoStrict => formatted("%Y-%m-%dT%H:%M:%S%:z"),
+        DateStyle::Rfc => formatted("%a, %-d %b %Y %H:%M:%S %z"),
+        DateStyle::Default if format.local => formatted("%a %b %-d %H:%M:%S %Y"),
+        DateStyle::Default => formatted("%a %b %-d %H:%M:%S %Y %z"),
         DateStyle::Strftime(pattern) => environment.locale.strftime(pattern, &zoned, format.local),
     }
 }
