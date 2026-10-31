@@ -12,8 +12,8 @@ use jiff::tz::TimeZone;
 
 use crate::gix_compat;
 use crate::gix_compat::date::MONTHS;
+use crate::gix_compat::date::RAW_FORMAT;
 use crate::gix_compat::date::WEEKDAYS;
-use crate::gix_compat::date::hhmm;
 use crate::gix_compat::locale::Locale;
 
 /// Prefix of the date formats that depend on whether the output is a terminal.
@@ -212,7 +212,7 @@ pub fn display(time: Time, format: &DateFormat, environment: &Environment) -> St
         Offset::from_seconds(time.offset).map_or(TimeZone::UTC, TimeZone::fixed)
     };
     let zoned = timestamp.to_zoned(zone);
-    let offset_hhmm = hhmm(zoned.offset().seconds());
+    let offset_hhmm = zoned.strftime("%z");
     let weekday = WEEKDAYS[usize::try_from(zoned.weekday().to_sunday_zero_offset()).unwrap_or(0)];
     let month = MONTHS[usize::try_from(zoned.month() - 1).unwrap_or(0)];
     let (year, day, month_number) = (zoned.year(), zoned.day(), zoned.month());
@@ -224,30 +224,30 @@ pub fn display(time: Time, format: &DateFormat, environment: &Environment) -> St
     );
     match &format.style {
         DateStyle::Unix => time.seconds.to_string(),
-        DateStyle::Raw => format!("{} {offset_hhmm:+05}", time.seconds),
+        DateStyle::Raw => zoned.strftime(RAW_FORMAT).to_string(),
         DateStyle::Relative => gix_compat::date::relative(time, now, &environment.locale),
         DateStyle::Human => gix_compat::date::human(time, now, format.local, &environment.locale),
         DateStyle::Short => format!("{year:04}-{month_number:02}-{day:02}"),
         DateStyle::Iso => {
-            format!("{year:04}-{month_number:02}-{day:02} {time_of_day} {offset_hhmm:+05}")
+            format!("{year:04}-{month_number:02}-{day:02} {time_of_day} {offset_hhmm}")
         }
         DateStyle::IsoStrict => {
-            let offset = if offset_hhmm == 0 {
+            let offset = if zoned.offset() == Offset::UTC {
                 "Z".to_string()
             } else {
-                format!("{:+03}:{:02}", offset_hhmm / 100, (offset_hhmm % 100).abs())
+                zoned.strftime("%:z").to_string()
             };
             format!("{year:04}-{month_number:02}-{day:02}T{time_of_day}{offset}")
         }
         DateStyle::Rfc => {
-            format!("{weekday}, {day} {month} {year} {time_of_day} {offset_hhmm:+05}")
+            format!("{weekday}, {day} {month} {year} {time_of_day} {offset_hhmm}")
         }
         DateStyle::Default => {
             let date = format!("{weekday} {month} {day} {time_of_day} {year}");
             if format.local {
                 date
             } else {
-                format!("{date} {offset_hhmm:+05}")
+                format!("{date} {offset_hhmm}")
             }
         }
         DateStyle::Strftime(pattern) => environment.locale.strftime(pattern, &zoned, format.local),
