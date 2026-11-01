@@ -141,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn log_date_is_unset() {
+    fn unset_log_date_is_none() {
         let (_git, repository) = repository_with_a_commit_at_time(None);
         assert_eq!(log_date_of(&repository).unwrap(), None);
     }

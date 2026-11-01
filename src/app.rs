@@ -589,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn a_command_without_number_has_none() {
+    fn command_without_number_has_no_count() {
         let mut count = Count::default();
         assert_eq!(
             count.apply(&key(KeyCode::Char('G'))),
