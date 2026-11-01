@@ -50,9 +50,7 @@ pub fn file(
         }
         (Some(before), Some(after)) => (
             after.path,
-            FileChange::Renamed {
-                from: before.path.to_owned(),
-            },
+            FileChange::Renamed { from: before.path.to_owned() },
         ),
         (None, None) => panic!("the file exists in at least one version"),
     };
@@ -305,10 +303,7 @@ mod tests {
 
     #[test]
     fn files_that_are_not_valid_utf8_have_no_hunks() {
-        let invalid = FileState {
-            path: "a".into(),
-            content: b"caf\xe9\n",
-        };
+        let invalid = FileState { path: "a".into(), content: b"caf\xe9\n" };
         let diff = file(state("a", "cafe\n"), Some(invalid), false, CONTEXT);
         assert_eq!(diff.content, FileContentType::InvalidUtf8);
         assert!(diff.hunks.is_empty());

@@ -247,9 +247,7 @@ mod tests {
         let changes: Vec<_> = files.iter().map(|file| &file.change).collect();
         assert!(changes.contains(&&FileChange::Added));
         assert!(changes.contains(&&FileChange::Deleted));
-        assert!(changes.contains(&&FileChange::Renamed {
-            from: "src/hash.rs".into()
-        }));
+        assert!(changes.contains(&&FileChange::Renamed { from: "src/hash.rs".into() }));
         let contents: Vec<_> = files.iter().map(|file| file.content).collect();
         assert!(contents.contains(&FileContentType::Binary));
         assert!(contents.contains(&FileContentType::InvalidUtf8));

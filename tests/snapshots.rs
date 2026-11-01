@@ -97,10 +97,7 @@ fn long_lines_are_wrapped_on_a_narrow_screen() {
 
 #[test]
 fn invisible_characters_of_the_diff_lines_are_replaced() {
-    let viewport = Viewport {
-        cursor: 30,
-        top: 20,
-    };
+    let viewport = Viewport { cursor: 30, top: 20 };
     insta::assert_snapshot!(screen(
         fake::invisible_characters(),
         110,

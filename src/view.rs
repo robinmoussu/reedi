@@ -151,10 +151,7 @@ impl Row {
     pub fn anchor(&self) -> Anchor {
         let (half, offset) = match self.start {
             Start::Whole(offset) => (Half::Whole, offset),
-            Start::Split {
-                right: Some(offset),
-                ..
-            } => (Half::Right, offset),
+            Start::Split { right: Some(offset), .. } => (Half::Right, offset),
             Start::Split { left, .. } => (Half::Left, left.unwrap_or(0)),
         };
         Anchor {
@@ -273,10 +270,7 @@ fn wrapped(
 ) -> Result<Vec<(usize, usize, Vec<Span<'static>>)>, TooNarrow> {
     let segments: Vec<_> = parts
         .iter()
-        .map(|part| Segment {
-            text: &part.text,
-            markup: part.markup,
-        })
+        .map(|part| Segment { text: &part.text, markup: part.markup })
         .collect();
     let rows = wrap::wrap(&segments, final_cr, width)?;
     Ok(rows
@@ -688,10 +682,7 @@ impl<'a> Rows<'a> {
                     .map(move |((left_start, left), (right_start, right))| Row {
                         content: Content::Split { left, right },
                         line_index,
-                        start: Start::Split {
-                            left: left_start,
-                            right: right_start,
-                        },
+                        start: Start::Split { left: left_start, right: right_start },
                         commit_index,
                     })
                     .collect::<Vec<_>>()
@@ -774,11 +765,7 @@ impl Widget for RowsView<'_> {
             .skip(self.viewport.top)
             .zip(area.top()..area.bottom())
             .for_each(|((index, row), y)| {
-                let area = Rect {
-                    y,
-                    height: 1,
-                    ..area
-                };
+                let area = Rect { y, height: 1, ..area };
                 row.render(area, buf);
                 if index == self.viewport.cursor {
                     buf.set_style(area, self.theme.cursor);
@@ -861,9 +848,7 @@ impl ErrorModal {
 
     fn lines(&self) -> Vec<String> {
         match self {
-            ErrorModal::UnknownSettings {
-                unknown_settings, ..
-            } => unknown_settings
+            ErrorModal::UnknownSettings { unknown_settings, .. } => unknown_settings
                 .iter()
                 .map(|unknown_setting| {
                     format!("line {}: {unknown_setting}", unknown_setting.line_number)
@@ -1046,14 +1031,7 @@ pub fn draw(
             .areas(frame.area());
     viewport.fit(rows.len(), content.height.into());
     let viewport = *viewport;
-    frame.render_widget(
-        RowsView {
-            rows,
-            viewport,
-            theme,
-        },
-        content,
-    );
+    frame.render_widget(RowsView { rows, viewport, theme }, content);
     let content = if let Some(count) = pending_count {
         pending_count_status(count, theme)
     } else if commits.is_empty() {
@@ -1061,14 +1039,7 @@ pub fn draw(
     } else {
         commit_status(commits, commit_index(rows, viewport.cursor), theme)
     };
-    frame.render_widget(
-        StatusBar {
-            mode,
-            content,
-            theme,
-        },
-        status_bar,
-    );
+    frame.render_widget(StatusBar { mode, content, theme }, status_bar);
     if let Some(error_modal) = error_modal {
         frame.render_widget(ErrorModalView { error_modal, theme }, frame.area());
     }
@@ -1326,10 +1297,7 @@ mod tests {
 
     #[test]
     fn cursor_row_is_highlighted_when_scrolled() {
-        let viewport = Viewport {
-            cursor: 30,
-            top: 20,
-        };
+        let viewport = Viewport { cursor: 30, top: 20 };
         for theme in &themes() {
             let backend = render(&[commit_taller_than_a_screen()], 110, 26, viewport, theme);
             let buffer = backend.buffer();
@@ -1669,20 +1637,8 @@ mod tests {
         assert_eq!(
             starts,
             [
-                (
-                    0,
-                    Start::Split {
-                        left: Some(0),
-                        right: None
-                    }
-                ),
-                (
-                    1,
-                    Start::Split {
-                        left: None,
-                        right: Some(0)
-                    }
-                ),
+                (0, Start::Split { left: Some(0), right: None }),
+                (1, Start::Split { left: None, right: Some(0) }),
             ]
         );
     }
@@ -1817,13 +1773,7 @@ mod tests {
         );
         // It is a line of its own.
         assert_eq!(rows[2].line_index, rows[1].line_index + 1);
-        assert_eq!(
-            rows[2].start,
-            Start::Split {
-                left: Some(0),
-                right: None
-            }
-        );
+        assert_eq!(rows[2].start, Start::Split { left: Some(0), right: None });
     }
 
     #[test]
@@ -1929,9 +1879,7 @@ mod tests {
     fn invalid_utf8_of_the_file_names_is_replaced() {
         let file = FileDiff {
             path: b"caf\xe9.txt".into(),
-            change: FileChange::Renamed {
-                from: b"\xff.txt".into(),
-            },
+            change: FileChange::Renamed { from: b"\xff.txt".into() },
             content: FileContentType::Text,
             hunks: Vec::new(),
         };
@@ -1948,18 +1896,9 @@ mod tests {
         assert_eq!(
             starts,
             [
-                Start::Split {
-                    left: Some(0),
-                    right: Some(0)
-                },
-                Start::Split {
-                    left: Some(5),
-                    right: None
-                },
-                Start::Split {
-                    left: Some(10),
-                    right: None
-                },
+                Start::Split { left: Some(0), right: Some(0) },
+                Start::Split { left: Some(5), right: None },
+                Start::Split { left: Some(10), right: None },
             ]
         );
         assert!(rows.iter().all(|row| row.line_index == 0));
@@ -2070,13 +2009,7 @@ mod tests {
             &DateDisplay::for_snapshots(),
         )
         .unwrap_err();
-        assert_eq!(
-            error,
-            TooNarrow {
-                width: 1,
-                cluster: "日".to_string()
-            }
-        );
+        assert_eq!(error, TooNarrow { width: 1, cluster: "日".to_string() });
         assert!(
             rows(
                 &[fake::scrolloff_rename()],
@@ -2204,10 +2137,7 @@ mod tests {
 
     /// A viewport whose first row and cursor are the row `row_index`.
     fn viewport_on(row_index: usize) -> Viewport {
-        Viewport {
-            cursor: row_index,
-            top: row_index,
-        }
+        Viewport { cursor: row_index, top: row_index }
     }
 
     /// The last row of `backend`, as text.
@@ -2355,10 +2285,7 @@ mod tests {
             status_bar(&render(&commits, 200, 30, viewport, &Theme::monochrome())).trim_end(),
             format!(" Review  {}", expected_commit_status(&commits, 0))
         );
-        let viewport = Viewport {
-            cursor: headers[1] - 1,
-            top: headers[0],
-        };
+        let viewport = Viewport { cursor: headers[1] - 1, top: headers[0] };
         assert_eq!(
             status_bar(&render(&commits, 200, 30, viewport, &Theme::monochrome())).trim_end(),
             format!(" Review  {}", expected_commit_status(&commits, 1))
@@ -3133,21 +3060,12 @@ mod tests {
             &Theme::monochrome(),
         );
         // The rows 16 to 40 are displayed above the status bar.
-        assert_eq!(
-            drawn,
-            Viewport {
-                cursor: 40,
-                top: 16
-            }
-        );
+        assert_eq!(drawn, Viewport { cursor: 40, top: 16 });
     }
 
     #[test]
     fn draw_scrolls_to_display_a_cursor_above_the_screen() {
-        let viewport = Viewport {
-            cursor: 10,
-            top: 20,
-        };
+        let viewport = Viewport { cursor: 10, top: 20 };
         let (_, drawn) = draw_with(
             &[commit_taller_than_a_screen()],
             110,
@@ -3157,23 +3075,14 @@ mod tests {
             /* error_modal */ None,
             &Theme::monochrome(),
         );
-        assert_eq!(
-            drawn,
-            Viewport {
-                cursor: 10,
-                top: 10
-            }
-        );
+        assert_eq!(drawn, Viewport { cursor: 10, top: 10 });
     }
 
     #[test]
     fn draw_does_not_display_empty_space_after_the_last_row() {
         let commits = [commit_taller_than_a_screen()];
         let len = rows_of(&commits, 110).len();
-        let viewport = Viewport {
-            cursor: len - 1,
-            top: len - 1,
-        };
+        let viewport = Viewport { cursor: len - 1, top: len - 1 };
         let (_, drawn) = draw_with(
             &commits,
             110,

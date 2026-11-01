@@ -152,25 +152,16 @@ pub fn parse(text: &str) -> Result<ConfigFile, String> {
         Vec::new()
     } else {
         // Like `toml::from_str`, which cannot be given the keys to look for.
-        UnknownSettings {
-            keys: raw.unknown_settings,
-            text,
-        }
-        .deserialize(toml::Deserializer::parse(text).map_err(to_string)?)
-        .map_err(to_string)?
+        UnknownSettings { keys: raw.unknown_settings, text }
+            .deserialize(toml::Deserializer::parse(text).map_err(to_string)?)
+            .map_err(to_string)?
     };
-    Ok(ConfigFile {
-        config: raw.config,
-        unknown_settings,
-    })
+    Ok(ConfigFile { config: raw.config, unknown_settings })
 }
 
 /// The content of the config file at `path`. A missing file has no settings set.
 pub fn read(path: &Path) -> Result<ConfigFile, ConfigError> {
-    let error = |problem| ConfigError {
-        path: path.to_path_buf(),
-        problem,
-    };
+    let error = |problem| ConfigError { path: path.to_path_buf(), problem };
     match fs::read_to_string(path) {
         Ok(text) => parse(&text).map_err(|reason| error(Problem::Invalid(reason))),
         Err(io_error) if io_error.kind() == io::ErrorKind::NotFound => Ok(ConfigFile::default()),

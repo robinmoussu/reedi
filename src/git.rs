@@ -80,10 +80,7 @@ mod tests {
     use crate::test_git::Git;
 
     /// `2026-10-12 14:32:07 +0200`.
-    const TIME: Time = Time {
-        seconds: 1_791_808_327,
-        offset: 7200,
-    };
+    const TIME: Time = Time { seconds: 1_791_808_327, offset: 7200 };
 
     /// A new repository whose only commit is at `TIME` and whose configuration has
     /// `log.date = $value` (if any), opened without the global and system configuration (so that
@@ -135,10 +132,7 @@ mod tests {
     #[test]
     fn log_date_is_read_from_the_repository() {
         let (_git, repository) = repository_with_a_commit_at_time(Some("iso-local"));
-        let iso_local = DateFormat {
-            style: DateStyle::Iso,
-            local: true,
-        };
+        let iso_local = DateFormat { style: DateStyle::Iso, local: true };
         assert_eq!(log_date_of(&repository).unwrap(), Some(iso_local));
     }
 
