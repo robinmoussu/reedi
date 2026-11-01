@@ -375,6 +375,9 @@ mod tests {
 
     const HASH: &str = "0123456789abcdef0123456789abcdef01234567";
 
+    /// The date of `metadata()`, which the tests of the dates replace.
+    const DEFAULT_DATE: &str = "2026-10-12 14:32:07 +0200";
+
     /// The metadata of a valid commit, followed by `extra`.
     fn metadata(extra: &str) -> String {
         format!(
@@ -382,7 +385,7 @@ mod tests {
              hash = \"{HASH}\"\n\
              author = \"Alice Martin\"\n\
              email = \"alice.martin@example.org\"\n\
-             date = \"2026-10-12 14:32:07 +0200\"\n\
+             date = \"{DEFAULT_DATE}\"\n\
              subject = \"config: rename\"\n\
              body = \"Line 1.\\nLine 2.\"\n\
              {extra}"
@@ -499,7 +502,7 @@ mod tests {
 
     #[test]
     fn date_is_absolute_with_its_own_offset() {
-        let date = |date: &str| metadata("").replace("2026-10-12 14:32:07 +0200", date);
+        let date = |date: &str| metadata("").replace(DEFAULT_DATE, date);
         assert_eq!(
             load(&date("2026-10-12 14:32:07 -0400"), &[]).unwrap().date,
             Time::new(1_791_829_927, -4 * 3600)
@@ -518,7 +521,7 @@ mod tests {
             "not a date",
         ];
         for date in invalid {
-            let metadata = metadata("").replace("2026-10-12 14:32:07 +0200", date);
+            let metadata = metadata("").replace(DEFAULT_DATE, date);
             assert_eq!(
                 load(&metadata, &[]).unwrap_err(),
                 FakeDataError::InvalidDate(DateParseError { input: date.to_string() }),
