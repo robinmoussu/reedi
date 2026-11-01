@@ -90,9 +90,10 @@ pub enum Content {
     },
 }
 
-/// Position, in bytes, of the first character displayed on a row in its line.
+/// Position, in bytes, of the first character displayed on a row in its line, from which
+/// [`Row::anchor()`] keeps the cursor on that character when the rows are rewrapped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Start {
+pub enum AnchorOffset {
     /// The row is not split.
     Whole(usize),
     /// For each half, if it displays text.
@@ -128,7 +129,7 @@ pub struct Row {
     /// the headers, the lines of the commit messages and of the hunks, the file names, the blank
     /// lines and the rules. It doesn't depend on the width of the screen.
     pub line_index: usize,
-    pub start: Start,
+    pub anchor_offset: AnchorOffset,
     /// Index, among the displayed commits, of the commit the row belongs to. The separator line
     /// between two commits is the first line of the next commit (the separator below the last
     /// commit belongs to it).
@@ -138,10 +139,10 @@ pub struct Row {
 impl Row {
     /// Position of the first character displayed by `half` of the row, if any.
     fn offset(&self, half: Half) -> Option<usize> {
-        match (self.start, half) {
-            (Start::Whole(offset), Half::Whole) => Some(offset),
-            (Start::Split { left, .. }, Half::Left) => left,
-            (Start::Split { right, .. }, Half::Right) => right,
+        match (self.anchor_offset, half) {
+            (AnchorOffset::Whole(offset), Half::Whole) => Some(offset),
+            (AnchorOffset::Split { left, .. }, Half::Left) => left,
+            (AnchorOffset::Split { right, .. }, Half::Right) => right,
             _ => None,
         }
     }
@@ -149,10 +150,10 @@ impl Row {
     /// The first character displayed on the row: the one of the right half of a split row if it
     /// displays text, otherwise the one of the left half.
     pub fn anchor(&self) -> Anchor {
-        let (half, offset) = match self.start {
-            Start::Whole(offset) => (Half::Whole, offset),
-            Start::Split { right: Some(offset), .. } => (Half::Right, offset),
-            Start::Split { left, .. } => (Half::Left, left.unwrap_or(0)),
+        let (half, offset) = match self.anchor_offset {
+            AnchorOffset::Whole(offset) => (Half::Whole, offset),
+            AnchorOffset::Split { right: Some(offset), .. } => (Half::Right, offset),
+            AnchorOffset::Split { left, .. } => (Half::Left, left.unwrap_or(0)),
         };
         Anchor {
             line_index: self.line_index,
@@ -564,7 +565,7 @@ impl<'a> Rows<'a> {
         self.rows.push(Row {
             content,
             line_index: self.lines_count,
-            start: Start::Whole(0),
+            anchor_offset: AnchorOffset::Whole(0),
             commit_index: self.commit_index,
         });
         self.lines_count += 1;
@@ -588,7 +589,7 @@ impl<'a> Rows<'a> {
             .extend(rows.into_iter().map(|(start, _, spans)| Row {
                 content: Content::Text(Line::from(spans)),
                 line_index,
-                start: Start::Whole(start),
+                anchor_offset: AnchorOffset::Whole(start),
                 commit_index,
             }));
         self.lines_count += 1;
@@ -682,7 +683,7 @@ impl<'a> Rows<'a> {
                     .map(move |((left_start, left), (right_start, right))| Row {
                         content: Content::Split { left, right },
                         line_index,
-                        start: Start::Split { left: left_start, right: right_start },
+                        anchor_offset: AnchorOffset::Split { left: left_start, right: right_start },
                         commit_index,
                     })
                     .collect::<Vec<_>>()
@@ -1087,7 +1088,7 @@ mod tests {
         Row {
             content,
             line_index: 0,
-            start: Start::Whole(0),
+            anchor_offset: AnchorOffset::Whole(0),
             commit_index: 0,
         }
     }
@@ -1685,12 +1686,15 @@ mod tests {
                 ("│   │ ".to_string(), "│ 1 │ bbbb".to_string()),
             ]
         );
-        let starts: Vec<_> = rows.iter().map(|row| (row.line_index, row.start)).collect();
+        let anchor_offsets: Vec<_> = rows
+            .iter()
+            .map(|row| (row.line_index, row.anchor_offset))
+            .collect();
         assert_eq!(
-            starts,
+            anchor_offsets,
             [
-                (0, Start::Split { left: Some(0), right: None }),
-                (1, Start::Split { left: None, right: Some(0) }),
+                (0, AnchorOffset::Split { left: Some(0), right: None }),
+                (1, AnchorOffset::Split { left: None, right: Some(0) }),
             ]
         );
     }
@@ -1829,7 +1833,10 @@ mod tests {
         );
         // It is a line of its own.
         assert_eq!(rows[2].line_index, rows[1].line_index + 1);
-        assert_eq!(rows[2].start, Start::Split { left: Some(0), right: None });
+        assert_eq!(
+            rows[2].anchor_offset,
+            AnchorOffset::Split { left: Some(0), right: None }
+        );
     }
 
     #[test]
@@ -1956,13 +1963,13 @@ mod tests {
         )
         .hunk_rows(&hunk("aaaa bbbb cccc", "aaaa"), FinalCr::Hidden)
         .unwrap();
-        let starts: Vec<_> = rows.iter().map(|row| row.start).collect();
+        let anchor_offsets: Vec<_> = rows.iter().map(|row| row.anchor_offset).collect();
         assert_eq!(
-            starts,
+            anchor_offsets,
             [
-                Start::Split { left: Some(0), right: Some(0) },
-                Start::Split { left: Some(5), right: None },
-                Start::Split { left: Some(10), right: None },
+                AnchorOffset::Split { left: Some(0), right: Some(0) },
+                AnchorOffset::Split { left: Some(5), right: None },
+                AnchorOffset::Split { left: Some(10), right: None },
             ]
         );
         assert!(rows.iter().all(|row| row.line_index == 0));

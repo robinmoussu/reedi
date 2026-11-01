@@ -305,7 +305,7 @@ mod tests {
     use crate::test_support::header_row_indexes;
     use crate::test_support::rows_of;
     use crate::test_support::short_commits;
-    use crate::view::Start;
+    use crate::view::AnchorOffset;
 
     fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
         Event::Key(KeyEvent::new_with_kind(
@@ -423,7 +423,7 @@ mod tests {
         // line).
         let cursor = narrow
             .iter()
-            .position(|row| row.line_index == 2 && row.start != Start::Whole(0))
+            .position(|row| row.line_index == 2 && row.anchor_offset != AnchorOffset::Whole(0))
             .unwrap();
         let mut viewport = Viewport { cursor, top: cursor - 3 };
         let wide = rewrap(
