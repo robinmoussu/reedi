@@ -21,12 +21,12 @@ pub struct Cli {
     /// Display the fake commits (the default for now).
     #[arg(long, hide = true)]
     pub fake: bool,
-    /// The current date (any format of `git commit --date`), to resolve the relative dates and
-    /// the dates without offset of the fake commits, and to display the `relative`, `human` and
-    /// `local` date formats.
+    /// The current date (any format of `git commit --date`), used by the `relative` and `human`
+    /// date formats.
     #[arg(long, hide = true, requires = "fake")]
     pub fake_now: Option<String>,
-    /// The current timezone (IANA name or fixed offset), like `--fake-now`.
+    /// The current timezone (IANA name or fixed offset), used by the `-local` and `human` date
+    /// formats, and by `--fake-now` when it has no offset.
     #[arg(long, hide = true, requires = "fake")]
     pub fake_timezone: Option<String>,
     /// How dates are displayed (any value of `git log --date=`). Defaults to the `log.date` git

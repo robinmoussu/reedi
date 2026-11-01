@@ -65,9 +65,9 @@ impl Viewport {
     /// Move the screen `lines_count` lines down (`ctrl+e`), one line at a time, stopping when its
     /// last row is the last of `len` rows, like `less`.
     ///
-    /// For each line, the cursor stays on its row, unless it is at most `SCROLLOFF` rows below the
-    /// top of the screen (inside the margin, or about to enter it): it then moves down with the
-    /// screen, so that it keeps its distance from the top.
+    /// For each line, the cursor stays on its row, unless it is at most `scrolloff(height)` rows
+    /// below the top of the screen (inside the margin, or about to enter it): it then moves down
+    /// with the screen, so that it keeps its distance from the top.
     pub fn scroll_down(&mut self, lines_count: usize, len: usize, height: usize) {
         let height = height.max(1);
         let lines_count = lines_count.min(len.saturating_sub(height).saturating_sub(self.top));
@@ -82,9 +82,9 @@ impl Viewport {
     /// Move the screen `lines_count` lines up (`ctrl+y`), one line at a time, stopping when its
     /// first row is the first row, like `less`.
     ///
-    /// For each line, the cursor stays on its row, unless it is at most `SCROLLOFF` rows above the
-    /// bottom of the screen (inside the margin, or about to enter it): it then moves up with the
-    /// screen, so that it keeps its distance from the bottom.
+    /// For each line, the cursor stays on its row, unless it is at most `scrolloff(height)` rows
+    /// above the bottom of the screen (inside the margin, or about to enter it): it then moves up
+    /// with the screen, so that it keeps its distance from the bottom.
     pub fn scroll_up(&mut self, lines_count: usize, height: usize) {
         let height = height.max(1);
         let lines_count = lines_count.min(self.top);
@@ -132,9 +132,9 @@ impl Viewport {
         self.cursor = cursor;
     }
 
-    /// Scroll as little as possible so that the screen, `height` rows tall, displays `SCROLLOFF`
-    /// rows above and below the cursor (unless the first or last of `len` rows is reached), and no
-    /// empty space after the last row.
+    /// Scroll as little as possible so that the screen, `height` rows tall, displays
+    /// `scrolloff(height)` rows above and below the cursor (unless the first or last of `len` rows
+    /// is reached), and no empty space after the last row.
     ///
     /// Scrolling as little as possible keeps the cursor at the same screen position when `height`
     /// changes.

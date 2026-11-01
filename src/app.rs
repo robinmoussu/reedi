@@ -431,8 +431,6 @@ mod tests {
     }
 
     #[test]
-    // A hunk that's too narrow does not stop the application, but it will be replaced by the
-    // HUNK_TOO_NARROW message
     fn rewrapping_to_a_too_narrow_screen_is_an_error() {
         let mut viewport = Viewport::default();
         assert!(

@@ -33,7 +33,7 @@ Translations of git
 Parsing of dates
 ----------------
 
-- Used by: the dates of the fake commits, `--fake-now`
+- Used by: `--fake-now`
 - Missing in `gix`: `gix::date::parse` doesn't implement `approxidate` of git: it has no `noon`,
   `12/10/2026 14:32`, and dates without an offset are read as UTC instead of the current timezone
 - Replaced by: `date.rs`, which runs `git commit --date` in a temporary repository (with the current

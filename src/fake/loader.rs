@@ -34,9 +34,9 @@ const INDEX_DIGITS_COUNT: usize = 2;
 /// The number of hexadecimal characters of a full hash (SHA-1).
 const HASH_LEN: usize = 40;
 
-/// The attributes of `.gitattributes` that make a file binary, and the one that makes it text even
-/// if it contains a NUL byte.
+/// The attributes of `.gitattributes` that make a file binary.
 const BINARY_ATTRIBUTES: [&str; 2] = ["binary", "-diff"];
+/// The attribute of `.gitattributes` that makes a file text, even if it contains a NUL byte.
 const TEXT_ATTRIBUTE: &str = "diff";
 
 /// The fake commits, one folder each.
@@ -72,7 +72,7 @@ pub struct RawFile<'a> {
 /// The folder of a fake commit.
 #[derive(Debug, Clone)]
 pub struct Folder<'a> {
-    /// `${reverse_order}_${descriptive_commit_name}`
+    /// `$index_$description`
     pub name: &'a str,
     pub files: Vec<RawFile<'a>>,
 }
@@ -80,7 +80,7 @@ pub struct Folder<'a> {
 /// The files of a fake commit are invalid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FakeDataError {
-    /// The name of a folder is not `${reverse_order}_${descriptive_commit_name}`.
+    /// The name of a folder is not `$index_$description`.
     #[cfg(any(test, feature = "test-support"))]
     InvalidFolderName(String),
     /// A file is neither the metadata nor named `$id_$version_$path`.
@@ -157,7 +157,7 @@ struct Decorations {
 }
 
 impl Decorations {
-    /// In the order of `git log --decorate`.
+    /// Convert to the decorations of the model, in the order of `git log --decorate`.
     fn into_model(self) -> Vec<Decoration> {
         let head = self.head.map(|branch| {
             Decoration::Head(if branch.is_empty() {
@@ -637,7 +637,8 @@ mod tests {
             ("03_before_c.txt", b"before\n"),
             ("03_after_c.txt", b"after\n"),
         ];
-        // The attributes of a single version are enough, and are read like `.gitattributes` does.
+        // The attributes of a single version are enough, and are read like git reads
+        // `.gitattributes`.
         let extra = "[gitattributes]\n\
                      \"01_after_a.dat\" = \"binary\"\n\
                      \"02_before_b.dat\" = \"-text -diff\"\n\

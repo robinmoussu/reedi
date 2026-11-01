@@ -78,7 +78,7 @@ struct Item {
     break_after: bool,
 }
 
-/// Move `column` past `item` if it fits in `width` columns.
+/// Move `column` past `item` if it fits in `width` columns, and return whether it was moved.
 ///
 /// A tab whose spaces up to the next tab stop don't fit is displayed alone, and ends the row.
 fn advance_if_fits(item: &Item, column: &mut usize, width: usize) -> bool {
@@ -289,7 +289,7 @@ fn text_row(
 }
 
 /// Display the line made of `segments` on rows of `width` columns, with its invisible characters
-/// replaced. A line has always at least one row.
+/// replaced. A line always has at least one row.
 ///
 /// The line is broken at the break opportunities of the Unicode line breaking algorithm (UAX
 /// #14), computed on the original text. A carriage return ending a segment is replaced if

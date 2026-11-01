@@ -108,9 +108,9 @@ impl Locale {
         Self::new(&CString::new(name).ok()?)
     }
 
-    /// `time` (in the timezone of `zoned`) formatted with the `strftime` of the C library, like
-    /// `git log --date=format:$pattern`: `%z` is the offset, and `%Z` the name of the timezone
-    /// only if `displayed_in` is [`DisplayedIn::LocalTimezone`] (it is empty otherwise).
+    /// `zoned` formatted with the `strftime` of the C library, like
+    /// `git log --date=format:$pattern`: `%z` is the offset, and `%Z` the name of the timezone only
+    /// if `displayed_in` is [`DisplayedIn::LocalTimezone`] (it is empty otherwise).
     pub fn strftime(&self, pattern: &str, zoned: &Zoned, displayed_in: DisplayedIn) -> String {
         let Ok(pattern) = CString::new(expand_timezone(pattern, zoned, displayed_in)) else {
             return String::new();
