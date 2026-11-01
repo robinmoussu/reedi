@@ -358,33 +358,50 @@ mod tests {
         }
     }
 
-    /// Compared with `TZ=Europe/Paris GIT_TEST_DATE_NOW=… git commit --date=$input`, then
-    /// `git log --date=raw`.
+    /// `date` (`%Y-%m-%d %H:%M:%S %z`).
+    fn time(date: &str) -> Time {
+        let zoned = Zoned::strptime("%Y-%m-%d %H:%M:%S %z", date).unwrap();
+        Time {
+            seconds: zoned.timestamp().as_second(),
+            offset: zoned.offset().seconds(),
+        }
+    }
+
+    /// The expected dates are the ones of `TZ=Europe/Paris GIT_TEST_DATE_NOW=… git commit
+    /// --date=$input`, then `git log --date=raw`, or `None` if git refuses `input`.
     #[test]
     fn dates_are_parsed_like_git_commit() {
         let now = zoned("2026-10-21T02:30:00+02:00", "Europe/Paris");
         let dates = [
-            "2026-10-12 14:32:07 +0200",
-            "2026-10-12T14:32:07+02:00",
-            "Mon, 12 Oct 2026 14:32:07 +0200",
-            "1791808327 +0200",
-            "@1791808327 +0200",
+            (
+                "2026-10-12 14:32:07 +0200",
+                Some("2026-10-12 14:32:07 +0200"),
+            ),
+            (
+                "2026-10-12T14:32:07+02:00",
+                Some("2026-10-12 14:32:07 +0200"),
+            ),
+            (
+                "Mon, 12 Oct 2026 14:32:07 +0200",
+                Some("2026-10-12 14:32:07 +0200"),
+            ),
+            ("1791808327 +0200", Some("2026-10-12 14:32:07 +0200")),
+            ("@1791808327 +0200", Some("2026-10-12 14:32:07 +0200")),
             // Without offset: in the timezone of `now`.
-            "2026-10-12 14:32:07",
+            ("2026-10-12 14:32:07", Some("2026-10-12 14:32:07 +0200")),
             // Month first, and in winter time.
-            "12/10/2026 14:32",
-            "yesterday",
-            "3 hours ago",
-            "2 weeks ago",
-            // Noon is already past today.
-            "noon",
-            "not a date",
+            ("12/10/2026 14:32", Some("2026-12-10 14:32:00 +0100")),
+            ("yesterday", Some("2026-10-20 02:30:00 +0200")),
+            ("3 hours ago", Some("2026-10-20 23:30:00 +0200")),
+            ("2 weeks ago", Some("2026-10-07 02:30:00 +0200")),
+            // Noon is not reached yet today: the one of yesterday.
+            ("noon", Some("2026-10-20 12:00:00 +0200")),
+            ("not a date", None),
         ];
-        for input in dates {
-            let git = Git::new(&now, "C");
-            let expected = match git.commit_with_date(input) {
-                Ok(()) => Ok(git.author_time()),
-                Err(_) => Err(DateParseError { input: input.to_string() }),
+        for (input, expected) in dates {
+            let expected = match expected {
+                Some(date) => Ok(time(date)),
+                None => Err(DateParseError { input: input.to_string() }),
             };
             assert_eq!(parse(input, &now), expected, "--date={input}");
         }
