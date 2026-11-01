@@ -178,7 +178,7 @@ impl Locale {
                 CStr::from_ptr(translated).to_string_lossy().into_owned()
             }
         });
-        translated.replacen(COUNT_PLACEHOLDER, &count.to_string(), 1)
+        translated.replacen(COUNT_PLACEHOLDER, &count.to_string(), /* count */ 1)
     }
 
     /// The translation by git of `message` (`_()` in git).
@@ -233,11 +233,11 @@ mod tests {
         let locale = Locale::c();
         assert_eq!(locale.translate("in the future"), "in the future");
         assert_eq!(
-            locale.translate_plural("%lu hour ago", "%lu hours ago", 1),
+            locale.translate_plural("%lu hour ago", "%lu hours ago", /* count */ 1),
             "1 hour ago"
         );
         assert_eq!(
-            locale.translate_plural("%lu hour ago", "%lu hours ago", 3),
+            locale.translate_plural("%lu hour ago", "%lu hours ago", /* count */ 3),
             "3 hours ago"
         );
     }

@@ -305,7 +305,6 @@ mod tests {
     use crate::test_support::header_row_indexes;
     use crate::test_support::rows_of;
     use crate::test_support::short_commits;
-    use crate::test_support::viewport;
     use crate::view::Start;
 
     fn press(code: KeyCode, modifiers: KeyModifiers) -> Event {
@@ -370,7 +369,10 @@ mod tests {
 
     #[test]
     fn resize_is_inactive() {
-        assert_eq!(action(&Event::Resize(80, 24)), None);
+        assert_eq!(
+            action(&Event::Resize(/* columns */ 80, /* rows */ 24)),
+            None
+        );
     }
 
     #[test]
@@ -484,7 +486,10 @@ mod tests {
             KeyEventKind::Release,
         ));
         close_on_key_press(&release, &mut error_modal);
-        close_on_key_press(&Event::Resize(80, 24), &mut error_modal);
+        close_on_key_press(
+            &Event::Resize(/* columns */ 80, /* rows */ 24),
+            &mut error_modal,
+        );
         assert!(error_modal.is_some());
     }
 
@@ -689,7 +694,10 @@ mod tests {
         let mut count = Count::default();
         type_keys(&mut count, "5");
         assert_eq!(count.apply(&release), None);
-        assert_eq!(count.apply(&Event::Resize(80, 24)), None);
+        assert_eq!(
+            count.apply(&Event::Resize(/* columns */ 80, /* rows */ 24)),
+            None
+        );
         assert_eq!(count.pending(), Some(5));
     }
 
@@ -720,21 +728,36 @@ mod tests {
     fn navigate_down_and_up_move_the_cursor_row_by_row() {
         let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(&rows, Action::Down, None, viewport(3, 0)).cursor,
+            navigated(&rows, Action::Down, None, Viewport { cursor: 3, top: 0 }).cursor,
             4
         );
-        assert_eq!(navigated(&rows, Action::Up, None, viewport(3, 0)).cursor, 2);
+        assert_eq!(
+            navigated(&rows, Action::Up, None, Viewport { cursor: 3, top: 0 }).cursor,
+            2
+        );
     }
 
     #[test]
     fn navigate_down_and_up_are_repeated() {
         let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(&rows, Action::Down, Some(5), viewport(3, 0)).cursor,
+            navigated(
+                &rows,
+                Action::Down,
+                /* count */ Some(5),
+                Viewport { cursor: 3, top: 0 }
+            )
+            .cursor,
             8
         );
         assert_eq!(
-            navigated(&rows, Action::Up, Some(2), viewport(3, 0)).cursor,
+            navigated(
+                &rows,
+                Action::Up,
+                /* count */ Some(2),
+                Viewport { cursor: 3, top: 0 }
+            )
+            .cursor,
             1
         );
     }
@@ -744,11 +767,23 @@ mod tests {
         let rows = rows_of_a_long_commit();
         let last_row_index = rows.len() - 1;
         assert_eq!(
-            navigated(&rows, Action::Down, Some(usize::MAX), viewport(3, 0)).cursor,
+            navigated(
+                &rows,
+                Action::Down,
+                Some(usize::MAX),
+                Viewport { cursor: 3, top: 0 }
+            )
+            .cursor,
             last_row_index
         );
         assert_eq!(
-            navigated(&rows, Action::Up, Some(usize::MAX), viewport(30, 20)).cursor,
+            navigated(
+                &rows,
+                Action::Up,
+                Some(usize::MAX),
+                Viewport { cursor: 30, top: 20 }
+            )
+            .cursor,
             0
         );
     }
@@ -758,12 +793,17 @@ mod tests {
         let rows = rows_of_a_long_commit();
         // The 15th row is the 15th row of the screen: the 6th row below it is not displayed.
         assert_eq!(
-            navigated(&rows, Action::Down, None, viewport(14, 0)),
-            viewport(15, 1)
+            navigated(&rows, Action::Down, None, Viewport { cursor: 14, top: 0 }),
+            Viewport { cursor: 15, top: 1 }
         );
         assert_eq!(
-            navigated(&rows, Action::Down, Some(30), viewport(0, 0)),
-            viewport(30, 16)
+            navigated(
+                &rows,
+                Action::Down,
+                /* count */ Some(30),
+                Viewport { cursor: 0, top: 0 }
+            ),
+            Viewport { cursor: 30, top: 16 }
         );
     }
 
@@ -771,8 +811,8 @@ mod tests {
     fn navigate_up_scrolls_to_keep_the_scrolloff() {
         let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(&rows, Action::Up, None, viewport(10, 5)),
-            viewport(9, 4)
+            navigated(&rows, Action::Up, None, Viewport { cursor: 10, top: 5 }),
+            Viewport { cursor: 9, top: 4 }
         );
     }
 
@@ -781,13 +821,23 @@ mod tests {
         let rows = rows_of_a_long_commit();
         // The cursor is the 3rd row of the screen: it keeps its distance from the top.
         assert_eq!(
-            navigated(&rows, Action::ScrollDown, None, viewport(12, 10)),
-            viewport(13, 11)
+            navigated(
+                &rows,
+                Action::ScrollDown,
+                None,
+                Viewport { cursor: 12, top: 10 }
+            ),
+            Viewport { cursor: 13, top: 11 }
         );
         // Then ctrl+y leaves it on its row, now the 4th one of the screen.
         assert_eq!(
-            navigated(&rows, Action::ScrollUp, None, viewport(13, 11)),
-            viewport(13, 10)
+            navigated(
+                &rows,
+                Action::ScrollUp,
+                None,
+                Viewport { cursor: 13, top: 11 }
+            ),
+            Viewport { cursor: 13, top: 10 }
         );
     }
 
@@ -795,12 +845,22 @@ mod tests {
     fn navigate_scroll_down_and_up_are_repeated() {
         let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(&rows, Action::ScrollDown, Some(3), viewport(20, 10)),
-            viewport(20, 13)
+            navigated(
+                &rows,
+                Action::ScrollDown,
+                /* count */ Some(3),
+                Viewport { cursor: 20, top: 10 }
+            ),
+            Viewport { cursor: 20, top: 13 }
         );
         assert_eq!(
-            navigated(&rows, Action::ScrollUp, Some(3), viewport(20, 10)),
-            viewport(20, 7)
+            navigated(
+                &rows,
+                Action::ScrollUp,
+                /* count */ Some(3),
+                Viewport { cursor: 20, top: 10 }
+            ),
+            Viewport { cursor: 20, top: 7 }
         );
     }
 
@@ -808,22 +868,38 @@ mod tests {
     fn navigate_scroll_stops_at_both_ends() {
         let rows = rows_of_a_long_commit();
         let len = rows.len();
-        let end = viewport(len - 5, len - HEIGHT);
-        assert_eq!(navigated(&rows, Action::ScrollDown, Some(10), end), end);
-        let start = viewport(5, 0);
-        assert_eq!(navigated(&rows, Action::ScrollUp, Some(10), start), start);
+        let end = Viewport { cursor: len - 5, top: len - HEIGHT };
+        assert_eq!(
+            navigated(&rows, Action::ScrollDown, /* count */ Some(10), end),
+            end
+        );
+        let start = Viewport { cursor: 5, top: 0 };
+        assert_eq!(
+            navigated(&rows, Action::ScrollUp, /* count */ Some(10), start),
+            start
+        );
     }
 
     #[test]
     fn navigate_half_page_moves_the_screen_and_the_cursor_by_half_the_height() {
         let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(&rows, Action::HalfPageDown, None, viewport(20, 10)),
-            viewport(30, 20)
+            navigated(
+                &rows,
+                Action::HalfPageDown,
+                None,
+                Viewport { cursor: 20, top: 10 }
+            ),
+            Viewport { cursor: 30, top: 20 }
         );
         assert_eq!(
-            navigated(&rows, Action::HalfPageUp, None, viewport(40, 30)),
-            viewport(30, 20)
+            navigated(
+                &rows,
+                Action::HalfPageUp,
+                None,
+                Viewport { cursor: 40, top: 30 }
+            ),
+            Viewport { cursor: 30, top: 20 }
         );
     }
 
@@ -831,29 +907,51 @@ mod tests {
     fn navigate_half_page_keeps_the_cursor_at_the_same_screen_position() {
         let rows = rows_of_a_long_commit();
         // Half of a screen of 40 rows is 20 rows.
-        let mut viewport = viewport(20, 10);
-        navigate(Action::HalfPageDown, None, &mut viewport, &rows, 40);
-        assert_eq!(viewport, self::viewport(40, 30));
+        let mut viewport = Viewport { cursor: 20, top: 10 };
+        navigate(
+            Action::HalfPageDown,
+            None,
+            &mut viewport,
+            &rows,
+            /* height */ 40,
+        );
+        assert_eq!(viewport, Viewport { cursor: 40, top: 30 });
     }
 
     #[test]
     fn navigate_half_page_rounds_the_half_of_an_odd_height_down() {
         let rows = rows_of_a_long_commit();
-        let mut viewport = viewport(20, 10);
-        navigate(Action::HalfPageDown, None, &mut viewport, &rows, 21);
-        assert_eq!(viewport, self::viewport(30, 20));
+        let mut viewport = Viewport { cursor: 20, top: 10 };
+        navigate(
+            Action::HalfPageDown,
+            None,
+            &mut viewport,
+            &rows,
+            /* height */ 21,
+        );
+        assert_eq!(viewport, Viewport { cursor: 30, top: 20 });
     }
 
     #[test]
     fn navigate_half_page_is_repeated() {
         let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(&rows, Action::HalfPageDown, Some(3), viewport(20, 10)),
-            viewport(50, 40)
+            navigated(
+                &rows,
+                Action::HalfPageDown,
+                /* count */ Some(3),
+                Viewport { cursor: 20, top: 10 }
+            ),
+            Viewport { cursor: 50, top: 40 }
         );
         assert_eq!(
-            navigated(&rows, Action::HalfPageUp, Some(2), viewport(40, 30)),
-            viewport(20, 10)
+            navigated(
+                &rows,
+                Action::HalfPageUp,
+                /* count */ Some(2),
+                Viewport { cursor: 40, top: 30 }
+            ),
+            Viewport { cursor: 20, top: 10 }
         );
     }
 
@@ -862,12 +960,18 @@ mod tests {
         let rows = rows_of_a_long_commit();
         let len = rows.len();
         // The cursor is not moved anymore, even if it is not on the last row.
-        let end = viewport(len - 5, len - HEIGHT);
+        let end = Viewport { cursor: len - 5, top: len - HEIGHT };
         assert_eq!(navigated(&rows, Action::HalfPageDown, None, end), end);
-        assert_eq!(navigated(&rows, Action::HalfPageDown, Some(3), end), end);
-        let start = viewport(5, 0);
+        assert_eq!(
+            navigated(&rows, Action::HalfPageDown, /* count */ Some(3), end),
+            end
+        );
+        let start = Viewport { cursor: 5, top: 0 };
         assert_eq!(navigated(&rows, Action::HalfPageUp, None, start), start);
-        assert_eq!(navigated(&rows, Action::HalfPageUp, Some(3), start), start);
+        assert_eq!(
+            navigated(&rows, Action::HalfPageUp, /* count */ Some(3), start),
+            start
+        );
     }
 
     #[test]
@@ -877,30 +981,43 @@ mod tests {
         // Only 3 rows are left below the screen.
         let top = len - HEIGHT - 3;
         assert_eq!(
-            navigated(&rows, Action::HalfPageDown, None, viewport(top + 10, top)),
-            viewport(len - HEIGHT + 10, len - HEIGHT)
+            navigated(
+                &rows,
+                Action::HalfPageDown,
+                None,
+                Viewport { cursor: top + 10, top }
+            ),
+            Viewport {
+                cursor: len - HEIGHT + 10,
+                top: len - HEIGHT
+            }
         );
         assert_eq!(
             navigated(
                 &rows,
                 Action::HalfPageDown,
                 Some(usize::MAX),
-                viewport(20, 10)
+                Viewport { cursor: 20, top: 10 }
             ),
-            viewport(len - 10, len - HEIGHT)
+            Viewport { cursor: len - 10, top: len - HEIGHT }
         );
         assert_eq!(
-            navigated(&rows, Action::HalfPageUp, None, viewport(15, 3)),
-            viewport(12, 0)
+            navigated(
+                &rows,
+                Action::HalfPageUp,
+                None,
+                Viewport { cursor: 15, top: 3 }
+            ),
+            Viewport { cursor: 12, top: 0 }
         );
         assert_eq!(
             navigated(
                 &rows,
                 Action::HalfPageUp,
                 Some(usize::MAX),
-                viewport(20, 10)
+                Viewport { cursor: 20, top: 10 }
             ),
-            viewport(10, 0)
+            Viewport { cursor: 10, top: 0 }
         );
     }
 
@@ -908,8 +1025,8 @@ mod tests {
     fn navigate_first_goes_to_the_first_row() {
         let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(&rows, Action::First, None, viewport(50, 40)),
-            viewport(0, 0)
+            navigated(&rows, Action::First, None, Viewport { cursor: 50, top: 40 }),
+            Viewport { cursor: 0, top: 0 }
         );
     }
 
@@ -917,16 +1034,31 @@ mod tests {
     fn navigate_first_with_a_number_goes_to_that_row_counted_from_the_top() {
         let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(&rows, Action::First, Some(1), viewport(50, 40)),
-            viewport(0, 0)
+            navigated(
+                &rows,
+                Action::First,
+                /* count */ Some(1),
+                Viewport { cursor: 50, top: 40 }
+            ),
+            Viewport { cursor: 0, top: 0 }
         );
         assert_eq!(
-            navigated(&rows, Action::First, Some(5), viewport(50, 40)),
-            viewport(4, 0)
+            navigated(
+                &rows,
+                Action::First,
+                /* count */ Some(5),
+                Viewport { cursor: 50, top: 40 }
+            ),
+            Viewport { cursor: 4, top: 0 }
         );
         assert_eq!(
-            navigated(&rows, Action::First, Some(30), viewport(0, 0)),
-            viewport(29, 15)
+            navigated(
+                &rows,
+                Action::First,
+                /* count */ Some(30),
+                Viewport { cursor: 0, top: 0 }
+            ),
+            Viewport { cursor: 29, top: 15 }
         );
     }
 
@@ -935,12 +1067,22 @@ mod tests {
         let rows = rows_of_a_long_commit();
         let len = rows.len();
         assert_eq!(
-            navigated(&rows, Action::First, Some(len + 1), viewport(0, 0)),
-            viewport(len - 1, len - HEIGHT)
+            navigated(
+                &rows,
+                Action::First,
+                Some(len + 1),
+                Viewport { cursor: 0, top: 0 }
+            ),
+            Viewport { cursor: len - 1, top: len - HEIGHT }
         );
         assert_eq!(
-            navigated(&rows, Action::First, Some(usize::MAX), viewport(0, 0)),
-            viewport(len - 1, len - HEIGHT)
+            navigated(
+                &rows,
+                Action::First,
+                Some(usize::MAX),
+                Viewport { cursor: 0, top: 0 }
+            ),
+            Viewport { cursor: len - 1, top: len - HEIGHT }
         );
     }
 
@@ -949,14 +1091,14 @@ mod tests {
         let rows = rows_of_a_long_commit();
         let len = rows.len();
         assert_eq!(
-            navigated(&rows, Action::Last, None, viewport(0, 0)),
-            viewport(len - 1, len - HEIGHT)
+            navigated(&rows, Action::Last, None, Viewport { cursor: 0, top: 0 }),
+            Viewport { cursor: len - 1, top: len - HEIGHT }
         );
         // Already displayed: the screen doesn't move more than needed.
-        let almost = viewport(len - 10, len - HEIGHT);
+        let almost = Viewport { cursor: len - 10, top: len - HEIGHT };
         assert_eq!(
             navigated(&rows, Action::Last, None, almost),
-            viewport(len - 1, len - HEIGHT)
+            Viewport { cursor: len - 1, top: len - HEIGHT }
         );
     }
 
@@ -964,17 +1106,37 @@ mod tests {
     fn navigate_last_with_a_number_goes_to_that_row_counted_from_the_top() {
         let rows = rows_of_a_long_commit();
         assert_eq!(
-            navigated(&rows, Action::Last, Some(1), viewport(50, 40)),
-            viewport(0, 0)
+            navigated(
+                &rows,
+                Action::Last,
+                /* count */ Some(1),
+                Viewport { cursor: 50, top: 40 }
+            ),
+            Viewport { cursor: 0, top: 0 }
         );
         assert_eq!(
-            navigated(&rows, Action::Last, Some(5), viewport(50, 40)),
-            viewport(4, 0)
+            navigated(
+                &rows,
+                Action::Last,
+                /* count */ Some(5),
+                Viewport { cursor: 50, top: 40 }
+            ),
+            Viewport { cursor: 4, top: 0 }
         );
         // Like `g`.
         assert_eq!(
-            navigated(&rows, Action::Last, Some(30), viewport(0, 0)),
-            navigated(&rows, Action::First, Some(30), viewport(0, 0))
+            navigated(
+                &rows,
+                Action::Last,
+                /* count */ Some(30),
+                Viewport { cursor: 0, top: 0 }
+            ),
+            navigated(
+                &rows,
+                Action::First,
+                /* count */ Some(30),
+                Viewport { cursor: 0, top: 0 }
+            )
         );
     }
 
@@ -983,12 +1145,22 @@ mod tests {
         let rows = rows_of_a_long_commit();
         let len = rows.len();
         assert_eq!(
-            navigated(&rows, Action::Last, Some(len + 1), viewport(0, 0)),
-            viewport(len - 1, len - HEIGHT)
+            navigated(
+                &rows,
+                Action::Last,
+                Some(len + 1),
+                Viewport { cursor: 0, top: 0 }
+            ),
+            Viewport { cursor: len - 1, top: len - HEIGHT }
         );
         assert_eq!(
-            navigated(&rows, Action::Last, Some(usize::MAX), viewport(0, 0)),
-            viewport(len - 1, len - HEIGHT)
+            navigated(
+                &rows,
+                Action::Last,
+                Some(usize::MAX),
+                Viewport { cursor: 0, top: 0 }
+            ),
+            Viewport { cursor: len - 1, top: len - HEIGHT }
         );
     }
 
@@ -997,7 +1169,12 @@ mod tests {
         let commits = short_commits();
         let rows = rows_of(&commits, WIDTH);
         let headers = header_row_indexes(&commits, WIDTH);
-        let viewport = navigated(&rows, Action::NextCommit, None, viewport(0, 0));
+        let viewport = navigated(
+            &rows,
+            Action::NextCommit,
+            None,
+            Viewport { cursor: 0, top: 0 },
+        );
         let mut expected = Viewport::default();
         expected.jump(headers[1], rows.len(), HEIGHT);
         assert_eq!(viewport, expected);
@@ -1006,7 +1183,7 @@ mod tests {
                 &rows,
                 Action::NextCommit,
                 None,
-                self::viewport(headers[1] + 3, 0)
+                Viewport { cursor: headers[1] + 3, top: 0 }
             )
             .cursor,
             headers[2]
@@ -1019,7 +1196,13 @@ mod tests {
         let rows = rows_of(&commits, WIDTH);
         let headers = header_row_indexes(&commits, WIDTH);
         assert_eq!(
-            navigated(&rows, Action::NextCommit, None, viewport(headers[1] - 1, 0)).cursor,
+            navigated(
+                &rows,
+                Action::NextCommit,
+                None,
+                Viewport { cursor: headers[1] - 1, top: 0 }
+            )
+            .cursor,
             headers[2]
         );
     }
@@ -1030,11 +1213,23 @@ mod tests {
         let rows = rows_of(&commits, WIDTH);
         let headers = header_row_indexes(&commits, WIDTH);
         assert_eq!(
-            navigated(&rows, Action::NextCommit, Some(2), viewport(0, 0)).cursor,
+            navigated(
+                &rows,
+                Action::NextCommit,
+                /* count */ Some(2),
+                Viewport { cursor: 0, top: 0 }
+            )
+            .cursor,
             headers[2]
         );
         assert_eq!(
-            navigated(&rows, Action::NextCommit, Some(usize::MAX), viewport(0, 0)).cursor,
+            navigated(
+                &rows,
+                Action::NextCommit,
+                Some(usize::MAX),
+                Viewport { cursor: 0, top: 0 }
+            )
+            .cursor,
             *headers.last().unwrap()
         );
     }
@@ -1044,7 +1239,10 @@ mod tests {
         let commits = short_commits();
         let rows = rows_of(&commits, WIDTH);
         let last_header_row_index = *header_row_indexes(&commits, WIDTH).last().unwrap();
-        let before = viewport(last_header_row_index + 2, last_header_row_index - 5);
+        let before = Viewport {
+            cursor: last_header_row_index + 2,
+            top: last_header_row_index - 5,
+        };
         assert_eq!(navigated(&rows, Action::NextCommit, None, before), before);
     }
 
@@ -1053,7 +1251,7 @@ mod tests {
         let commits = short_commits();
         let rows = rows_of(&commits, WIDTH);
         let headers = header_row_indexes(&commits, WIDTH);
-        let middle = viewport(headers[2] + 3, headers[2]);
+        let middle = Viewport { cursor: headers[2] + 3, top: headers[2] };
         let middle = navigated(&rows, Action::PreviousCommit, None, middle);
         assert_eq!(middle.cursor, headers[2]);
         assert_eq!(
@@ -1072,7 +1270,7 @@ mod tests {
                 &rows,
                 Action::PreviousCommit,
                 None,
-                viewport(headers[2] - 1, 0)
+                Viewport { cursor: headers[2] - 1, top: 0 }
             )
             .cursor,
             headers[1]
@@ -1085,9 +1283,15 @@ mod tests {
         let rows = rows_of(&commits, WIDTH);
         let headers = header_row_indexes(&commits, WIDTH);
         // The first one goes to the header of the commit, the next one to the previous commit.
-        let start = viewport(headers[2] + 3, headers[2]);
+        let start = Viewport { cursor: headers[2] + 3, top: headers[2] };
         assert_eq!(
-            navigated(&rows, Action::PreviousCommit, Some(2), start).cursor,
+            navigated(
+                &rows,
+                Action::PreviousCommit,
+                /* count */ Some(2),
+                start
+            )
+            .cursor,
             headers[1]
         );
         assert_eq!(
@@ -1099,7 +1303,7 @@ mod tests {
     #[test]
     fn navigate_previous_commit_does_nothing_on_the_header_of_the_first_commit() {
         let rows = rows_of(&short_commits(), WIDTH);
-        let before = viewport(0, 0);
+        let before = Viewport { cursor: 0, top: 0 };
         assert_eq!(
             navigated(&rows, Action::PreviousCommit, None, before),
             before
@@ -1111,7 +1315,12 @@ mod tests {
         let commits = short_commits();
         let rows = rows_of(&commits, WIDTH);
         let headers = header_row_indexes(&commits, WIDTH);
-        let viewport = navigated(&rows, Action::NextCommit, None, viewport(0, 0));
+        let viewport = navigated(
+            &rows,
+            Action::NextCommit,
+            None,
+            Viewport { cursor: 0, top: 0 },
+        );
         assert!(
             viewport.top <= viewport.cursor.saturating_sub(5),
             "{viewport:?}"
@@ -1123,7 +1332,7 @@ mod tests {
     #[test]
     fn navigate_ignores_actions_that_are_not_movements() {
         let rows = rows_of_a_long_commit();
-        let before = viewport(20, 10);
+        let before = Viewport { cursor: 20, top: 10 };
         for action in [Action::Quit, Action::Suspend, Action::Digit(3)] {
             assert_eq!(navigated(&rows, action, None, before), before);
         }
@@ -1138,7 +1347,7 @@ mod tests {
             Action::HalfPageDown,
         ] {
             let mut viewport = Viewport::default();
-            navigate(action, Some(3), &mut viewport, &[], HEIGHT);
+            navigate(action, /* count */ Some(3), &mut viewport, &[], HEIGHT);
             assert_eq!(viewport, Viewport::default(), "{action:?}");
         }
     }

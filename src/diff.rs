@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn modified_lines_are_surrounded_by_three_unchanged_lines() {
-        let before = numbered(1, 20);
+        let before = numbered(/* first_number */ 1, /* last_number */ 20);
         let after = before.replace("10\n", "ten\n");
         let diff = modified(&before, &after);
         assert_eq!(diff.hunks.len(), 1);
@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn changes_separated_by_at_most_six_lines_are_in_the_same_hunk() {
-        let before = numbered(1, 30);
+        let before = numbered(/* first_number */ 1, /* last_number */ 30);
         // 6 unchanged lines between them.
         let after = before
             .replace("10\n", "ten\n")
@@ -239,9 +239,12 @@ mod tests {
 
     #[test]
     fn line_numbers_of_each_version_are_counted_separately() {
-        let before = numbered(1, 20);
+        let before = numbered(/* first_number */ 1, /* last_number */ 20);
         // The line 2 is removed, and a line is added after the line 15.
-        let after = numbered(1, 1) + &numbered(3, 15) + "fifteen\n" + &numbered(16, 20);
+        let after = numbered(/* first_number */ 1, /* last_number */ 1)
+            + &numbered(/* first_number */ 3, /* last_number */ 15)
+            + "fifteen\n"
+            + &numbered(/* first_number */ 16, /* last_number */ 20);
         let diff = modified(&before, &after);
         assert_eq!(diff.hunks.len(), 2);
         assert_eq!(

@@ -264,8 +264,8 @@ mod tests {
                 .filter(|kind| *kind != LineKind::Unchanged)
                 .collect()
         };
-        assert_eq!(kinds(0), [LineKind::Added; 3]);
-        assert_eq!(kinds(1), [LineKind::Removed; 5]);
+        assert_eq!(kinds(/* hunk */ 0), [LineKind::Added; 3]);
+        assert_eq!(kinds(/* hunk */ 1), [LineKind::Removed; 5]);
     }
 
     #[test]
