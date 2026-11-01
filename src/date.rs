@@ -248,14 +248,6 @@ mod tests {
         now.parse::<Timestamp>().unwrap().to_zoned(timezone)
     }
 
-    /// `now` (RFC 3339) in `timezone` (IANA name), with the C locale.
-    fn environment(now: &str, timezone: &str) -> Environment {
-        Environment {
-            now: zoned(now, timezone),
-            locale: Locale::c(),
-        }
-    }
-
     fn format(style: DateStyle, displayed_in: DisplayedIn) -> DateFormat {
         DateFormat { style, displayed_in }
     }
@@ -412,7 +404,7 @@ mod tests {
     fn dates_are_displayed_like_git_log() {
         let now = "2026-10-12T17:32:07+02:00";
         let git = repository_with_a_commit_at_time(now, "America/New_York", "C");
-        let environment = environment(now, "America/New_York");
+        let environment = git.environment();
         let formats = [
             "default",
             "local",
@@ -472,7 +464,7 @@ mod tests {
         for now in nows {
             for timezone in ["Europe/Paris", "America/New_York"] {
                 let git = repository_with_a_commit_at_time(now, timezone, "C");
-                let environment = environment(now, timezone);
+                let environment = git.environment();
                 for text in formats {
                     let format = text.parse().unwrap();
                     assert_eq!(
@@ -489,13 +481,13 @@ mod tests {
     /// translations of git are not installed). Skipped if the French locale is not installed.
     #[test]
     fn dates_are_translated_like_git_log() {
-        let Some(locale) = Locale::named("fr_FR.UTF-8") else {
+        if Locale::named("fr_FR.UTF-8").is_none() {
             eprintln!("skipped: the fr_FR.UTF-8 locale is not installed");
             return;
-        };
+        }
         let now = "2026-10-12T17:32:07+02:00";
         let git = repository_with_a_commit_at_time(now, "Europe/Paris", "fr_FR.UTF-8");
-        let environment = Environment { now: zoned(now, "Europe/Paris"), locale };
+        let environment = git.environment();
         let formats = ["default", "rfc", "relative", "human", "format:%A %d %B %c"];
         for text in formats {
             let format = text.parse().unwrap();

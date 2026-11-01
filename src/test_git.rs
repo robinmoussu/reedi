@@ -11,16 +11,16 @@ use jiff::tz::Offset;
 use jiff::tz::TimeZone;
 use tempfile::TempDir;
 
+use crate::date::Environment;
 use crate::gix_compat::date::RAW_FORMAT;
+use crate::gix_compat::locale::Locale;
 
 /// A new repository, and the environment `git` runs in. The configuration of the user is not
 /// read, so that the tests don't depend on it.
 pub struct Git {
     directory: TempDir,
-    /// The IANA name of the current timezone (`TZ`).
-    timezone: String,
-    /// The current date, in seconds since the epoch (`GIT_TEST_DATE_NOW`).
-    now: i64,
+    /// The current date (`GIT_TEST_DATE_NOW`), in the current timezone (`TZ`).
+    now: Zoned,
     /// `LC_ALL`.
     locale: String,
 }
@@ -31,12 +31,19 @@ impl Git {
     pub fn new(now: &Zoned, locale: &str) -> Self {
         let git = Git {
             directory: tempfile::tempdir().unwrap(),
-            timezone: now.time_zone().iana_name().unwrap().to_string(),
-            now: now.timestamp().as_second(),
+            now: now.clone(),
             locale: locale.to_string(),
         };
         assert!(git.run(&["init", "--quiet"]).status.success());
         git
+    }
+
+    /// The environment `git` runs in, to display the dates like it.
+    pub fn environment(&self) -> Environment {
+        Environment {
+            now: self.now.clone(),
+            locale: Locale::named(&self.locale).unwrap(),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -57,8 +64,11 @@ impl Git {
             .env("GIT_AUTHOR_EMAIL", "author@example.com")
             .env("GIT_COMMITTER_NAME", "Committer")
             .env("GIT_COMMITTER_EMAIL", "committer@example.com")
-            .env("TZ", &self.timezone)
-            .env("GIT_TEST_DATE_NOW", self.now.to_string())
+            .env("TZ", self.now.time_zone().iana_name().unwrap())
+            .env(
+                "GIT_TEST_DATE_NOW",
+                self.now.timestamp().as_second().to_string(),
+            )
             .env("LC_ALL", &self.locale)
             .output()
             .unwrap()

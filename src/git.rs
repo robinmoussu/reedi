@@ -74,10 +74,8 @@ mod tests {
 
     use super::*;
     use crate::date::DateStyle;
-    use crate::date::Environment;
     use crate::date::display;
     use crate::gix_compat::date::DisplayedIn;
-    use crate::gix_compat::locale::Locale;
     use crate::test_git::Git;
 
     /// `2026-10-12 14:32:07 +0200`.
@@ -115,13 +113,7 @@ mod tests {
         for value in values {
             let (git, repository) = repository_with_a_commit_at_time(Some(value));
             let format = log_date_of(&repository).unwrap().unwrap();
-            let environment = Environment {
-                now: "2026-10-12T17:32:07+02:00"
-                    .parse::<Timestamp>()
-                    .unwrap()
-                    .to_zoned(TimeZone::get("America/New_York").unwrap()),
-                locale: Locale::c(),
-            };
+            let environment = git.environment();
             assert_eq!(
                 display(TIME, &format, &environment),
                 git.author_date(None).unwrap(),
