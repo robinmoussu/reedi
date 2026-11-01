@@ -321,8 +321,8 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
                 DiffAs::Auto
             };
             diff::file(
-                state(&versions.before, &versions.before_path),
-                state(&versions.after, &versions.after_path),
+                /* before */ state(&versions.before, &versions.before_path),
+                /* after */ state(&versions.after, &versions.after_path),
                 diff_as,
                 diff::CONTEXT,
             )
