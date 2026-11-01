@@ -169,7 +169,7 @@ pub fn parse(input: &str, now: &Zoned) -> Option<Time> {
 }
 
 /// `text`, a date as git stores it (see [`RAW_FORMAT`]).
-pub fn parse_raw(text: &str) -> Option<Time> {
+fn parse_raw(text: &str) -> Option<Time> {
     let parsed = strtime::parse(RAW_FORMAT, text).ok()?;
     Some(Time {
         seconds: parsed.to_timestamp().ok()?.as_second(),
