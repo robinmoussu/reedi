@@ -861,6 +861,13 @@ impl ErrorModal {
 /// Displayed centered in the bottom border of the modals.
 const CLOSE_MODAL: &str = "Press any key to close";
 
+/// The blank columns and rows between the border of the error modal and its content.
+const ERROR_MODAL_PADDING: u16 = 1;
+
+/// The columns (or rows) of the error modal around its content: its border and its padding, on
+/// both sides.
+const ERROR_MODAL_FRAME_SIZE: usize = 2 * (1 + ERROR_MODAL_PADDING as usize);
+
 /// `error_modal` centered in the area, with a border and a blank row above and below its content,
 /// as wide as its content (at most the width of the area), its long lines being wrapped. The border
 /// has heavy lines and the error style, and the title the error style in reverse video.
@@ -874,8 +881,7 @@ impl Widget for ErrorModalView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let title = format!(" {} ", self.error_modal.title());
         let close = format!(" {CLOSE_MODAL} ");
-        // The border and the padding, on each side.
-        let max_width = usize::from(area.width).saturating_sub(4);
+        let max_width = usize::from(area.width).saturating_sub(ERROR_MODAL_FRAME_SIZE);
         // Like the hunks, the content is not displayed if it is too narrow to be wrapped.
         let rows: Vec<_> = self
             .error_modal
@@ -895,11 +901,10 @@ impl Widget for ErrorModalView<'_> {
             .max()
             .unwrap_or(0)
             .min(max_width);
-        let width = u16::try_from(content_width + 4)
+        let width = u16::try_from(content_width + ERROR_MODAL_FRAME_SIZE)
             .unwrap_or(u16::MAX)
             .min(area.width);
-        // The border and the padding, on each side.
-        let height = u16::try_from(rows.len() + 4)
+        let height = u16::try_from(rows.len() + ERROR_MODAL_FRAME_SIZE)
             .unwrap_or(u16::MAX)
             .min(area.height);
         let error_modal_area = Rect::new(
@@ -913,7 +918,7 @@ impl Widget for ErrorModalView<'_> {
             .title(Line::styled(title, self.theme.error.reversed()))
             .border_style(self.theme.error)
             .title_bottom(Line::styled(close, self.theme.error).centered())
-            .padding(Padding::uniform(1));
+            .padding(Padding::uniform(ERROR_MODAL_PADDING));
         let inner = block.inner(error_modal_area);
         Clear.render(error_modal_area, buf);
         block.render(error_modal_area, buf);
