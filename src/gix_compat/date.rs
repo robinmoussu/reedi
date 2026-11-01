@@ -58,7 +58,7 @@ pub fn relative(time: Time, now: &Zoned, locale: &Locale) -> String {
         return translated("%s, %lu month ago", "%s, %lu months ago", months).replacen(
             "%s",
             &years_text,
-            1,
+            /* count */ 1,
         );
     }
     // Only years.

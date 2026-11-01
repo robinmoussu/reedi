@@ -268,7 +268,8 @@ mod tests {
     #[test]
     fn line_numbers_skip_the_lines_missing_in_a_version() {
         let mut hunk = hunk(&["a", "b"], &["c"]);
-        hunk.lines.insert(0, line(LineKind::Unchanged, "z"));
+        hunk.lines
+            .insert(/* index */ 0, line(LineKind::Unchanged, "z"));
         hunk.after_first_line = 10;
         let numbers: Vec<_> = hunk
             .line_numbers()
@@ -288,16 +289,22 @@ mod tests {
 
     #[test]
     fn line_number_width_fits_last_line() {
-        assert_eq!(unchanged(5, 5).line_number_width(), 1);
-        assert_eq!(unchanged(5, 6).line_number_width(), 2);
+        assert_eq!(
+            unchanged(/* first_line */ 5, /* len */ 5).line_number_width(),
+            1
+        );
+        assert_eq!(
+            unchanged(/* first_line */ 5, /* len */ 6).line_number_width(),
+            2
+        );
     }
 
     #[test]
     fn line_number_width_uses_the_largest_version() {
-        let mut hunk = unchanged(95, 3);
+        let mut hunk = unchanged(/* first_line */ 95, /* len */ 3);
         hunk.after_first_line = 98;
         assert_eq!(hunk.line_number_width(), 3);
-        let mut hunk = unchanged(98, 3);
+        let mut hunk = unchanged(/* first_line */ 98, /* len */ 3);
         hunk.after_first_line = 95;
         assert_eq!(hunk.line_number_width(), 3);
     }
@@ -306,17 +313,17 @@ mod tests {
     fn missing_newline_is_shown_if_only_one_version_misses_it() {
         let mut hunk = hunk(&["a"], &["a"]);
         hunk.lines[0].missing_newline = true;
-        assert!(hunk.shows_missing_newline(0));
-        assert!(!hunk.shows_missing_newline(1));
+        assert!(hunk.shows_missing_newline(/* line_index */ 0));
+        assert!(!hunk.shows_missing_newline(/* line_index */ 1));
         hunk.lines[1].missing_newline = true;
-        assert!(!hunk.shows_missing_newline(0));
-        assert!(!hunk.shows_missing_newline(1));
+        assert!(!hunk.shows_missing_newline(/* line_index */ 0));
+        assert!(!hunk.shows_missing_newline(/* line_index */ 1));
     }
 
     #[test]
     fn missing_newline_of_an_unchanged_line_is_not_shown() {
-        let mut hunk = unchanged(1, 1);
+        let mut hunk = unchanged(/* first_line */ 1, /* len */ 1);
         hunk.lines[0].missing_newline = true;
-        assert!(!hunk.shows_missing_newline(0));
+        assert!(!hunk.shows_missing_newline(/* line_index */ 0));
     }
 }

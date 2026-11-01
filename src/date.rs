@@ -182,7 +182,10 @@ impl DateDisplay {
 #[cfg(any(test, feature = "test-support"))]
 fn snapshot_now() -> Zoned {
     jiff::civil::date(2026, 10, 12)
-        .at(14, 32, 7, 0)
+        .at(
+            /* hour */ 14, /* minute */ 32, /* second */ 7,
+            /* subsec_nanosecond */ 0,
+        )
         .to_zoned(TimeZone::UTC)
         .unwrap()
 }

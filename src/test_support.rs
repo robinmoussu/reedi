@@ -13,11 +13,6 @@ use crate::view;
 use crate::view::ErrorModal;
 use crate::view::LEFT_TO_RIGHT_MARK;
 use crate::view::Row;
-use crate::viewport::Viewport;
-
-pub fn viewport(cursor: usize, top: usize) -> Viewport {
-    Viewport { cursor, top }
-}
 
 /// 3 fake commits displayed on at least 6 rows each, for the tests displaying several commits
 /// (some of them move the cursor 3 rows below a header, inside the same commit).
@@ -63,8 +58,12 @@ pub fn unknown_settings_error_modal() -> ErrorModal {
     ErrorModal::UnknownSettings {
         path: "/home/alice/.config/reedi/config.toml".into(),
         unknown_settings: vec![
-            unknown_setting("scrolloff", "3", 3),
-            unknown_setting("keys", "{ quit = \"q\", down = \"j\", up = \"k\" }", 5),
+            unknown_setting("scrolloff", "3", /* line_number */ 3),
+            unknown_setting(
+                "keys",
+                "{ quit = \"q\", down = \"j\", up = \"k\" }",
+                /* line_number */ 5,
+            ),
         ],
     }
 }

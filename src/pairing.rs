@@ -120,7 +120,11 @@ fn tokenize(line: &str) -> Vec<&str> {
     let tokens = ends
         .zip(starts)
         .zip(words)
-        .flat_map(|((end, start), word)| line[end..start].graphemes(true).chain(word));
+        .flat_map(|((end, start), word)| {
+            line[end..start]
+                .graphemes(/* is_extended */ true)
+                .chain(word)
+        });
     iter::once("").chain(second_empty).chain(tokens).collect()
 }
 

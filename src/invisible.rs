@@ -275,7 +275,7 @@ impl Pieces {
 fn fixed(cluster: &str, trailing: bool) -> Vec<Piece> {
     let in_emoji = cluster.chars().next().is_some_and(|c| EMOJI.contains(c));
     let shown: Vec<_> = cluster.chars().map(|c| shown(c, in_emoji)).collect();
-    let mut pieces = Pieces::new(0);
+    let mut pieces = Pieces::new(/* column */ 0);
     // Kept whole, so that its width is the one of the cluster, not the sum of its characters.
     if shown.iter().all(|shown| *shown == Shown::Kept) {
         pieces.push(Kind::Text, cluster);
@@ -307,7 +307,7 @@ pub fn clusters(line: &str, final_cr: FinalCr) -> Vec<Cluster> {
     };
     // Grapheme clusters (what is displayed as a single character), with their position in the
     // line.
-    let graphemes: Vec<(usize, &str)> = content.grapheme_indices(true).collect();
+    let graphemes: Vec<(usize, &str)> = content.grapheme_indices(/* is_extended */ true).collect();
     let trailing_len = graphemes
         .iter()
         .rev()
@@ -352,7 +352,7 @@ mod tests {
     /// A carriage return ending `line` is replaced if `final_cr` is [`FinalCr::Shown`], and hidden
     /// otherwise.
     fn display(line: &str, final_cr: FinalCr) -> Vec<Piece> {
-        let mut pieces = Pieces::new(0);
+        let mut pieces = Pieces::new(/* column */ 0);
         for cluster in &clusters(line, final_cr) {
             cluster.push(&mut pieces, Wrap::None, usize::MAX);
         }
@@ -470,7 +470,15 @@ mod tests {
 
     #[test]
     fn space_is_dimmed_before_a_break() {
-        let space = |wrap| cluster_at(" x", 0, 0, wrap, usize::MAX);
+        let space = |wrap| {
+            cluster_at(
+                " x",
+                /* cluster_index */ 0,
+                /* column */ 0,
+                wrap,
+                usize::MAX,
+            )
+        };
         assert_eq!(space(Wrap::None), [piece(" ", Kind::Text)]);
         // A space moved to the next row is displayed normally.
         assert_eq!(space(Wrap::AfterBreak), [piece(" ", Kind::Text)]);
@@ -484,7 +492,15 @@ mod tests {
 
     #[test]
     fn braille_blank_is_dimmed_next_to_a_break() {
-        let blank = |wrap| cluster_at("\u{2800}x", 0, 0, wrap, usize::MAX);
+        let blank = |wrap| {
+            cluster_at(
+                "\u{2800}x",
+                /* cluster_index */ 0,
+                /* column */ 0,
+                wrap,
+                usize::MAX,
+            )
+        };
         assert_eq!(blank(Wrap::None), [piece("\u{2800}", Kind::Text)]);
         assert_eq!(
             blank(Wrap::AfterBreak),
@@ -501,7 +517,13 @@ mod tests {
     #[test]
     fn trailing_whitespace_is_replaced_even_if_single_at_a_break() {
         assert_eq!(
-            cluster_at("a ", 1, 1, Wrap::Single, usize::MAX),
+            cluster_at(
+                "a ",
+                /* cluster_index */ 1,
+                /* column */ 1,
+                Wrap::Single,
+                usize::MAX
+            ),
             [piece("∙", Kind::TrailingWhitespace)]
         );
     }
@@ -509,15 +531,33 @@ mod tests {
     #[test]
     fn trailing_whitespace_next_to_a_break_stays_trailing_whitespace() {
         assert_eq!(
-            cluster_at("a ", 1, 1, Wrap::BeforeBreak, usize::MAX),
+            cluster_at(
+                "a ",
+                /* cluster_index */ 1,
+                /* column */ 1,
+                Wrap::BeforeBreak,
+                usize::MAX
+            ),
             [piece("∙", Kind::TrailingWhitespace)]
         );
         assert_eq!(
-            cluster_at("a\u{2800}", 1, 0, Wrap::AfterBreak, usize::MAX),
+            cluster_at(
+                "a\u{2800}",
+                /* cluster_index */ 1,
+                /* column */ 0,
+                Wrap::AfterBreak,
+                usize::MAX
+            ),
             [piece("∙", Kind::TrailingWhitespace)]
         );
         assert_eq!(
-            cluster_at("a\t", 1, 1, Wrap::BeforeBreak, usize::MAX),
+            cluster_at(
+                "a\t",
+                /* cluster_index */ 1,
+                /* column */ 1,
+                Wrap::BeforeBreak,
+                usize::MAX
+            ),
             [piece("⇥", Kind::TrailingWhitespace)]
         );
     }
@@ -525,12 +565,24 @@ mod tests {
     #[test]
     fn tab_before_a_break_is_displayed_alone() {
         assert_eq!(
-            cluster_at("\tx", 0, 0, Wrap::BeforeBreak, usize::MAX),
+            cluster_at(
+                "\tx",
+                /* cluster_index */ 0,
+                /* column */ 0,
+                Wrap::BeforeBreak,
+                usize::MAX
+            ),
             [piece("⇥", Kind::DimmedWhitespace)]
         );
         // After a break, it reaches the next tab stop.
         assert_eq!(
-            cluster_at("\tx", 0, 1, Wrap::AfterBreak, usize::MAX),
+            cluster_at(
+                "\tx",
+                /* cluster_index */ 0,
+                /* column */ 1,
+                Wrap::AfterBreak,
+                usize::MAX
+            ),
             [piece("⇥  ", Kind::DimmedWhitespace)]
         );
     }
@@ -538,7 +590,13 @@ mod tests {
     #[test]
     fn tab_is_cut_to_the_room_left() {
         assert_eq!(
-            cluster_at("\tx", 0, 0, Wrap::None, 2),
+            cluster_at(
+                "\tx",
+                /* cluster_index */ 0,
+                /* column */ 0,
+                Wrap::None,
+                /* room */ 2
+            ),
             [piece("⇥ ", Kind::DimmedWhitespace)]
         );
     }
@@ -546,9 +604,9 @@ mod tests {
     #[test]
     fn cluster_width_depends_on_the_column_for_tabs_only() {
         let clusters = clusters("日\t", FinalCr::Shown);
-        assert_eq!(clusters[0].width(3), 2);
-        assert_eq!(clusters[1].width(0), 4);
-        assert_eq!(clusters[1].width(3), 1);
+        assert_eq!(clusters[0].width(/* column */ 3), 2);
+        assert_eq!(clusters[1].width(/* column */ 0), 4);
+        assert_eq!(clusters[1].width(/* column */ 3), 1);
     }
 
     #[test]
