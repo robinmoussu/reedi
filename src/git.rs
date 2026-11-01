@@ -76,6 +76,7 @@ mod tests {
     use crate::date::DateStyle;
     use crate::date::Environment;
     use crate::date::display;
+    use crate::gix_compat::date::DisplayedIn;
     use crate::gix_compat::locale::Locale;
     use crate::test_git::Git;
 
@@ -132,7 +133,10 @@ mod tests {
     #[test]
     fn log_date_is_read_from_the_repository() {
         let (_git, repository) = repository_with_a_commit_at_time(Some("iso-local"));
-        let iso_local = DateFormat { style: DateStyle::Iso, local: true };
+        let iso_local = DateFormat {
+            style: DateStyle::Iso,
+            displayed_in: DisplayedIn::LocalTimezone,
+        };
         assert_eq!(log_date_of(&repository).unwrap(), Some(iso_local));
     }
 

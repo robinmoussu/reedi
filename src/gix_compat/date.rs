@@ -13,6 +13,16 @@ use jiff::tz::TimeZone;
 
 use crate::gix_compat::locale::Locale;
 
+/// The timezone a date is displayed in, selected by the `-local` suffix of the date formats of
+/// git.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayedIn {
+    /// The offset the date was recorded with.
+    OriginalOffset,
+    /// The timezone of the current date (`-local`).
+    LocalTimezone,
+}
+
 /// The `strftime` format of a date as git stores it (`--date=raw`): `1791808327 +0200`.
 pub const RAW_FORMAT: &str = "%s %z";
 
@@ -66,10 +76,10 @@ pub fn relative(time: Time, now: &Zoned, locale: &Locale) -> String {
 }
 
 /// `time` displayed like `git log --date=human`, `now` being the current date and timezone:
-/// relative for recent dates, otherwise without the parts that are the same as `now`. If `local`,
-/// `time` is displayed in the timezone of `now`.
-pub fn human(time: Time, now: &Zoned, local: bool, locale: &Locale) -> String {
-    let date = to_zoned(time, now, local);
+/// relative for recent dates, otherwise without the parts that are the same as `now`. `time` is
+/// displayed in the timezone selected by `displayed_in`.
+pub fn human(time: Time, now: &Zoned, displayed_in: DisplayedIn, locale: &Locale) -> String {
+    let date = to_zoned(time, now, displayed_in);
 
     let same_year = date.year() == now.year();
     let same_month = same_year && date.month() == now.month();
@@ -80,7 +90,8 @@ pub fn human(time: Time, now: &Zoned, local: bool, locale: &Locale) -> String {
     // A few days ago: only the weekday.
     let hide_date = same_month && date.day() < now.day() && date.day() + 5 > now.day();
 
-    let hide_timezone = local || date.offset() == now.offset() || !hide_date;
+    let hide_timezone =
+        displayed_in == DisplayedIn::LocalTimezone || date.offset() == now.offset() || !hide_date;
     let mut text = String::new();
     // The names of the weekdays and months of `jiff` are in English, like the ones of git, which
     // never translates them.
@@ -102,12 +113,14 @@ pub fn human(time: Time, now: &Zoned, local: bool, locale: &Locale) -> String {
     text
 }
 
-/// `time` in the timezone of `now` if `local`, otherwise with its own offset.
-pub fn to_zoned(time: Time, now: &Zoned, local: bool) -> Zoned {
-    let timezone = if local {
-        now.time_zone().clone()
-    } else {
-        Offset::from_seconds(time.offset).map_or(TimeZone::UTC, TimeZone::fixed)
+/// `time` in the timezone selected by `displayed_in`, the one of `now` for
+/// [`DisplayedIn::LocalTimezone`].
+pub fn to_zoned(time: Time, now: &Zoned, displayed_in: DisplayedIn) -> Zoned {
+    let timezone = match displayed_in {
+        DisplayedIn::LocalTimezone => now.time_zone().clone(),
+        DisplayedIn::OriginalOffset => {
+            Offset::from_seconds(time.offset).map_or(TimeZone::UTC, TimeZone::fixed)
+        }
     };
     Timestamp::from_second(time.seconds)
         .unwrap_or_default()

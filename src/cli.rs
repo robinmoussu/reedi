@@ -97,6 +97,7 @@ mod tests {
 
     use super::*;
     use crate::date::DateStyle;
+    use crate::gix_compat::date::DisplayedIn;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(["reedi"].iter().chain(args))
@@ -112,7 +113,10 @@ mod tests {
     #[test]
     fn date_format_is_parsed_like_git() {
         let cli = parse(&["--date-format", "iso-local"]).unwrap();
-        let iso_local = DateFormat { style: DateStyle::Iso, local: true };
+        let iso_local = DateFormat {
+            style: DateStyle::Iso,
+            displayed_in: DisplayedIn::LocalTimezone,
+        };
         assert_eq!(cli.date_format, Some(iso_local));
     }
 

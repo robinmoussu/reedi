@@ -10,6 +10,8 @@ use std::ptr;
 
 use jiff::Zoned;
 
+use crate::gix_compat::date::DisplayedIn;
+
 /// The text domain of the translations of git.
 const GIT_TEXT_DOMAIN: &CStr = c"git";
 
@@ -54,7 +56,7 @@ impl Drop for Locale {
 
 /// `pattern` where `%z` and `%Z` are replaced like git does before calling `strftime`: the C
 /// library would use the timezone of the process instead of the one of `zoned` for `%Z`.
-fn expand_timezone(pattern: &str, zoned: &Zoned, local: bool) -> String {
+fn expand_timezone(pattern: &str, zoned: &Zoned, displayed_in: DisplayedIn) -> String {
     let mut expanded = String::new();
     let mut chars = pattern.chars();
     while let Some(char) = chars.next() {
@@ -65,7 +67,7 @@ fn expand_timezone(pattern: &str, zoned: &Zoned, local: bool) -> String {
         match chars.next() {
             Some('z') => expanded += &zoned.strftime("%z").to_string(),
             Some('Z') => {
-                if local {
+                if displayed_in == DisplayedIn::LocalTimezone {
                     let info = zoned.time_zone().to_offset_info(zoned.timestamp());
                     expanded += &info.abbreviation().replace('%', "%%");
                 }
@@ -108,9 +110,9 @@ impl Locale {
 
     /// `time` (in the timezone of `zoned`) formatted with the `strftime` of the C library, like
     /// `git log --date=format:$pattern`: `%z` is the offset, and `%Z` the name of the timezone
-    /// only if `local` (it is empty otherwise).
-    pub fn strftime(&self, pattern: &str, zoned: &Zoned, local: bool) -> String {
-        let Ok(pattern) = CString::new(expand_timezone(pattern, zoned, local)) else {
+    /// only if `displayed_in` is [`DisplayedIn::LocalTimezone`] (it is empty otherwise).
+    pub fn strftime(&self, pattern: &str, zoned: &Zoned, displayed_in: DisplayedIn) -> String {
+        let Ok(pattern) = CString::new(expand_timezone(pattern, zoned, displayed_in)) else {
             return String::new();
         };
         // SAFETY: `tm` is a plain C struct, for which all zeros is valid.
