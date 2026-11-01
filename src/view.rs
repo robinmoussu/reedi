@@ -1375,8 +1375,10 @@ mod tests {
     #[test]
     fn decorations_are_omitted_when_empty() {
         let mut commit = fake::scrolloff_rename();
+        // The decorations are displayed between parentheses.
+        assert!(text(&header(&commit, &Theme::monochrome())).contains('('));
         commit.decorations.clear();
-        assert!(text(&header(&commit, &Theme::monochrome())).ends_with("12/10/2026"));
+        assert!(!text(&header(&commit, &Theme::monochrome())).contains('('));
     }
 
     #[test]
@@ -2188,28 +2190,28 @@ mod tests {
 
     #[test]
     fn rules_and_file_name_are_colored() {
-        let commit = fake::scrolloff_rename();
+        let commits = [fake::scrolloff_rename()];
+        let path = commits[0].files[0].path.to_string();
         for theme in &themes() {
-            let rows = commit_rows(&commit, /* width */ 110, theme);
-            let area = Rect::new(
-                /* x */ 0, /* y */ 0, /* width */ 110, /* height */ 26,
-            );
-            let mut buffer = Buffer::empty(area);
-            RowsView {
-                rows: &rows,
-                viewport: Viewport::default(),
-                theme,
-            }
-            .render(area, &mut buffer);
-            let buffer = without_left_to_right_marks(&buffer);
+            let screen_rows = screen_rows(&commits, theme);
+            let backend = render_on_a_single_screen(&commits, theme);
+            let buffer = backend.buffer();
+            let last_column = buffer.area.width - 1;
             // File name, then the rule below it.
-            assert_eq!(buffer[(0, 5)].symbol(), "s");
-            assert_eq!(buffer[(0, 5)].fg, theme.file.fg.unwrap());
-            assert_eq!(buffer[(109, 6)].symbol(), "─");
-            assert_eq!(buffer[(109, 6)].fg, theme.file.fg.unwrap());
-            // Separator below the commit.
-            assert_eq!(buffer[(109, 25)].symbol(), "─");
-            assert_eq!(buffer[(109, 25)].fg, theme.commit_separator.fg.unwrap());
+            let file_name = file_name_row(&screen_rows, &path) as u16;
+            assert_eq!(buffer[(0, file_name)].fg, theme.file.fg.unwrap());
+            assert_eq!(buffer[(last_column, file_name + 1)].symbol(), "─");
+            assert_eq!(
+                buffer[(last_column, file_name + 1)].fg,
+                theme.file.fg.unwrap()
+            );
+            // Separator below the commit, on its last row.
+            let separator = (screen_rows.len() - 1) as u16;
+            assert_eq!(buffer[(last_column, separator)].symbol(), "─");
+            assert_eq!(
+                buffer[(last_column, separator)].fg,
+                theme.commit_separator.fg.unwrap()
+            );
         }
     }
 
