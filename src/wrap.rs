@@ -97,6 +97,15 @@ fn advance_if_fits(item: &Item, column: &mut usize, width: usize) -> bool {
     }
 }
 
+/// Move `column` past the items at the start of `items` while they fit, as [`advance_if_fits`]
+/// does, and return the number of items it moved past.
+fn advance_while_fits(items: &[Item], column: &mut usize, width: usize) -> usize {
+    items
+        .iter()
+        .take_while(|item| advance_if_fits(item, column, width))
+        .count()
+}
+
 /// The items displayed on each row, the line being broken as late as possible.
 ///
 /// Fails with the index of an item that doesn't fit on an empty row.
@@ -128,18 +137,13 @@ fn layout(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
             - column;
         let ends_row = if column + body_width <= width {
             column += body_width;
-            i = body_end;
-            while i < word_end && advance_if_fits(&items[i], &mut column, width) {
-                i += 1;
-            }
+            i = body_end + advance_while_fits(&items[body_end..word_end], &mut column, width);
             i < word_end
         } else if i > row_start {
             true
         } else {
             // A word wider than the text area is split after its last cluster that fits.
-            while i < body_end && advance_if_fits(&items[i], &mut column, width) {
-                i += 1;
-            }
+            i += advance_while_fits(&items[i..body_end], &mut column, width);
             true
         };
         if ends_row {

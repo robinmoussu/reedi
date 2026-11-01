@@ -331,7 +331,7 @@ version 0.0.8: internal refactoring
      `implementation_status.md`
    - [x] improve naming
    - [x] duplication and simplification
-   - [ ] iterators instead of loops, and `for` loops instead of iterators that only call `for_each`
+   - [-] iterators instead of loops, and `for` loops instead of iterators that only call `for_each`
      or `try_for_each`
    - [ ] constants and comments of the arguments
    - [ ] parameters and enums
