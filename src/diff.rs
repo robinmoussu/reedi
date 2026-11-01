@@ -168,7 +168,12 @@ mod tests {
     }
 
     fn modified(before: &str, after: &str) -> FileDiff {
-        file(state("a", before), state("a", after), DiffAs::Text, CONTEXT)
+        file(
+            /* before */ state("a", before),
+            /* after */ state("a", after),
+            DiffAs::Text,
+            CONTEXT,
+        )
     }
 
     /// The lines `first_number..=last_number`, each one ending with a newline.
@@ -294,11 +299,21 @@ mod tests {
 
     #[test]
     fn added_and_deleted_files() {
-        let added = file(None, state("a", "x\ny\n"), DiffAs::Text, CONTEXT);
+        let added = file(
+            /* before */ None,
+            /* after */ state("a", "x\ny\n"),
+            DiffAs::Text,
+            CONTEXT,
+        );
         assert_eq!(added.change, FileChange::Added);
         assert_eq!(lines(&added.hunks[0]), [(Added, "x"), (Added, "y")]);
         assert_eq!(added.hunks[0].after_first_line, 1);
-        let deleted = file(state("a", "x\n"), None, DiffAs::Text, CONTEXT);
+        let deleted = file(
+            /* before */ state("a", "x\n"),
+            /* after */ None,
+            DiffAs::Text,
+            CONTEXT,
+        );
         assert_eq!(deleted.path, "a");
         assert_eq!(deleted.change, FileChange::Deleted);
         assert_eq!(lines(&deleted.hunks[0]), [(Removed, "x")]);
@@ -306,7 +321,12 @@ mod tests {
 
     #[test]
     fn renamed_file_is_displayed_with_its_new_path() {
-        let diff = file(state("a", "x\n"), state("b", "x\n"), DiffAs::Text, CONTEXT);
+        let diff = file(
+            /* before */ state("a", "x\n"),
+            /* after */ state("b", "x\n"),
+            DiffAs::Text,
+            CONTEXT,
+        );
         assert_eq!(diff.path, "b");
         assert_eq!(diff.change, FileChange::Renamed { from: "a".into() });
         assert!(diff.hunks.is_empty());
@@ -315,8 +335,8 @@ mod tests {
     #[test]
     fn binary_files_have_no_hunks() {
         let diff = file(
-            state("a", "x\0"),
-            state("a", "y\0"),
+            /* before */ state("a", "x\0"),
+            /* after */ state("a", "y\0"),
             DiffAs::Binary,
             CONTEXT,
         );
@@ -326,15 +346,30 @@ mod tests {
 
     #[test]
     fn auto_files_are_binary_if_a_version_has_a_nul_byte() {
-        let diff = file(state("a", "x\n"), state("a", "y\0"), DiffAs::Auto, CONTEXT);
+        let diff = file(
+            /* before */ state("a", "x\n"),
+            /* after */ state("a", "y\0"),
+            DiffAs::Auto,
+            CONTEXT,
+        );
         assert_eq!(diff.content, FileContentType::Binary);
-        let diff = file(state("a", "x\n"), state("a", "y\n"), DiffAs::Auto, CONTEXT);
+        let diff = file(
+            /* before */ state("a", "x\n"),
+            /* after */ state("a", "y\n"),
+            DiffAs::Auto,
+            CONTEXT,
+        );
         assert_eq!(diff.content, FileContentType::Text);
     }
 
     #[test]
     fn text_files_with_a_nul_byte_are_diffed_as_text() {
-        let diff = file(state("a", "x\0"), state("a", "y\0"), DiffAs::Text, CONTEXT);
+        let diff = file(
+            /* before */ state("a", "x\0"),
+            /* after */ state("a", "y\0"),
+            DiffAs::Text,
+            CONTEXT,
+        );
         assert_eq!(diff.content, FileContentType::Text);
         assert!(!diff.hunks.is_empty());
     }
@@ -342,10 +377,20 @@ mod tests {
     #[test]
     fn files_that_are_not_valid_utf8_have_no_hunks() {
         let invalid = FileState { path: "a".into(), content: b"caf\xe9\n" };
-        let diff = file(state("a", "cafe\n"), Some(invalid), DiffAs::Text, CONTEXT);
+        let diff = file(
+            /* before */ state("a", "cafe\n"),
+            /* after */ Some(invalid),
+            DiffAs::Text,
+            CONTEXT,
+        );
         assert_eq!(diff.content, FileContentType::InvalidUtf8);
         assert!(diff.hunks.is_empty());
-        let diff = file(Some(invalid), None, DiffAs::Text, CONTEXT);
+        let diff = file(
+            /* before */ Some(invalid),
+            /* after */ None,
+            DiffAs::Text,
+            CONTEXT,
+        );
         assert_eq!(diff.content, FileContentType::InvalidUtf8);
     }
 }
