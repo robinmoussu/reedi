@@ -102,6 +102,9 @@ pub fn ltr_then_rtl_summary() -> Commit {
 
 #[cfg(test)]
 mod tests {
+    use unicode_bidi::BidiClass;
+    use unicode_bidi::bidi_class;
+
     use super::*;
     use crate::model::FileChange;
     use crate::model::FileContentType;
@@ -283,31 +286,43 @@ mod tests {
         assert_eq!(missing("config/default.toml"), [LineKind::Removed]);
     }
 
-    /// The letters of the summary of `commit`, as `true` for the right-to-left ones (Hebrew and
-    /// Arabic) and `false` for the left-to-right ones (ASCII).
-    fn letters_directions(commit: &Commit) -> Vec<bool> {
+    /// The direction a letter is written in.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Direction {
+        LeftToRight,
+        RightToLeft,
+    }
+
+    /// The directions of the letters of the summary of `commit`.
+    fn letters_directions(commit: &Commit) -> Vec<Direction> {
         commit
             .subject
             .chars()
             .filter(|c| c.is_alphabetic())
-            .map(|c| match c {
-                '\u{0590}'..='\u{06ff}' => true,
-                c if c.is_ascii_alphabetic() => false,
-                c => panic!("{c:?} is neither Hebrew, Arabic nor ASCII"),
+            .map(|c| match bidi_class(c) {
+                BidiClass::R | BidiClass::AL => Direction::RightToLeft,
+                BidiClass::L => Direction::LeftToRight,
+                class => panic!("{c:?} is neither right-to-left nor left-to-right ({class:?})"),
             })
             .collect()
     }
 
+    /// In Hebrew, whose letters are of the bidi class `R`, while the other right-to-left summaries
+    /// are in Arabic, whose letters are of the bidi class `AL`.
     #[test]
     fn a_summary_is_fully_in_a_right_to_left_language() {
         let directions = letters_directions(&rtl_summary());
         assert!(!directions.is_empty());
-        assert!(directions.iter().all(|rtl| *rtl));
+        assert!(
+            directions
+                .iter()
+                .all(|direction| *direction == Direction::RightToLeft)
+        );
         assert!(
             rtl_summary()
                 .subject
                 .chars()
-                .any(|c| ('\u{05d0}'..='\u{05ea}').contains(&c))
+                .any(|c| bidi_class(c) == BidiClass::R)
         );
     }
 
@@ -315,8 +330,8 @@ mod tests {
     fn a_summary_is_in_arabic_then_in_a_left_to_right_language() {
         let commit = rtl_then_ltr_summary();
         let directions = letters_directions(&commit);
-        assert_eq!(directions.first(), Some(&true));
-        assert_eq!(directions.last(), Some(&false));
+        assert_eq!(directions.first(), Some(&Direction::RightToLeft));
+        assert_eq!(directions.last(), Some(&Direction::LeftToRight));
         // Both directions are each in a single block.
         assert_eq!(
             directions
@@ -329,7 +344,7 @@ mod tests {
             commit
                 .subject
                 .chars()
-                .any(|c| ('\u{0620}'..='\u{064a}').contains(&c))
+                .any(|c| bidi_class(c) == BidiClass::AL)
         );
     }
 
@@ -337,8 +352,8 @@ mod tests {
     fn a_summary_is_in_a_left_to_right_language_then_in_arabic() {
         let commit = ltr_then_rtl_summary();
         let directions = letters_directions(&commit);
-        assert_eq!(directions.first(), Some(&false));
-        assert_eq!(directions.last(), Some(&true));
+        assert_eq!(directions.first(), Some(&Direction::LeftToRight));
+        assert_eq!(directions.last(), Some(&Direction::RightToLeft));
         // Both directions are each in a single block.
         assert_eq!(
             directions
@@ -351,7 +366,7 @@ mod tests {
             commit
                 .subject
                 .chars()
-                .any(|c| ('\u{0620}'..='\u{064a}').contains(&c))
+                .any(|c| bidi_class(c) == BidiClass::AL)
         );
     }
 
