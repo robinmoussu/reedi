@@ -149,7 +149,7 @@ fn navigate(
     }
 }
 
-/// Move the cursor to the row `row_index` like [`Viewport::jump`], unless it is already on it
+/// Move the cursor to the row `row_index` like [`Viewport::jump()`], unless it is already on it
 /// (the screen then doesn't scroll).
 fn jump_unless_already_on(row_index: usize, viewport: &mut Viewport, len: usize, height: usize) {
     if row_index != viewport.cursor {
@@ -226,7 +226,7 @@ pub fn run(
 /// The rows displaying `commits` on a screen `width` columns wide, replacing `rows`.
 ///
 /// The cursor goes, at the same screen position, on the row displaying the character that was the
-/// first of its row (see [`Row::anchor`]).
+/// first of its row (see [`Row::anchor()`]).
 fn rewrap(
     commits: &[Commit],
     rows: &[Row],

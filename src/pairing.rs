@@ -12,7 +12,7 @@ use crate::model::DiffLine;
 use crate::model::Hunk;
 use crate::model::LineKind;
 
-/// Maximum distance (between 0 and 1, see [`distance`]) between a removed and an added line for
+/// Maximum distance (between 0 and 1, see [`distance()`]) between a removed and an added line for
 /// them to be paired.
 const MAX_LINE_DISTANCE: f64 = 0.6;
 
@@ -67,7 +67,7 @@ pub fn pairs(hunk: &Hunk) -> Vec<Pair> {
         .collect()
 }
 
-/// The rows displaying the `removed` and `added` lines (indexes in `lines`), see [`pairs`].
+/// The rows displaying the `removed` and `added` lines (indexes in `lines`), see [`pairs()`].
 fn pair_modified(lines: &[DiffLine], removed: &[usize], added: &[usize]) -> Vec<Pair> {
     let mut next = 0;
     let mut pairs: Vec<_> = removed
@@ -99,7 +99,7 @@ fn pair_modified(lines: &[DiffLine], removed: &[usize], added: &[usize]) -> Vec<
     pairs
 }
 
-/// The tokens of `line`, aligned by [`operations`]: its words, and each grapheme cluster between
+/// The tokens of `line`, aligned by [`operations()`]: its words, and each grapheme cluster between
 /// them, after one (or two, if the line doesn't start with a word) empty tokens.
 fn tokenize(line: &str) -> Vec<&str> {
     let words: Vec<_> = WORD.find_iter(line).collect();

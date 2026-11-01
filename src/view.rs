@@ -401,7 +401,7 @@ fn line_style(kind: LineKind, theme: &Theme) -> Style {
 }
 
 /// The kind of the line of `hunk` that is the last one of a version of the file not ending with a
-/// newline, while the other version does (see [`Hunk::shows_missing_newline`]), if any.
+/// newline, while the other version does (see [`Hunk::shows_missing_newline()`]), if any.
 fn missing_newline_kind(hunk: &Hunk) -> Option<LineKind> {
     (0..hunk.lines.len())
         .find(|&index| hunk.shows_missing_newline(index))
@@ -713,7 +713,7 @@ impl<'a> Rows<'a> {
         self.text(&header_parts(commit, self.theme, self.dates))?;
         if !commit.body.is_empty() {
             self.blank();
-            // Unlike `str::lines`, a carriage return ending a line is kept, to be displayed.
+            // Unlike `str::lines()`, a carriage return ending a line is kept, to be displayed.
             commit
                 .body
                 .split_terminator('\n')

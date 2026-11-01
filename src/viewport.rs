@@ -44,7 +44,7 @@ impl Viewport {
     }
 
     /// Move the cursor to the row `cursor` (or to the last of `len` rows if it is further), then
-    /// scroll like [`Viewport::scroll`].
+    /// scroll like [`Viewport::scroll()`].
     pub fn jump(&mut self, cursor: usize, len: usize, height: usize) {
         self.cursor = cursor.min(len.saturating_sub(1));
         self.scroll(len, height);
@@ -52,7 +52,7 @@ impl Viewport {
 
     /// Scroll as little as possible so that the cursor is displayed on the screen, `height` rows
     /// tall, and there is no empty space after the last of `len` rows. Unlike
-    /// [`Viewport::scroll`], the cursor can be inside the scrolloff margin.
+    /// [`Viewport::scroll()`], the cursor can be inside the scrolloff margin.
     pub fn fit(&mut self, len: usize, height: usize) {
         let height = height.max(1);
         let lowest = (self.cursor + 1).saturating_sub(height);
@@ -98,9 +98,10 @@ impl Viewport {
     }
 
     /// Move half the screen (`height / 2` rows, `count` times) down (`d`): the screen scrolls like
-    /// with [`Viewport::scroll_down`], and the cursor moves down by the same number of rows, like
-    /// with [`Viewport::down_by`], instead of following the scroll. Nothing moves anymore when the
-    /// last of `len` rows is displayed, and a scroll that would go further than that is shortened.
+    /// with [`Viewport::scroll_down()`], and the cursor moves down by the same number of rows, like
+    /// with [`Viewport::down_by()`], instead of following the scroll. Nothing moves anymore when
+    /// the last of `len` rows is displayed, and a scroll that would go further than that is
+    /// shortened.
     pub fn half_page_down(&mut self, count: usize, len: usize, height: usize) {
         let rows_count = (height / 2).saturating_mul(count);
         let rows_count = rows_count.min(len.saturating_sub(height).saturating_sub(self.top));
@@ -112,9 +113,9 @@ impl Viewport {
     }
 
     /// Move half the screen (`height / 2` rows, `count` times) up (`u`): the screen scrolls like
-    /// with [`Viewport::scroll_up`], and the cursor moves up by the same number of rows, like with
-    /// [`Viewport::up_by`], instead of following the scroll. Nothing moves anymore when the first
-    /// row is displayed, and a scroll that would go further than that is shortened.
+    /// with [`Viewport::scroll_up()`], and the cursor moves up by the same number of rows, like
+    /// with [`Viewport::up_by()`], instead of following the scroll. Nothing moves anymore when the
+    /// first row is displayed, and a scroll that would go further than that is shortened.
     pub fn half_page_up(&mut self, count: usize, len: usize, height: usize) {
         let rows_count = (height / 2).saturating_mul(count);
         let rows_count = rows_count.min(self.top);

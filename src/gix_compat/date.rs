@@ -1,5 +1,5 @@
-//! The `relative` and `human` date formats of git (`show_date_relative` and `show_date_normal` in
-//! git's `date.c`), which `gix` doesn't have, and the parsing of dates (`approxidate`), which
+//! The `relative` and `human` date formats of git (`show_date_relative()` and `show_date_normal()`
+//! in git's `date.c`), which `gix` doesn't have, and the parsing of dates (`approxidate()`), which
 //! `gix` only partially has.
 
 use std::process::Command;
@@ -127,7 +127,7 @@ pub fn to_zoned(time: Time, now: &Zoned, displayed_in: DisplayedIn) -> Zoned {
         .to_zoned(timezone)
 }
 
-/// `input` parsed by `git`, like `git commit --date` does (`approxidate` in git's `date.c`, which
+/// `input` parsed by `git`, like `git commit --date` does (`approxidate()` in git's `date.c`, which
 /// handles dates like `noon`, or without an offset), or `None` if git refuses it. Relative dates
 /// and dates without an offset are resolved with `now` and its timezone.
 ///
