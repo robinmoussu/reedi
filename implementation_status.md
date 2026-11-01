@@ -335,7 +335,7 @@ version 0.0.8: internal refactoring
      or `try_for_each`
    - [x] constants and comments of the arguments
    - [x] parameters and enums
-   - [ ] test data and test names
+   - [x] test data and test names
    - [ ] comments
 
  - [ ] extract gix-compat into a new library, `reedi-gix-compat` (a workspace member at the root of
