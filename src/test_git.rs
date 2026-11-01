@@ -12,7 +12,6 @@ use jiff::tz::TimeZone;
 use tempfile::TempDir;
 
 use crate::gix_compat::date::RAW_FORMAT;
-use crate::gix_compat::date::parse_raw;
 
 /// A new repository, and the environment `git` runs in. The configuration of the user is not
 /// read, so that the tests don't depend on it.
@@ -111,10 +110,5 @@ impl Git {
         } else {
             Err(String::from_utf8(output.stderr).unwrap())
         }
-    }
-
-    /// The author date of the last commit, as stored (`--date=raw`).
-    pub fn author_time(&self) -> Time {
-        parse_raw(&self.author_date(Some("raw")).unwrap()).unwrap()
     }
 }
