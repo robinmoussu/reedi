@@ -45,7 +45,7 @@ impl Git {
     }
 
     /// `git $args`, whatever its exit status.
-    pub fn run(&self, args: &[&str]) -> Output {
+    fn run(&self, args: &[&str]) -> Output {
         Command::new("git")
             .args(args)
             .current_dir(self.path())
