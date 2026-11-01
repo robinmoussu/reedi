@@ -81,10 +81,10 @@ struct Item {
     break_after: bool,
 }
 
-/// Place `item` at `column` if it fits in `width` columns, and move `column` after it.
+/// Move `column` past `item` if it fits in `width` columns.
 ///
 /// A tab whose spaces up to the next tab stop don't fit is displayed alone, and ends the row.
-fn place_if_fits(item: &Item, column: &mut usize, width: usize) -> bool {
+fn advance_if_fits(item: &Item, column: &mut usize, width: usize) -> bool {
     let item_width = item.cluster.width(*column);
     if *column + item_width <= width {
         *column += item_width;
@@ -129,7 +129,7 @@ fn layout(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
         let ends_row = if column + body_width <= width {
             column += body_width;
             i = body_end;
-            while i < word_end && place_if_fits(&items[i], &mut column, width) {
+            while i < word_end && advance_if_fits(&items[i], &mut column, width) {
                 i += 1;
             }
             i < word_end
@@ -137,7 +137,7 @@ fn layout(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
             true
         } else {
             // A word wider than the text area is split after its last cluster that fits.
-            while i < body_end && place_if_fits(&items[i], &mut column, width) {
+            while i < body_end && advance_if_fits(&items[i], &mut column, width) {
                 i += 1;
             }
             true
