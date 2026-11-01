@@ -70,7 +70,7 @@ impl Git {
     }
 
     /// `git commit --date=$date`, whose stderr is the error if git refuses `date`.
-    pub fn commit_with_date(&self, date: &str) -> Result<(), String> {
+    fn commit_with_date(&self, date: &str) -> Result<(), String> {
         let output = self.run(&[
             "commit",
             "--quiet",
