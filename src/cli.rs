@@ -6,7 +6,7 @@ use std::fmt;
 use clap::Parser;
 use jiff::Timestamp;
 use jiff::Zoned;
-use jiff::tz::Offset;
+use jiff::fmt::strtime;
 use jiff::tz::TimeZone;
 
 use crate::date;
@@ -21,12 +21,12 @@ pub struct Cli {
     /// Display the fake commits (the default for now).
     #[arg(long, hide = true)]
     pub fake: bool,
-    /// The current date (any format of `git commit --date`), to resolve the relative dates and
-    /// the dates without offset of the fake commits, and to display the `relative`, `human` and
-    /// `local` date formats.
+    /// The current date (any format of `git commit --date`), used by the `relative` and `human`
+    /// date formats.
     #[arg(long, hide = true, requires = "fake")]
     pub fake_now: Option<String>,
-    /// The current timezone (IANA name or fixed offset), like `--fake-now`.
+    /// The current timezone (IANA name or fixed offset), used by the `-local` and `human` date
+    /// formats, and by `--fake-now` when it has no offset.
     #[arg(long, hide = true, requires = "fake")]
     pub fake_timezone: Option<String>,
     /// How dates are displayed (any value of `git log --date=`). Defaults to the `log.date` git
@@ -57,11 +57,8 @@ impl Cli {
             return Ok(now);
         };
         let time = date::parse(text, &now).map_err(CliError::InvalidNow)?;
-        let timestamp = Timestamp::from_second(time.seconds).map_err(|_| {
-            CliError::InvalidNow(DateParseError {
-                input: text.clone(),
-            })
-        })?;
+        let timestamp = Timestamp::from_second(time.seconds)
+            .map_err(|_| CliError::InvalidNow(DateParseError { input: text.clone() }))?;
         Ok(timestamp.to_zoned(timezone))
     }
 }
@@ -71,26 +68,12 @@ fn parse_timezone(text: &str) -> Result<TimeZone, CliError> {
     if let Ok(timezone) = TimeZone::get(text) {
         return Ok(timezone);
     }
-    let invalid = || CliError::InvalidTimezone(text.to_string());
-    let sign = match text.chars().next() {
-        Some('+') => 1,
-        Some('-') => -1,
-        _ => return Err(invalid()),
-    };
-    let digits = text[1..].replacen(':', "", 1);
-    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(invalid());
-    }
-    let (hours, minutes) = match digits.len() {
-        2 => (digits.as_str(), "00"),
-        4 => digits.split_at(2),
-        _ => return Err(invalid()),
-    };
-    let seconds =
-        sign * (hours.parse::<i32>().unwrap() * 3600 + minutes.parse::<i32>().unwrap() * 60);
-    Offset::from_seconds(seconds)
+    // `%z` parses `-0530`, and `%:::z` parses `+02:00` and `+02`.
+    ["%z", "%:::z"]
+        .into_iter()
+        .find_map(|format| strtime::parse(format, text).ok()?.offset())
         .map(TimeZone::fixed)
-        .map_err(|_| invalid())
+        .ok_or_else(|| CliError::InvalidTimezone(text.to_string()))
 }
 
 impl fmt::Display for CliError {
@@ -114,13 +97,14 @@ mod tests {
 
     use super::*;
     use crate::date::DateStyle;
+    use crate::gix_compat::date::DisplayedIn;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(["reedi"].iter().chain(args))
     }
 
     #[test]
-    fn no_option() {
+    fn options_are_unset_by_default() {
         let cli = parse(&[]).unwrap();
         assert!(!cli.fake);
         assert_eq!(cli.date_format, None);
@@ -131,7 +115,7 @@ mod tests {
         let cli = parse(&["--date-format", "iso-local"]).unwrap();
         let iso_local = DateFormat {
             style: DateStyle::Iso,
-            local: true,
+            displayed_in: DisplayedIn::LocalTimezone,
         };
         assert_eq!(cli.date_format, Some(iso_local));
     }
@@ -206,9 +190,7 @@ mod tests {
     #[test]
     fn invalid_fake_now_is_an_error() {
         let args = ["--fake", "--fake-now", "not a date"];
-        let invalid = DateParseError {
-            input: "not a date".to_string(),
-        };
+        let invalid = DateParseError { input: "not a date".to_string() };
         assert_eq!(
             parse(&args).unwrap().now(),
             Err(CliError::InvalidNow(invalid))

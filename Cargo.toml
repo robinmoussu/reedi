@@ -31,3 +31,4 @@ test-support = []
 insta = "1.49.0"
 # Enables `test-support` for the integration tests.
 reedi = { path = ".", features = ["test-support"] }
+unicode-bidi = "0.3.18"

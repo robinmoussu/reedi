@@ -74,21 +74,17 @@ mod tests {
 
     use super::*;
     use crate::date::DateStyle;
-    use crate::date::Environment;
     use crate::date::display;
-    use crate::gix_compat::locale::Locale;
+    use crate::gix_compat::date::DisplayedIn;
     use crate::test_git::Git;
 
     /// `2026-10-12 14:32:07 +0200`.
-    const TIME: Time = Time {
-        seconds: 1_791_808_327,
-        offset: 7200,
-    };
+    const TIME: Time = Time { seconds: 1_791_808_327, offset: 7200 };
 
     /// A new repository whose only commit is at `TIME` and whose configuration has
     /// `log.date = $value` (if any), opened without the global and system configuration (so that
     /// the tests don't depend on the configuration of the user).
-    fn repository(value: Option<&str>) -> (Git, gix::Repository) {
+    fn repository_with_a_commit_at_time(value: Option<&str>) -> (Git, gix::Repository) {
         let now: Timestamp = "2026-10-12T17:32:07+02:00".parse().unwrap();
         let git = Git::new(
             &now.to_zoned(TimeZone::get("America/New_York").unwrap()),
@@ -102,8 +98,7 @@ mod tests {
         (git, repository)
     }
 
-    /// `log.date` is interpreted like `git log` does if it is read as the format of the dates it
-    /// displays.
+    /// The dates displayed with the format read from `log.date` are the ones `git log` displays.
     #[test]
     fn log_date_is_read_like_git_log() {
         let values = [
@@ -114,44 +109,38 @@ mod tests {
             "raw",
             "format:%d/%m/%Y",
         ];
-        values.into_iter().for_each(|value| {
-            let (git, repository) = repository(Some(value));
+        for value in values {
+            let (git, repository) = repository_with_a_commit_at_time(Some(value));
             let format = log_date_of(&repository).unwrap().unwrap();
-            let environment = Environment {
-                now: "2026-10-12T17:32:07+02:00"
-                    .parse::<Timestamp>()
-                    .unwrap()
-                    .to_zoned(TimeZone::get("America/New_York").unwrap()),
-                locale: Locale::c(),
-            };
+            let environment = git.environment();
             assert_eq!(
                 display(TIME, &format, &environment),
                 git.author_date(None).unwrap(),
                 "log.date = {value}"
             );
-        });
+        }
     }
 
     #[test]
     fn log_date_is_read_from_the_repository() {
-        let (_git, repository) = repository(Some("iso-local"));
+        let (_git, repository) = repository_with_a_commit_at_time(Some("iso-local"));
         let iso_local = DateFormat {
             style: DateStyle::Iso,
-            local: true,
+            displayed_in: DisplayedIn::LocalTimezone,
         };
         assert_eq!(log_date_of(&repository).unwrap(), Some(iso_local));
     }
 
     #[test]
-    fn log_date_is_unset() {
-        let (_git, repository) = repository(None);
+    fn unset_log_date_is_none() {
+        let (_git, repository) = repository_with_a_commit_at_time(None);
         assert_eq!(log_date_of(&repository).unwrap(), None);
     }
 
     /// An invalid `log.date` is refused by `git log` too.
     #[test]
     fn invalid_log_date_is_an_error() {
-        let (git, repository) = repository(Some("bogus"));
+        let (git, repository) = repository_with_a_commit_at_time(Some("bogus"));
         assert!(git.author_date(None).is_err());
         let error = log_date_of(&repository).unwrap_err();
         assert!(matches!(

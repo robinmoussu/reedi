@@ -68,13 +68,13 @@ pub fn invisible_characters() -> Commit {
     named(INVISIBLE_CHARACTERS)
 }
 
-/// A commit modifying two chunks of the same file.
+/// A commit modifying two hunks of the same file.
 #[cfg(any(test, feature = "test-support"))]
 pub fn scrolloff_rename() -> Commit {
     named(SCROLLOFF_RENAME)
 }
 
-/// A commit modifying one chunk of a file, and three chunks of another one.
+/// A commit modifying one hunk of a file, and three hunks of another one.
 #[cfg(any(test, feature = "test-support"))]
 pub fn search_rename() -> Commit {
     named(SEARCH_RENAME)
@@ -102,6 +102,9 @@ pub fn ltr_then_rtl_summary() -> Commit {
 
 #[cfg(test)]
 mod tests {
+    use unicode_bidi::BidiClass;
+    use unicode_bidi::bidi_class;
+
     use super::*;
     use crate::model::FileChange;
     use crate::model::FileContentType;
@@ -125,7 +128,7 @@ mod tests {
     #[test]
     fn named_functions_return_a_commit_of_all() {
         let hashes: Vec<_> = all().into_iter().map(|commit| commit.hash).collect();
-        [
+        for commit in [
             file_changes(),
             line_wrapping(),
             invisible_characters(),
@@ -134,9 +137,9 @@ mod tests {
             rtl_summary(),
             rtl_then_ltr_summary(),
             ltr_then_rtl_summary(),
-        ]
-        .into_iter()
-        .for_each(|commit| assert!(hashes.contains(&commit.hash), "{}", commit.subject));
+        ] {
+            assert!(hashes.contains(&commit.hash), "{}", commit.subject);
+        }
     }
 
     #[test]
@@ -182,7 +185,7 @@ mod tests {
             .output()
             .unwrap();
         let attributes = String::from_utf8(output.stdout).unwrap();
-        paths.iter().for_each(|path| {
+        for path in &paths {
             assert!(
                 attributes.contains(&format!("{path}: text: unset")),
                 "{path}"
@@ -191,7 +194,7 @@ mod tests {
                 attributes.contains(&format!("{path}: whitespace: unset")),
                 "{path}"
             );
-        });
+        }
     }
 
     #[test]
@@ -218,29 +221,27 @@ mod tests {
             .skip(1)
             .take_while(|line| !line.starts_with('['))
             .collect();
-        [
+        for property in [
             "charset",
             "end_of_line",
             "indent_style",
             "insert_final_newline",
             "trim_trailing_whitespace",
-        ]
-        .into_iter()
-        .for_each(|property| {
+        ] {
             assert!(
                 section.contains(&format!("{property} = unset").as_str()),
                 "{property}"
             );
-        });
+        }
     }
 
     #[test]
     fn fake_hashes_are_full_hashes() {
-        all().iter().for_each(|commit| {
+        for commit in &all() {
             let hash = commit.hash.to_string();
             assert_eq!(hash.len(), 40, "{hash}");
             assert!(hash.bytes().all(|byte| byte.is_ascii_hexdigit()), "{hash}");
-        });
+        }
     }
 
     #[test]
@@ -249,9 +250,7 @@ mod tests {
         let changes: Vec<_> = files.iter().map(|file| &file.change).collect();
         assert!(changes.contains(&&FileChange::Added));
         assert!(changes.contains(&&FileChange::Deleted));
-        assert!(changes.contains(&&FileChange::Renamed {
-            from: "src/hash.rs".into()
-        }));
+        assert!(changes.contains(&&FileChange::Renamed { from: "src/hash.rs".into() }));
         let contents: Vec<_> = files.iter().map(|file| file.content).collect();
         assert!(contents.contains(&FileContentType::Binary));
         assert!(contents.contains(&FileContentType::InvalidUtf8));
@@ -260,24 +259,24 @@ mod tests {
     #[test]
     fn some_lines_are_only_removed_or_only_added() {
         let release = &file_changes().files[0];
-        let kinds = |chunk: usize| -> Vec<_> {
-            release.chunks[chunk]
+        let kinds = |hunk: usize| -> Vec<_> {
+            release.hunks[hunk]
                 .lines
                 .iter()
                 .map(|line| line.kind)
                 .filter(|kind| *kind != LineKind::Unchanged)
                 .collect()
         };
-        assert_eq!(kinds(0), [LineKind::Added; 3]);
-        assert_eq!(kinds(1), [LineKind::Removed; 5]);
+        assert_eq!(kinds(/* hunk */ 0), [LineKind::Added; 3]);
+        assert_eq!(kinds(/* hunk */ 1), [LineKind::Removed; 5]);
     }
 
     #[test]
-    fn files_without_newline_at_their_end() {
+    fn some_files_have_no_newline_at_their_end() {
         let files = file_changes().files;
         let missing = |path: &str| -> Vec<_> {
             let file = files.iter().find(|file| file.path == path).unwrap();
-            let lines = file.chunks.iter().flat_map(|chunk| &chunk.lines);
+            let lines = file.hunks.iter().flat_map(|hunk| &hunk.lines);
             lines
                 .filter(|line| line.missing_newline)
                 .map(|line| line.kind)
@@ -287,31 +286,43 @@ mod tests {
         assert_eq!(missing("config/default.toml"), [LineKind::Removed]);
     }
 
-    /// The letters of the summary of `commit`, as `true` for the right-to-left ones (Hebrew and
-    /// Arabic) and `false` for the left-to-right ones (ASCII).
-    fn letters_directions(commit: &Commit) -> Vec<bool> {
+    /// The direction a letter is written in.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Direction {
+        LeftToRight,
+        RightToLeft,
+    }
+
+    /// The directions of the letters of the summary of `commit`.
+    fn letters_directions(commit: &Commit) -> Vec<Direction> {
         commit
             .subject
             .chars()
             .filter(|c| c.is_alphabetic())
-            .map(|c| match c {
-                '\u{0590}'..='\u{06ff}' => true,
-                c if c.is_ascii_alphabetic() => false,
-                c => panic!("{c:?} is neither Hebrew, Arabic nor ASCII"),
+            .map(|c| match bidi_class(c) {
+                BidiClass::R | BidiClass::AL => Direction::RightToLeft,
+                BidiClass::L => Direction::LeftToRight,
+                class => panic!("{c:?} is neither right-to-left nor left-to-right ({class:?})"),
             })
             .collect()
     }
 
+    /// In Hebrew, whose letters are of the bidi class `R`, while the other right-to-left summaries
+    /// are in Arabic, whose letters are of the bidi class `AL`.
     #[test]
-    fn a_summary_is_fully_in_a_right_to_left_language() {
+    fn a_summary_is_fully_in_hebrew() {
         let directions = letters_directions(&rtl_summary());
         assert!(!directions.is_empty());
-        assert!(directions.iter().all(|rtl| *rtl));
+        assert!(
+            directions
+                .iter()
+                .all(|direction| *direction == Direction::RightToLeft)
+        );
         assert!(
             rtl_summary()
                 .subject
                 .chars()
-                .any(|c| ('\u{05d0}'..='\u{05ea}').contains(&c))
+                .any(|c| bidi_class(c) == BidiClass::R)
         );
     }
 
@@ -319,8 +330,8 @@ mod tests {
     fn a_summary_is_in_arabic_then_in_a_left_to_right_language() {
         let commit = rtl_then_ltr_summary();
         let directions = letters_directions(&commit);
-        assert_eq!(directions.first(), Some(&true));
-        assert_eq!(directions.last(), Some(&false));
+        assert_eq!(directions.first(), Some(&Direction::RightToLeft));
+        assert_eq!(directions.last(), Some(&Direction::LeftToRight));
         // Both directions are each in a single block.
         assert_eq!(
             directions
@@ -333,7 +344,7 @@ mod tests {
             commit
                 .subject
                 .chars()
-                .any(|c| ('\u{0620}'..='\u{064a}').contains(&c))
+                .any(|c| bidi_class(c) == BidiClass::AL)
         );
     }
 
@@ -341,8 +352,8 @@ mod tests {
     fn a_summary_is_in_a_left_to_right_language_then_in_arabic() {
         let commit = ltr_then_rtl_summary();
         let directions = letters_directions(&commit);
-        assert_eq!(directions.first(), Some(&false));
-        assert_eq!(directions.last(), Some(&true));
+        assert_eq!(directions.first(), Some(&Direction::LeftToRight));
+        assert_eq!(directions.last(), Some(&Direction::RightToLeft));
         // Both directions are each in a single block.
         assert_eq!(
             directions
@@ -355,26 +366,24 @@ mod tests {
             commit
                 .subject
                 .chars()
-                .any(|c| ('\u{0620}'..='\u{064a}').contains(&c))
+                .any(|c| bidi_class(c) == BidiClass::AL)
         );
     }
 
     #[test]
-    fn the_new_short_commits_modify_a_single_ascii_line() {
-        [
+    fn commits_with_a_right_to_left_summary_modify_a_single_ascii_line() {
+        for commit in &[
             rtl_summary(),
             rtl_then_ltr_summary(),
             ltr_then_rtl_summary(),
-        ]
-        .iter()
-        .for_each(|commit| {
+        ] {
             assert_eq!(commit.files.len(), 1, "{}", commit.subject);
             let file = &commit.files[0];
-            assert_eq!(file.chunks.len(), 1, "{}", commit.subject);
-            let lines = &file.chunks[0].lines;
+            assert_eq!(file.hunks.len(), 1, "{}", commit.subject);
+            let lines = &file.hunks[0].lines;
             let kinds: Vec<_> = lines.iter().map(|line| line.kind).collect();
             assert_eq!(kinds, [LineKind::Removed, LineKind::Added]);
             assert!(lines.iter().all(|line| line.text.is_ascii()));
-        });
+        }
     }
 }

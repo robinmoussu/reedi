@@ -30,10 +30,7 @@ pub struct Segment<'a> {
 impl<'a> Segment<'a> {
     /// A segment that is not markup.
     pub fn new(text: &'a str) -> Self {
-        Self {
-            text,
-            markup: false,
-        }
+        Self { text, markup: false }
     }
 }
 
@@ -42,7 +39,7 @@ impl<'a> Segment<'a> {
 pub struct TextRow {
     /// Position of the first character displayed on the row, in bytes, in the concatenation of
     /// the segments of the line (without their hidden carriage returns).
-    pub start: usize,
+    pub start_byte: usize,
     /// Number of columns used by the pieces (at most the width of the text area).
     pub columns_count: usize,
     /// The displayed pieces, with the index of their segment.
@@ -73,7 +70,7 @@ impl Error for TooNarrow {}
 /// A cluster, with the index of its segment.
 #[derive(Debug, Clone)]
 struct Item {
-    segment: usize,
+    segment_index: usize,
     /// See [`Segment::markup`].
     markup: bool,
     cluster: Cluster,
@@ -81,17 +78,15 @@ struct Item {
     break_after: bool,
 }
 
-/// Place `item` at `column` if it fits in `width` columns, and move `column` after it.
+/// Move `column` past `item` if it fits in `width` columns, and return whether it was moved.
 ///
 /// A tab whose spaces up to the next tab stop don't fit is displayed alone, and ends the row.
-fn fits(item: &Item, column: &mut usize, width: usize) -> bool {
+fn advance_if_fits(item: &Item, column: &mut usize, width: usize) -> bool {
     let item_width = item.cluster.width(*column);
     if *column + item_width <= width {
         *column += item_width;
         true
-    } else if matches!(item.cluster.content, Content::Contextual(Contextual::Tab))
-        && *column < width
-    {
+    } else if item.cluster.is_tab() && *column < width {
         *column = width;
         true
     } else {
@@ -99,22 +94,29 @@ fn fits(item: &Item, column: &mut usize, width: usize) -> bool {
     }
 }
 
-/// The items displayed on each row, the line being broken as late as possible.
+/// Move `column` past the items at the start of `items` while they fit, as [`advance_if_fits()`]
+/// does, and return the number of items it moved past.
+fn advance_while_fits(items: &[Item], column: &mut usize, width: usize) -> usize {
+    items
+        .iter()
+        .take_while(|item| advance_if_fits(item, column, width))
+        .count()
+}
+
+/// The number of items of `items` that fit on its first row of `width` columns.
 ///
-/// Fails with the index of an item that doesn't fit on an empty row.
-fn layout(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
-    let mut rows = Vec::new();
-    let mut row_start = 0;
+/// The row ends after the last word that fits, the whitespace ending a word not needing to fit:
+/// the whitespace that doesn't fit starts the next row. A word wider than `width` columns is
+/// split after its last cluster that fits.
+///
+/// Returns `None` if the first item doesn't fit on the row.
+fn items_count_fitting_in_first_row(items: &[Item], width: usize) -> Option<usize> {
     let mut column = 0;
-    let mut i = 0;
-    while i < items.len() {
-        let word_end = items[i..]
-            .iter()
-            .position(|item| item.break_after)
-            .map_or(items.len(), |end| i + end + 1);
-        // The spaces and tabs ending a word don't need to fit: they are moved to the next row.
-        let body_end = word_end
-            - items[i..word_end]
+    let mut word_start = 0;
+    for word in items.split_inclusive(|item| item.break_after) {
+        // The whitespace ending the word doesn't need to fit: what doesn't fit starts the next row.
+        let body_len = word.len()
+            - word
                 .iter()
                 .rev()
                 .take_while(|item| {
@@ -124,44 +126,52 @@ fn layout(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
                     )
                 })
                 .count();
-        let body_width = items[i..body_end]
+        let (body, trailing_whitespace) = word.split_at(body_len);
+        let body_width = body
             .iter()
             .fold(column, |column, item| column + item.cluster.width(column))
             - column;
-        let ends_row = if column + body_width <= width {
+        let len = if column + body_width <= width {
             column += body_width;
-            i = body_end;
-            while i < word_end && fits(&items[i], &mut column, width) {
-                i += 1;
+            let fitting_count = advance_while_fits(trailing_whitespace, &mut column, width);
+            if fitting_count == trailing_whitespace.len() {
+                word_start += word.len();
+                continue;
             }
-            i < word_end
-        } else if i > row_start {
-            true
+            word_start + body_len + fitting_count
+        } else if word_start > 0 {
+            word_start
         } else {
             // A word wider than the text area is split after its last cluster that fits.
-            while i < body_end && fits(&items[i], &mut column, width) {
-                i += 1;
-            }
-            true
+            advance_while_fits(body, &mut column, width)
         };
-        if ends_row {
-            if i == row_start {
-                return Err(i);
-            }
-            rows.push(row_start..i);
-            row_start = i;
-            column = 0;
+        return if len > 0 { Some(len) } else { None };
+    }
+    Some(items.len())
+}
+
+/// Split `items` into the rows of a text area of `width` columns, each row holding as many
+/// words as fit, and return the range of item indexes of each row.
+///
+/// If an item doesn't fit on an empty row, fails with its index.
+fn split_into_rows(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
+    let mut rows = Vec::new();
+    let mut row_start = 0;
+    loop {
+        let len = items_count_fitting_in_first_row(&items[row_start..], width).ok_or(row_start)?;
+        rows.push(row_start..row_start + len);
+        row_start += len;
+        if row_start == items.len() {
+            return Ok(rows);
         }
     }
-    rows.push(row_start..items.len());
-    Ok(rows)
 }
 
 /// Number of spaces and U+2800 in the whitespace at the start of `items`.
 fn blanks_count<'a>(items: impl Iterator<Item = &'a Item>) -> usize {
     items
         .take_while(|item| item.cluster.is_contextual())
-        .filter(|item| !matches!(item.cluster.content, Content::Contextual(Contextual::Tab)))
+        .filter(|item| !item.cluster.is_tab())
         .count()
 }
 
@@ -214,20 +224,14 @@ impl RowBreaks {
     fn wrap(&self, row: &[Item], i: usize) -> Wrap {
         let item = &row[i];
         // The only space or U+2800 around a break.
-        let single = |blanks: Option<usize>| {
-            blanks == Some(1)
-                && !matches!(item.cluster.content, Content::Contextual(Contextual::Tab))
-        };
+        let single = |blanks: Option<usize>| blanks == Some(1) && !item.cluster.is_tab();
         let ends_row = i >= self.ending_whitespace_start;
         let starts_row = i < self.leading_whitespace_end;
         if item.markup {
             Wrap::None
         } else if ends_row && single(self.blanks_after) {
             Wrap::Single
-        } else if ends_row
-            && (!matches!(item.cluster.content, Content::Contextual(Contextual::Tab))
-                || i + 1 == row.len())
-        {
+        } else if ends_row && (!item.cluster.is_tab() || i + 1 == row.len()) {
             Wrap::BeforeBreak
         } else if starts_row && single(self.blanks_before) {
             Wrap::Single
@@ -239,7 +243,7 @@ impl RowBreaks {
     }
 }
 
-/// The row displaying `items` (the items placed on it by [`layout`]) in a text area of `width`
+/// The row displaying `items` (its items, split by [`split_into_rows()`]) in a text area of `width`
 /// columns.
 ///
 /// `blanks_before` is the number of spaces and U+2800 around the break before the row, if it is a
@@ -260,9 +264,9 @@ fn text_row(
                 let column = groups.last().map_or(0, |(_, pieces)| pieces.column);
                 if groups
                     .last()
-                    .is_none_or(|(segment, _)| *segment != item.segment)
+                    .is_none_or(|(segment_index, _)| *segment_index != item.segment_index)
                 {
-                    groups.push((item.segment, Pieces::new(column)));
+                    groups.push((item.segment_index, Pieces::new(column)));
                 }
                 let (_, pieces) = groups.last_mut().expect("a group was just pushed");
                 item.cluster
@@ -270,19 +274,22 @@ fn text_row(
                 groups
             });
     TextRow {
-        start: items.first().map_or(0, |item| item.cluster.range.start),
+        start_byte: items.first().map_or(0, |item| item.cluster.range.start),
         columns_count: groups.last().map_or(0, |(_, pieces)| pieces.column),
         pieces: groups
             .into_iter()
-            .flat_map(|(segment, pieces)| {
-                pieces.pieces.into_iter().map(move |piece| (segment, piece))
+            .flat_map(|(segment_index, pieces)| {
+                pieces
+                    .pieces
+                    .into_iter()
+                    .map(move |piece| (segment_index, piece))
             })
             .collect(),
     }
 }
 
 /// Display the line made of `segments` on rows of `width` columns, with its invisible characters
-/// replaced. A line has always at least one row.
+/// replaced. A line always has at least one row.
 ///
 /// The line is broken at the break opportunities of the Unicode line breaking algorithm (UAX
 /// #14), computed on the original text. A carriage return ending a segment is replaced if
@@ -307,7 +314,7 @@ pub fn wrap(
     let items: Vec<Item> = texts
         .iter()
         .enumerate()
-        .scan(0, |offset, (segment, text)| {
+        .scan(0, |offset, (segment_index, text)| {
             let start = *offset;
             *offset += text.len();
             // The hidden carriage returns are already removed.
@@ -315,25 +322,25 @@ pub fn wrap(
             Some(
                 clusters
                     .into_iter()
-                    .map(move |cluster| (segment, start, cluster)),
+                    .map(move |cluster| (segment_index, start, cluster)),
             )
         })
         .flatten()
-        .map(|(segment, start, cluster)| {
+        .map(|(segment_index, start, cluster)| {
             let range = start + cluster.range.start..start + cluster.range.end;
             Item {
-                segment,
-                markup: segments[segment].markup,
+                segment_index,
+                markup: segments[segment_index].markup,
                 break_after: opportunities.binary_search(&range.end).is_ok(),
                 cluster: Cluster {
                     range,
-                    trailing: cluster.trailing && !segments[segment].markup,
+                    trailing: cluster.trailing && !segments[segment_index].markup,
                     ..cluster
                 },
             }
         })
         .collect();
-    let rows = layout(&items, width).map_err(|i| TooNarrow {
+    let rows = split_into_rows(&items, width).map_err(|i| TooNarrow {
         width,
         cluster: text[items[i].cluster.range.clone()].to_string(),
     })?;
@@ -383,63 +390,69 @@ mod tests {
     }
 
     fn piece(text: &str, kind: Kind) -> Piece {
-        Piece {
-            text: text.to_string(),
-            kind,
-        }
+        Piece { text: text.to_string(), kind }
     }
 
     #[test]
     fn short_lines_are_not_wrapped() {
-        assert_eq!(rows("let a = b;", 10), ["let a = b;"]);
+        assert_eq!(rows("let a = b;", /* width */ 10), ["let a = b;"]);
     }
 
     #[test]
     fn empty_lines_have_one_empty_row() {
-        assert_eq!(rows("", 10), [""]);
+        assert_eq!(rows("", /* width */ 10), [""]);
         // Even if the text area has no column.
-        assert_eq!(rows("", 0), [""]);
+        assert_eq!(rows("", /* width */ 0), [""]);
     }
 
     #[test]
     fn lines_are_broken_at_spaces_as_late_as_possible() {
-        assert_eq!(rows("the quick brown fox", 10), ["the quick ", "brown fox"]);
+        assert_eq!(
+            rows("the quick brown fox", /* width */ 10),
+            ["the quick ", "brown fox"]
+        );
     }
 
     #[test]
     fn lines_are_broken_after_a_hyphen() {
-        assert_eq!(rows("a well-known word", 9), ["a well-", "known ", "word"]);
+        assert_eq!(
+            rows("a well-known word", /* width */ 9),
+            ["a well-", "known ", "word"]
+        );
     }
 
     #[test]
     fn lines_are_not_broken_between_a_dot_and_a_letter() {
-        assert_eq!(rows("see example.com", 12), ["see ", "example.com"]);
+        assert_eq!(
+            rows("see example.com", /* width */ 12),
+            ["see ", "example.com"]
+        );
     }
 
     #[test]
     fn words_wider_than_the_text_area_are_split() {
-        assert_eq!(rows("abcdefgh", 3), ["abc", "def", "gh"]);
+        assert_eq!(rows("abcdefgh", /* width */ 3), ["abc", "def", "gh"]);
     }
 
     #[test]
     fn words_are_split_between_grapheme_clusters() {
-        assert_eq!(rows("abe\u{301}cd", 3), ["abe\u{301}", "cd"]);
+        assert_eq!(rows("abe\u{301}cd", /* width */ 3), ["abe\u{301}", "cd"]);
     }
 
     #[test]
     fn wide_characters_that_do_not_fit_go_to_the_next_row() {
         // `日` and `本` are 2 columns wide, with a break opportunity between them.
-        assert_eq!(rows("a日本", 4), ["a日", "本"]);
+        assert_eq!(rows("a日本", /* width */ 4), ["a日", "本"]);
         // No break opportunity before `。`, so the word `日。` is split.
-        assert_eq!(rows("日。", 3), ["日", "。"]);
+        assert_eq!(rows("日。", /* width */ 3), ["日", "。"]);
     }
 
     #[test]
     fn single_space_at_a_break_is_not_displayed() {
         // Moved to the next row.
-        assert_eq!(rows("abc d", 3), ["abc", " d"]);
+        assert_eq!(rows("abc d", /* width */ 3), ["abc", " d"]);
         assert_eq!(
-            pieces("ab cd", 3),
+            pieces("ab cd", /* width */ 3),
             [
                 vec![piece("ab ", Kind::Text)],
                 vec![piece("cd", Kind::Text)]
@@ -447,7 +460,7 @@ mod tests {
         );
         // Unless they are trailing spaces.
         assert_eq!(
-            pieces("ab  ", 3)[0],
+            pieces("ab  ", /* width */ 3)[0],
             [
                 piece("ab", Kind::Text),
                 piece("∙", Kind::TrailingWhitespace)
@@ -458,7 +471,7 @@ mod tests {
     #[test]
     fn spaces_before_a_break_are_dimmed_if_there_are_several() {
         assert_eq!(
-            pieces("ab  cd", 4),
+            pieces("ab  cd", /* width */ 4),
             [
                 vec![piece("ab", Kind::Text), piece("∙∙", Kind::DimmedWhitespace)],
                 vec![piece("cd", Kind::Text)],
@@ -468,15 +481,15 @@ mod tests {
 
     #[test]
     fn spaces_that_do_not_fit_are_moved_to_the_next_row() {
-        assert_eq!(rows("abc   def", 5), ["abc∙∙", " def"]);
+        assert_eq!(rows("abc   def", /* width */ 5), ["abc∙∙", " def"]);
         // The spaces moved to the next row count as being around the break.
-        assert_eq!(rows("abc  def", 4), ["abc∙", " def"]);
+        assert_eq!(rows("abc  def", /* width */ 4), ["abc∙", " def"]);
     }
 
     #[test]
     fn trailing_whitespace_is_wrapped_and_highlighted() {
         assert_eq!(
-            pieces("ab    ", 3),
+            pieces("ab    ", /* width */ 3),
             [
                 vec![
                     piece("ab", Kind::Text),
@@ -486,7 +499,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            pieces("ab\t\t", 4),
+            pieces("ab\t\t", /* width */ 4),
             [
                 vec![
                     piece("ab", Kind::Text),
@@ -500,30 +513,30 @@ mod tests {
     #[test]
     fn tab_before_a_break_is_displayed_alone() {
         // The tab fits, but `cdef` doesn't.
-        assert_eq!(rows("ab\tcdef", 6), ["ab⇥", "cdef"]);
+        assert_eq!(rows("ab\tcdef", /* width */ 6), ["ab⇥", "cdef"]);
         // Only `⇥` fits.
-        assert_eq!(rows("abcde\tx", 6), ["abcde⇥", "x"]);
+        assert_eq!(rows("abcde\tx", /* width */ 6), ["abcde⇥", "x"]);
         assert_eq!(
-            pieces("ab\tcdef", 6)[0],
+            pieces("ab\tcdef", /* width */ 6)[0],
             [piece("ab", Kind::Text), piece("⇥", Kind::DimmedWhitespace)]
         );
     }
 
     #[test]
     fn tab_after_a_break_reaches_the_next_tab_stop() {
-        assert_eq!(rows("abcdef\tx", 6), ["abcdef", "⇥   x"]);
+        assert_eq!(rows("abcdef\tx", /* width */ 6), ["abcdef", "⇥   x"]);
         // Tab stops are counted from the start of the text area.
-        assert_eq!(rows("abcdef g\tx", 6), ["abcdef", " g⇥ x"]);
+        assert_eq!(rows("abcdef g\tx", /* width */ 6), ["abcdef", " g⇥ x"]);
     }
 
     #[test]
     fn braille_blanks_at_a_break_are_dimmed_if_there_are_several() {
         assert_eq!(
-            pieces("a\u{2800}\u{2800}cd", 3)[0],
+            pieces("a\u{2800}\u{2800}cd", /* width */ 3)[0],
             [piece("a", Kind::Text), piece("∙∙", Kind::DimmedWhitespace)]
         );
         assert_eq!(
-            pieces("abc\u{2800}\u{2800}d", 3)[1],
+            pieces("abc\u{2800}\u{2800}d", /* width */ 3)[1],
             [piece("∙∙", Kind::DimmedWhitespace), piece("d", Kind::Text)]
         );
     }
@@ -531,32 +544,35 @@ mod tests {
     #[test]
     fn single_braille_blank_at_a_break_is_not_displayed() {
         assert_eq!(
-            pieces("ab\u{2800}cd", 3),
+            pieces("ab\u{2800}cd", /* width */ 3),
             [
                 vec![piece("ab ", Kind::Text)],
                 vec![piece("cd", Kind::Text)]
             ]
         );
         // Its column is left blank.
-        assert_eq!(pieces("abc\u{2800}d", 3)[1], [piece(" d", Kind::Text)]);
-        assert_eq!(rows("a\u{2800}b", 10), ["a\u{2800}b"]);
+        assert_eq!(
+            pieces("abc\u{2800}d", /* width */ 3)[1],
+            [piece(" d", Kind::Text)]
+        );
+        assert_eq!(rows("a\u{2800}b", /* width */ 10), ["a\u{2800}b"]);
     }
 
     #[test]
     fn break_opportunities_are_computed_on_the_original_text() {
         // There is a break opportunity after a zero-width space, but not after `⌁`.
-        assert_eq!(rows("ab\u{200b}cd", 4), ["ab⌁", "cd"]);
+        assert_eq!(rows("ab\u{200b}cd", /* width */ 4), ["ab⌁", "cd"]);
     }
 
     #[test]
     fn segments_are_wrapped_as_a_single_line() {
         let segments = ["abc ", "de", "f gh"].map(Segment::new);
-        let rows = wrap(&segments, FinalCr::Shown, 8).unwrap();
+        let rows = wrap(&segments, FinalCr::Shown, /* width */ 8).unwrap();
         assert_eq!(
             rows,
             [
                 TextRow {
-                    start: 0,
+                    start_byte: 0,
                     columns_count: 8,
                     pieces: vec![
                         (0, piece("abc", Kind::Text)),
@@ -566,7 +582,7 @@ mod tests {
                     ],
                 },
                 TextRow {
-                    start: 8,
+                    start_byte: 8,
                     columns_count: 2,
                     pieces: vec![(2, piece("gh", Kind::Text))],
                 },
@@ -576,7 +592,12 @@ mod tests {
 
     #[test]
     fn tab_stops_are_counted_from_the_start_of_the_row_in_all_segments() {
-        let rows = wrap(&["ab", "\tc"].map(Segment::new), FinalCr::Shown, 20).unwrap();
+        let rows = wrap(
+            &["ab", "\tc"].map(Segment::new),
+            FinalCr::Shown,
+            /* width */ 20,
+        )
+        .unwrap();
         assert_eq!(rows[0].pieces[1], (1, piece("⇥ ", Kind::DimmedWhitespace)));
     }
 
@@ -594,12 +615,12 @@ mod tests {
             markup("b  "),
             markup("  c "),
         ];
-        let rows = wrap(&segments, FinalCr::Shown, 7).unwrap();
+        let rows = wrap(&segments, FinalCr::Shown, /* width */ 7).unwrap();
         assert_eq!(
             rows,
             [
                 TextRow {
-                    start: 0,
+                    start_byte: 0,
                     columns_count: 7,
                     pieces: vec![
                         (0, piece("a", Kind::Text)),
@@ -609,7 +630,7 @@ mod tests {
                     ],
                 },
                 TextRow {
-                    start: 7,
+                    start_byte: 7,
                     columns_count: 4,
                     pieces: vec![(3, piece("  c ", Kind::Text))],
                 },
@@ -619,44 +640,47 @@ mod tests {
 
     #[test]
     fn rows_start_at_their_first_character() {
-        let starts: Vec<_> = wrap(&[Segment::new("the quick brown")], FinalCr::Shown, 10)
-            .unwrap()
-            .into_iter()
-            .map(|row| row.start)
-            .collect();
+        let starts: Vec<_> = wrap(
+            &[Segment::new("the quick brown")],
+            FinalCr::Shown,
+            /* width */ 10,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|row| row.start_byte)
+        .collect();
         assert_eq!(starts, [0, 10]);
     }
 
     #[test]
     fn width_of_a_row_is_counted_per_grapheme_cluster() {
         // As a whole, `unicode-width` counts the lam-alef ligature `لا` as 1 column.
-        let rows = wrap(&[Segment::new("سلام")], FinalCr::Shown, 10).unwrap();
+        let rows = wrap(&[Segment::new("سلام")], FinalCr::Shown, /* width */ 10).unwrap();
         assert_eq!(rows[0].columns_count, 4);
     }
 
     #[test]
     fn hidden_carriage_return_is_not_displayed() {
-        let rows = wrap(&[Segment::new("ab\r")], FinalCr::Hidden, 10).unwrap();
+        let rows = wrap(
+            &[Segment::new("ab\r")],
+            FinalCr::Hidden,
+            /* width */ 10,
+        )
+        .unwrap();
         assert_eq!(rows[0].pieces, [(0, piece("ab", Kind::Text))]);
-        let rows = wrap(&[Segment::new("ab\r")], FinalCr::Shown, 10).unwrap();
+        let rows = wrap(&[Segment::new("ab\r")], FinalCr::Shown, /* width */ 10).unwrap();
         assert_eq!(rows[0].pieces[1], (0, piece("␍", Kind::Replacement)));
     }
 
     #[test]
     fn too_narrow_text_area_is_an_error() {
-        let error = wrap(&[Segment::new("a日")], FinalCr::Shown, 1).unwrap_err();
-        assert_eq!(
-            error,
-            TooNarrow {
-                width: 1,
-                cluster: "日".to_string()
-            }
-        );
+        let error = wrap(&[Segment::new("a日")], FinalCr::Shown, /* width */ 1).unwrap_err();
+        assert_eq!(error, TooNarrow { width: 1, cluster: "日".to_string() });
         assert_eq!(
             error.to_string(),
             "the terminal is too narrow to display \"日\" in a text area of 1 column"
         );
-        assert!(wrap(&[Segment::new("a")], FinalCr::Shown, 0).is_err());
-        assert!(wrap(&[Segment::new(" ")], FinalCr::Shown, 0).is_err());
+        assert!(wrap(&[Segment::new("a")], FinalCr::Shown, /* width */ 0).is_err());
+        assert!(wrap(&[Segment::new(" ")], FinalCr::Shown, /* width */ 0).is_err());
     }
 }

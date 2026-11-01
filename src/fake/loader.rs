@@ -14,6 +14,7 @@ use serde::Deserialize;
 
 use crate::date::DateParseError;
 use crate::diff;
+use crate::diff::DiffAs;
 use crate::diff::FileState;
 use crate::model::Commit;
 use crate::model::Decoration;
@@ -26,12 +27,16 @@ pub const METADATA_FILE: &str = "metadata.toml";
 /// `git commit --date`, it is always absolute, like the dates stored by git.
 const DATE_FORMAT: &str = "%Y-%m-%d %H:%M:%S %z";
 
+/// The number of digits of the index starting the names of the folders and files of the fake
+/// commits (`01_`).
+const INDEX_DIGITS_COUNT: usize = 2;
+
 /// The number of hexadecimal characters of a full hash (SHA-1).
 const HASH_LEN: usize = 40;
 
-/// The attributes of `.gitattributes` that make a file binary, and the one that makes it text even
-/// if it contains a NUL byte.
+/// The attributes of `.gitattributes` that make a file binary.
 const BINARY_ATTRIBUTES: [&str; 2] = ["binary", "-diff"];
+/// The attribute of `.gitattributes` that makes a file text, even if it contains a NUL byte.
 const TEXT_ATTRIBUTE: &str = "diff";
 
 /// The fake commits, one folder each.
@@ -47,7 +52,7 @@ pub enum Version {
     After,
 }
 
-/// The name of a file of a fake commit, `$id_$state_$filename`.
+/// The name of a file of a fake commit, `$id_$version_$path`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileName {
     /// The index of the pair of files, starting from 1.
@@ -67,7 +72,7 @@ pub struct RawFile<'a> {
 /// The folder of a fake commit.
 #[derive(Debug, Clone)]
 pub struct Folder<'a> {
-    /// `${reverse_order}_${descriptive_commit_name}`
+    /// `$index_$description`
     pub name: &'a str,
     pub files: Vec<RawFile<'a>>,
 }
@@ -75,10 +80,10 @@ pub struct Folder<'a> {
 /// The files of a fake commit are invalid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FakeDataError {
-    /// The name of a folder is not `${reverse_order}_${descriptive_commit_name}`.
+    /// The name of a folder is not `$index_$description`.
     #[cfg(any(test, feature = "test-support"))]
     InvalidFolderName(String),
-    /// A file is neither the metadata nor named `$id_$state_$filename`.
+    /// A file is neither the metadata nor named `$id_$version_$path`.
     InvalidFileName(String),
     MissingMetadata,
     /// The metadata is not valid TOML, has an unknown or missing key, or an invalid value.
@@ -152,7 +157,7 @@ struct Decorations {
 }
 
 impl Decorations {
-    /// In the order of `git log --decorate`.
+    /// Convert to the decorations of the model, in the order of `git log --decorate`.
     fn into_model(self) -> Vec<Decoration> {
         let head = self.head.map(|branch| {
             Decoration::Head(if branch.is_empty() {
@@ -173,30 +178,30 @@ impl Decorations {
     }
 }
 
+/// The index starting `name` (`INDEX_DIGITS_COUNT` digits followed by `_`), and the rest of
+/// `name`.
+fn split_index(name: &str) -> Option<(usize, &str)> {
+    let digits = name.get(..INDEX_DIGITS_COUNT)?;
+    let rest = name.get(INDEX_DIGITS_COUNT..)?.strip_prefix('_')?;
+    if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some((digits.parse().ok()?, rest))
+}
+
 /// The index and the description of the commit of the folder `name`.
 #[cfg(any(test, feature = "test-support"))]
 pub fn parse_folder_name(name: &str) -> Result<(usize, &str), FakeDataError> {
-    let invalid = || FakeDataError::InvalidFolderName(name.to_string());
-    let (index, description) = name.split_at_checked(3).ok_or_else(invalid)?;
-    let digits = index.strip_suffix('_').ok_or_else(invalid)?;
-    if digits.len() != 2
-        || !digits.bytes().all(|byte| byte.is_ascii_digit())
-        || description.is_empty()
-    {
-        return Err(invalid());
+    match split_index(name) {
+        Some((index, description)) if !description.is_empty() => Ok((index, description)),
+        _ => Err(FakeDataError::InvalidFolderName(name.to_string())),
     }
-    Ok((digits.parse().map_err(|_| invalid())?, description))
 }
 
 /// The id, the version and the path of the file `name`.
 pub fn parse_file_name(name: &str) -> Result<FileName, FakeDataError> {
     let invalid = || FakeDataError::InvalidFileName(name.to_string());
-    let (id, rest) = name.split_at_checked(3).ok_or_else(invalid)?;
-    let digits = id.strip_suffix('_').ok_or_else(invalid)?;
-    if digits.len() != 2 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(invalid());
-    }
-    let id: usize = digits.parse().map_err(|_| invalid())?;
+    let (id, rest) = split_index(name).ok_or_else(invalid)?;
     let (version, path) = if let Some(path) = rest.strip_prefix("before_") {
         (Version::Before, path)
     } else if let Some(path) = rest.strip_prefix("after_") {
@@ -216,36 +221,32 @@ pub fn parse_file_name(name: &str) -> Result<FileName, FakeDataError> {
 
 /// `text`, an absolute date in the `git log --date=iso` format.
 fn parse_date(text: &str) -> Result<Time, FakeDataError> {
-    let invalid = || {
-        FakeDataError::InvalidDate(DateParseError {
-            input: text.to_string(),
-        })
-    };
+    let invalid = || FakeDataError::InvalidDate(DateParseError { input: text.to_string() });
     let parsed = jiff::fmt::strtime::parse(DATE_FORMAT, text).map_err(|_| invalid())?;
     let timestamp = parsed.to_timestamp().map_err(|_| invalid())?;
     let offset = parsed.offset().ok_or_else(invalid)?;
     Ok(Time::new(timestamp.as_second(), offset.seconds()))
 }
 
-/// Whether `attributes` (the attributes of a line of a `.gitattributes` file) make a file binary
-/// (`Some(true)`), text (`Some(false)`), or let git decide from its content (`None`).
-fn is_binary(attributes: &str) -> Option<bool> {
+/// Whether `attributes` (the attributes of a line of a `.gitattributes` file) make a file binary,
+/// text, or let git decide from its content ([`DiffAs::Auto`]).
+fn diff_as(attributes: &str) -> DiffAs {
     let mut attributes = attributes.split_whitespace();
     if attributes
         .clone()
         .any(|attribute| BINARY_ATTRIBUTES.contains(&attribute))
     {
-        Some(true)
+        DiffAs::Binary
     } else if attributes.any(|attribute| attribute == TEXT_ATTRIBUTE) {
-        Some(false)
+        DiffAs::Text
     } else {
-        None
+        DiffAs::Auto
     }
 }
 
 /// The files of the folder of a fake commit with the same id: its before and after versions.
 #[derive(Default)]
-struct Pair<'a> {
+struct Versions<'a> {
     before: Option<RawFile<'a>>,
     after: Option<RawFile<'a>>,
     before_path: String,
@@ -266,24 +267,21 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
         .iter()
         .find(|file| file.name == METADATA_FILE)
         .ok_or(FakeDataError::MissingMetadata)?;
-    let mut pairs: BTreeMap<usize, Pair> = BTreeMap::new();
+    let mut versions_by_id: BTreeMap<usize, Versions> = BTreeMap::new();
     for file in files.iter().filter(|file| file.name != METADATA_FILE) {
         let name = parse_file_name(file.name)?;
-        let pair = pairs.entry(name.id).or_default();
+        let versions = versions_by_id.entry(name.id).or_default();
         let (slot, path) = match name.version {
-            Version::Before => (&mut pair.before, &mut pair.before_path),
-            Version::After => (&mut pair.after, &mut pair.after_path),
+            Version::Before => (&mut versions.before, &mut versions.before_path),
+            Version::After => (&mut versions.after, &mut versions.after_path),
         };
         if slot.replace(*file).is_some() {
-            return Err(FakeDataError::DuplicateFile {
-                id: name.id,
-                version: name.version,
-            });
+            return Err(FakeDataError::DuplicateFile { id: name.id, version: name.version });
         }
         *path = name.path;
     }
-    let last_id = pairs.keys().next_back().copied().unwrap_or(0);
-    if let Some(missing) = (1..=last_id).find(|id| !pairs.contains_key(id)) {
+    let last_id = versions_by_id.keys().next_back().copied().unwrap_or(0);
+    if let Some(missing) = (1..=last_id).find(|id| !versions_by_id.contains_key(id)) {
         return Err(FakeDataError::MissingId(missing));
     }
 
@@ -306,28 +304,26 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
         return Err(FakeDataError::UnknownGitattributesFile(unknown.clone()));
     }
 
-    let attributes = |file: &Option<RawFile>| {
+    let diff_as_of = |file: &Option<RawFile>| {
         file.and_then(|file| metadata.gitattributes.get(file.name))
-            .and_then(|attributes| is_binary(attributes))
+            .map_or(DiffAs::Auto, |attributes| diff_as(attributes))
     };
-    let files: Vec<FileDiff> = pairs
+    let files: Vec<FileDiff> = versions_by_id
         .values()
-        .map(|pair| {
-            let has_nul =
-                |file: &Option<RawFile>| file.is_some_and(|file| file.content.contains(&0));
-            // Like git: the attributes decide, otherwise a NUL byte makes a file binary.
-            let declared = [attributes(&pair.before), attributes(&pair.after)];
-            let binary = if declared.contains(&Some(true)) {
-                true
-            } else if declared.contains(&Some(false)) {
-                false
+        .map(|versions| {
+            // Like git, the attributes of either version decide, binary first.
+            let declared = [diff_as_of(&versions.before), diff_as_of(&versions.after)];
+            let diff_as = if declared.contains(&DiffAs::Binary) {
+                DiffAs::Binary
+            } else if declared.contains(&DiffAs::Text) {
+                DiffAs::Text
             } else {
-                has_nul(&pair.before) || has_nul(&pair.after)
+                DiffAs::Auto
             };
             diff::file(
-                state(&pair.before, &pair.before_path),
-                state(&pair.after, &pair.after_path),
-                binary,
+                /* before */ state(&versions.before, &versions.before_path),
+                /* after */ state(&versions.after, &versions.after_path),
+                diff_as,
                 diff::CONTEXT,
             )
         })
@@ -379,6 +375,9 @@ mod tests {
 
     const HASH: &str = "0123456789abcdef0123456789abcdef01234567";
 
+    /// The date of `metadata()`, which the tests of the dates replace.
+    const DEFAULT_DATE: &str = "2026-10-12 14:32:07 +0200";
+
     /// The metadata of a valid commit, followed by `extra`.
     fn metadata(extra: &str) -> String {
         format!(
@@ -386,7 +385,7 @@ mod tests {
              hash = \"{HASH}\"\n\
              author = \"Alice Martin\"\n\
              email = \"alice.martin@example.org\"\n\
-             date = \"2026-10-12 14:32:07 +0200\"\n\
+             date = \"{DEFAULT_DATE}\"\n\
              subject = \"config: rename\"\n\
              body = \"Line 1.\\nLine 2.\"\n\
              {extra}"
@@ -423,24 +422,18 @@ mod tests {
 
     #[test]
     fn invalid_folder_names_are_errors() {
-        ["", "00", "00_", "_x", "0_x", "000_x", "ab_x", "00-x"]
-            .into_iter()
-            .for_each(|name| {
-                assert_eq!(
-                    parse_folder_name(name),
-                    Err(FakeDataError::InvalidFolderName(name.to_string())),
-                    "{name:?}"
-                );
-            });
+        for name in ["", "00", "00_", "_x", "0_x", "000_x", "ab_x", "00-x"] {
+            assert_eq!(
+                parse_folder_name(name),
+                Err(FakeDataError::InvalidFolderName(name.to_string())),
+                "{name:?}"
+            );
+        }
     }
 
     #[test]
     fn file_name_is_the_id_then_the_version_then_the_path() {
-        let name = |id, version, path: &str| FileName {
-            id,
-            version,
-            path: path.to_string(),
-        };
+        let name = |id, version, path: &str| FileName { id, version, path: path.to_string() };
         assert_eq!(
             parse_file_name("01_before_src__main.rs"),
             Ok(name(1, Version::Before, "src/main.rs"))
@@ -463,13 +456,13 @@ mod tests {
             "01_before",
             "ab_after_a",
         ];
-        invalid.into_iter().for_each(|name| {
+        for name in invalid {
             assert_eq!(
                 parse_file_name(name),
                 Err(FakeDataError::InvalidFileName(name.to_string())),
                 "{name:?}"
             );
-        });
+        }
     }
 
     #[test]
@@ -509,7 +502,7 @@ mod tests {
 
     #[test]
     fn date_is_absolute_with_its_own_offset() {
-        let date = |date: &str| metadata("").replace("2026-10-12 14:32:07 +0200", date);
+        let date = |date: &str| metadata("").replace(DEFAULT_DATE, date);
         assert_eq!(
             load(&date("2026-10-12 14:32:07 -0400"), &[]).unwrap().date,
             Time::new(1_791_829_927, -4 * 3600)
@@ -527,16 +520,14 @@ mod tests {
             "yesterday",
             "not a date",
         ];
-        invalid.into_iter().for_each(|date| {
-            let metadata = metadata("").replace("2026-10-12 14:32:07 +0200", date);
+        for date in invalid {
+            let metadata = metadata("").replace(DEFAULT_DATE, date);
             assert_eq!(
                 load(&metadata, &[]).unwrap_err(),
-                FakeDataError::InvalidDate(DateParseError {
-                    input: date.to_string()
-                }),
+                FakeDataError::InvalidDate(DateParseError { input: date.to_string() }),
                 "{date:?}"
             );
-        });
+        }
     }
 
     #[test]
@@ -547,21 +538,18 @@ mod tests {
             metadata("").replace(HASH, "abc123"),
             "this is not toml".to_string(),
         ];
-        invalid.into_iter().for_each(|metadata| {
+        for metadata in invalid {
             let error = load(&metadata, &[]).unwrap_err();
             assert!(
                 matches!(error, FakeDataError::InvalidMetadata(_)),
                 "{error:?}"
             );
-        });
+        }
     }
 
     #[test]
     fn missing_metadata_is_an_error() {
-        let files = [RawFile {
-            name: "01_after_a.txt",
-            content: b"a\n",
-        }];
+        let files = [RawFile { name: "01_after_a.txt", content: b"a\n" }];
         assert_eq!(commit(&files).unwrap_err(), FakeDataError::MissingMetadata);
     }
 
@@ -589,9 +577,7 @@ mod tests {
                 ("deleted.txt".to_string(), FileChange::Deleted),
                 (
                     "new.rs".to_string(),
-                    FileChange::Renamed {
-                        from: "old.rs".into()
-                    }
+                    FileChange::Renamed { from: "old.rs".into() }
                 ),
             ]
         );
@@ -604,7 +590,7 @@ mod tests {
             ("01_after_a.txt", b"one\r\ntwo"),
         ];
         let commit = load(&metadata(""), files).unwrap();
-        let lines = commit.files[0].chunks.iter().flat_map(|chunk| &chunk.lines);
+        let lines = commit.files[0].hunks.iter().flat_map(|hunk| &hunk.lines);
         assert!(lines.clone().any(|line| line.text.ends_with('\r')));
         assert!(lines.clone().any(|line| line.missing_newline));
     }
@@ -614,10 +600,7 @@ mod tests {
         let files: &[(&str, &[u8])] = &[("01_before_a.txt", b"a\n"), ("01_before_b.txt", b"b\n")];
         assert_eq!(
             load(&metadata(""), files).unwrap_err(),
-            FakeDataError::DuplicateFile {
-                id: 1,
-                version: Version::Before
-            }
+            FakeDataError::DuplicateFile { id: 1, version: Version::Before }
         );
     }
 
@@ -654,7 +637,8 @@ mod tests {
             ("03_before_c.txt", b"before\n"),
             ("03_after_c.txt", b"after\n"),
         ];
-        // The attributes of a single version are enough, and are read like `.gitattributes` does.
+        // The attributes of a single version are enough, and are read like git reads
+        // `.gitattributes`.
         let extra = "[gitattributes]\n\
                      \"01_after_a.dat\" = \"binary\"\n\
                      \"02_before_b.dat\" = \"-text -diff\"\n\
@@ -669,7 +653,7 @@ mod tests {
                 FileContentType::Text
             ]
         );
-        assert!(commit.files[0].chunks.is_empty());
+        assert!(commit.files[0].hunks.is_empty());
     }
 
     #[test]
