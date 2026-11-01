@@ -64,8 +64,8 @@ struct RawConfigFile {
     unknown_settings: toml::Table,
 }
 
-/// Deserializes the line of each key of `keys`, the keys not used by [`Config`] in the config file
-/// whose text is `text`.
+/// The deserializer of the line of each key of `keys`, the keys not used by [`Config`] in the
+/// config file whose text is `text`.
 ///
 /// It is needed because the position of the keys is lost by `#[serde(flatten)]`.
 struct UnknownSettings<'a> {
@@ -151,7 +151,8 @@ pub fn parse(text: &str) -> Result<ConfigFile, String> {
     let unknown_settings = if raw.unknown_settings.is_empty() {
         Vec::new()
     } else {
-        // Like `toml::from_str`, which cannot be given the keys to look for.
+        // The text is deserialized again like `toml::from_str()` does, since it cannot be given the
+        // keys to look for.
         UnknownSettings { keys: raw.unknown_settings, text }
             .deserialize(toml::Deserializer::parse(text).map_err(to_string)?)
             .map_err(to_string)?

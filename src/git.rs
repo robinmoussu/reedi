@@ -98,8 +98,7 @@ mod tests {
         (git, repository)
     }
 
-    /// `log.date` is interpreted like `git log` does if it is read as the format of the dates it
-    /// displays.
+    /// The dates displayed with the format read from `log.date` are the ones `git log` displays.
     #[test]
     fn log_date_is_read_like_git_log() {
         let values = [

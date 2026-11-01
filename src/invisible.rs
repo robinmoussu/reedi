@@ -79,7 +79,7 @@ pub enum Wrap {
     /// In the whitespace starting a continuation row.
     AfterBreak,
     /// The only space or U+2800 around a break (ending the row before it or starting the row
-    /// after it). Will not be displayed
+    /// after it). It is not displayed (see [`Cluster::push()`]).
     Single,
 }
 
@@ -92,7 +92,7 @@ pub enum Content {
     Contextual(Contextual),
 }
 
-/// A character whose display depends on its context
+/// A character whose display depends on its context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Contextual {
     /// A space (U+0020).
@@ -125,8 +125,8 @@ impl Cluster {
 
     /// Number of columns used when displayed at `column`, if it is not next to a break.
     ///
-    /// Next to a break, it never uses more columns (see [`Cluster::push`]). This is what allows
-    /// to choose the breaks before knowing where the clusters are relative to them.
+    /// Next to a break, it never uses more columns (see [`Cluster::push`]). This allows
+    /// choosing the breaks before knowing where the clusters are relative to them.
     pub fn width(&self, column: usize) -> usize {
         match &self.content {
             Content::Fixed(pieces) => pieces.iter().map(|piece| piece.text.width()).sum(),

@@ -341,7 +341,7 @@ version 0.0.8: line-diff, word-diff and syntax highlighting
    - [x] constants and comments of the arguments
    - [x] parameters and enums
    - [x] test data and test names
-   - [ ] comments
+   - [x] comments
 
  - [ ] extract diff machinery into a new library, `reediif` (a workspace member at the root of the
    repository, with the same version as `reedi`)
