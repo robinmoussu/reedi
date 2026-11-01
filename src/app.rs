@@ -168,11 +168,8 @@ pub fn run(
     settings: &Settings,
     unknown_settings: Option<(PathBuf, Vec<UnknownSetting>)>,
 ) -> io::Result<()> {
-    let mut error_modal =
-        unknown_settings.map(|(path, unknown_settings)| ErrorModal::UnknownSettings {
-            path,
-            unknown_settings,
-        });
+    let mut error_modal = unknown_settings
+        .map(|(path, unknown_settings)| ErrorModal::UnknownSettings { path, unknown_settings });
     let commits = fake::all();
     let mut rows = Vec::new();
     let mut size = None;
@@ -426,10 +423,7 @@ mod tests {
             .iter()
             .position(|row| row.line_index == 2 && row.start != Start::Whole(0))
             .unwrap();
-        let mut viewport = Viewport {
-            cursor,
-            top: cursor - 3,
-        };
+        let mut viewport = Viewport { cursor, top: cursor - 3 };
         let wide = rewrap(
             &commits,
             &narrow,

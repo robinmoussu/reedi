@@ -54,10 +54,9 @@ pub fn pairs(hunk: &Hunk) -> Vec<Pair> {
                     .map(|(index, _)| *index)
                     .collect::<Vec<_>>()
             };
-            let unchanged = indexes(LineKind::Unchanged).into_iter().map(|index| Pair {
-                before: Some(index),
-                after: Some(index),
-            });
+            let unchanged = indexes(LineKind::Unchanged)
+                .into_iter()
+                .map(|index| Pair { before: Some(index), after: Some(index) });
             let modified = pair_modified(
                 &hunk.lines,
                 &indexes(LineKind::Removed),
@@ -80,28 +79,23 @@ fn pair_modified(lines: &[DiffLine], removed: &[usize], added: &[usize]) -> Vec<
             let rows: Vec<_> = match similar {
                 Some(skipped) => added[next..next + skipped]
                     .iter()
-                    .map(|&after| Pair {
-                        before: None,
-                        after: Some(after),
-                    })
+                    .map(|&after| Pair { before: None, after: Some(after) })
                     .chain(iter::once(Pair {
                         before: Some(before),
                         after: Some(added[next + skipped]),
                     }))
                     .collect(),
-                None => vec![Pair {
-                    before: Some(before),
-                    after: None,
-                }],
+                None => vec![Pair { before: Some(before), after: None }],
             };
             next += similar.map_or(0, |skipped| skipped + 1);
             rows
         })
         .collect();
-    pairs.extend(added[next..].iter().map(|&after| Pair {
-        before: None,
-        after: Some(after),
-    }));
+    pairs.extend(
+        added[next..]
+            .iter()
+            .map(|&after| Pair { before: None, after: Some(after) }),
+    );
     pairs
 }
 

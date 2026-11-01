@@ -247,21 +247,9 @@ mod tests {
     fn moved_cursor_stays_at_the_same_screen_position() {
         let mut viewport = viewport(30, 20);
         viewport.move_cursor(40);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 40,
-                top: 30
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 40, top: 30 });
         viewport.move_cursor(35);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 35,
-                top: 25
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 35, top: 25 });
     }
 
     #[test]
@@ -359,13 +347,7 @@ mod tests {
         let mut viewport = viewport(0, 0);
         viewport.jump(50, 100, 20);
         // Rows 36 to 55 are displayed, the cursor is 5 rows above the bottom.
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 50,
-                top: 36
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 50, top: 36 });
         viewport.jump(0, 100, 20);
         assert_eq!(viewport, Viewport { cursor: 0, top: 0 });
     }
@@ -374,39 +356,21 @@ mod tests {
     fn jump_does_not_scroll_when_the_cursor_stays_far_from_the_edges() {
         let mut viewport = viewport(15, 10);
         viewport.jump(20, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 20,
-                top: 10
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 20, top: 10 });
     }
 
     #[test]
     fn jump_stops_on_the_last_row() {
         let mut viewport = viewport(0, 0);
         viewport.jump(1000, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 99,
-                top: 80
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 99, top: 80 });
     }
 
     #[test]
     fn scroll_down_moves_the_screen_and_not_the_cursor_far_from_the_top() {
         let mut viewport = viewport(20, 10);
         viewport.scroll_down(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 20,
-                top: 11
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 20, top: 11 });
     }
 
     #[test]
@@ -415,29 +379,11 @@ mod tests {
         // it moves with the screen.
         let mut viewport = viewport(20, 10);
         viewport.scroll_down(5, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 20,
-                top: 15
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 20, top: 15 });
         viewport.scroll_down(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 21,
-                top: 16
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 21, top: 16 });
         viewport.scroll_down(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 22,
-                top: 17
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 22, top: 17 });
     }
 
     #[test]
@@ -445,13 +391,7 @@ mod tests {
         // The cursor is the 3rd row of the screen, and doesn't jump to the 6th.
         let mut viewport = viewport(12, 10);
         viewport.scroll_down(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 13,
-                top: 11
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 13, top: 11 });
     }
 
     #[test]
@@ -460,22 +400,10 @@ mod tests {
         viewport.scroll_down(1, 100, 20);
         // Scrolling up leaves the cursor on its row, which is now the 4th row of the screen.
         viewport.scroll_up(1, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 13,
-                top: 10
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 13, top: 10 });
         // Scrolling down again keeps the cursor on the 4th row of the screen.
         viewport.scroll_down(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 14,
-                top: 11
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 14, top: 11 });
     }
 
     #[test]
@@ -483,34 +411,16 @@ mod tests {
         // The cursor is the 19th row of the screen.
         let mut viewport = viewport(28, 10);
         viewport.scroll_down(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 28,
-                top: 11
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 28, top: 11 });
     }
 
     #[test]
     fn scroll_down_stops_when_the_last_row_is_displayed() {
         let mut viewport = viewport(90, 79);
         viewport.scroll_down(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 90,
-                top: 80
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 90, top: 80 });
         viewport.scroll_down(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 90,
-                top: 80
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 90, top: 80 });
     }
 
     #[test]
@@ -519,21 +429,9 @@ mod tests {
         viewport.scroll_down(1000, 100, 20);
         // The cursor was the 11th row of the screen: 5 lines are scrolled with it staying on its
         // row, then it moves with the screen for the 35 remaining ones.
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 85,
-                top: 80
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 85, top: 80 });
         viewport.scroll_down(usize::MAX, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 85,
-                top: 80
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 85, top: 80 });
     }
 
     #[test]
@@ -549,13 +447,7 @@ mod tests {
         // screen, so it moves with the screen.
         let mut viewport = viewport(13, 10);
         viewport.scroll_down(1, 100, 7);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 14,
-                top: 11
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 14, top: 11 });
     }
 
     #[test]
@@ -608,70 +500,34 @@ mod tests {
     fn half_page_down_moves_the_screen_and_the_cursor_by_half_the_height() {
         let mut viewport = viewport(20, 10);
         viewport.half_page_down(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 30,
-                top: 20
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 30, top: 20 });
     }
 
     #[test]
     fn half_page_up_moves_the_screen_and_the_cursor_by_half_the_height() {
         let mut viewport = viewport(40, 30);
         viewport.half_page_up(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 30,
-                top: 20
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 30, top: 20 });
     }
 
     #[test]
     fn half_page_rounds_the_half_of_an_odd_height_down() {
         let mut viewport = viewport(20, 10);
         viewport.half_page_down(1, 100, 21);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 30,
-                top: 20
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 30, top: 20 });
         let mut viewport = self::viewport(40, 30);
         viewport.half_page_up(1, 100, 21);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 30,
-                top: 20
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 30, top: 20 });
     }
 
     #[test]
     fn half_page_is_repeated() {
         let mut viewport = viewport(20, 10);
         viewport.half_page_down(3, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 50,
-                top: 40
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 50, top: 40 });
         let mut viewport = self::viewport(40, 30);
         viewport.half_page_up(2, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 20,
-                top: 10
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 20, top: 10 });
     }
 
     #[test]
@@ -680,13 +536,7 @@ mod tests {
         // scrolls back to keep the scrolloff, like with `j`.
         let mut viewport = viewport(12, 10);
         viewport.half_page_down(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 22,
-                top: 17
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 22, top: 17 });
     }
 
     #[test]
@@ -716,22 +566,10 @@ mod tests {
         // Only 5 rows are left below the screen.
         let mut viewport = viewport(85, 75);
         viewport.half_page_down(1, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 90,
-                top: 80
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 90, top: 80 });
         let mut viewport = self::viewport(20, 10);
         viewport.half_page_down(usize::MAX, 100, 20);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 90,
-                top: 80
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 90, top: 80 });
     }
 
     #[test]
@@ -753,12 +591,6 @@ mod tests {
         let mut viewport = self::viewport(30, 30);
         viewport.half_page_down(1, 100, 1);
         viewport.half_page_up(1, 100, 1);
-        assert_eq!(
-            viewport,
-            Viewport {
-                cursor: 30,
-                top: 30
-            }
-        );
+        assert_eq!(viewport, Viewport { cursor: 30, top: 30 });
     }
 }

@@ -54,10 +54,7 @@ pub enum DateStyle {
 
 impl DateFormat {
     /// The format used when neither `--date-format` nor the `log.date` git setting is set.
-    pub const HUMAN: DateFormat = DateFormat {
-        style: DateStyle::Human,
-        local: false,
-    };
+    pub const HUMAN: DateFormat = DateFormat { style: DateStyle::Human, local: false };
 }
 
 /// A value of `git log --date=` that git doesn't accept.
@@ -176,10 +173,7 @@ impl DateDisplay {
                 style: DateStyle::Strftime("%d/%m/%Y".to_string()),
                 local: false,
             },
-            environment: Environment {
-                now: snapshot_now(),
-                locale: Locale::c(),
-            },
+            environment: Environment { now: snapshot_now(), locale: Locale::c() },
         }
     }
 }
@@ -196,9 +190,7 @@ fn snapshot_now() -> Zoned {
 /// `input`, parsed like `git commit --date` does. Relative dates (like `yesterday`) and dates
 /// without an offset are resolved with `now` and its timezone.
 pub fn parse(input: &str, now: &Zoned) -> Result<Time, DateParseError> {
-    gix_compat::date::parse(input, now).ok_or_else(|| DateParseError {
-        input: input.to_string(),
-    })
+    gix_compat::date::parse(input, now).ok_or_else(|| DateParseError { input: input.to_string() })
 }
 
 /// `time`, displayed with `format` like `git log --date=` does.
@@ -233,10 +225,7 @@ mod tests {
     use crate::test_git::Git;
 
     /// `2026-10-12 14:32:07 +0200`, the date used by all the display tests.
-    const TIME: Time = Time {
-        seconds: 1_791_808_327,
-        offset: 7200,
-    };
+    const TIME: Time = Time { seconds: 1_791_808_327, offset: 7200 };
 
     /// `now` (RFC 3339) in `timezone` (IANA name).
     fn zoned(now: &str, timezone: &str) -> Zoned {
@@ -371,9 +360,7 @@ mod tests {
             let git = Git::new(&now, "C");
             let expected = match git.commit_with_date(input) {
                 Ok(()) => Ok(git.author_time()),
-                Err(_) => Err(DateParseError {
-                    input: input.to_string(),
-                }),
+                Err(_) => Err(DateParseError { input: input.to_string() }),
             };
             assert_eq!(parse(input, &now), expected, "--date={input}");
         }
@@ -467,10 +454,7 @@ mod tests {
         };
         let now = "2026-10-12T17:32:07+02:00";
         let git = repository_with_a_commit_at_time(now, "Europe/Paris", "fr_FR.UTF-8");
-        let environment = Environment {
-            now: zoned(now, "Europe/Paris"),
-            locale,
-        };
+        let environment = Environment { now: zoned(now, "Europe/Paris"), locale };
         let formats = ["default", "rfc", "relative", "human", "format:%A %d %B %c"];
         for text in formats {
             let format = text.parse().unwrap();

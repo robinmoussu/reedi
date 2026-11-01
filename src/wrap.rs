@@ -30,10 +30,7 @@ pub struct Segment<'a> {
 impl<'a> Segment<'a> {
     /// A segment that is not markup.
     pub fn new(text: &'a str) -> Self {
-        Self {
-            text,
-            markup: false,
-        }
+        Self { text, markup: false }
     }
 }
 
@@ -393,10 +390,7 @@ mod tests {
     }
 
     fn piece(text: &str, kind: Kind) -> Piece {
-        Piece {
-            text: text.to_string(),
-            kind,
-        }
+        Piece { text: text.to_string(), kind }
     }
 
     #[test]
@@ -655,13 +649,7 @@ mod tests {
     #[test]
     fn too_narrow_text_area_is_an_error() {
         let error = wrap(&[Segment::new("a日")], FinalCr::Shown, 1).unwrap_err();
-        assert_eq!(
-            error,
-            TooNarrow {
-                width: 1,
-                cluster: "日".to_string()
-            }
-        );
+        assert_eq!(error, TooNarrow { width: 1, cluster: "日".to_string() });
         assert_eq!(
             error.to_string(),
             "the terminal is too narrow to display \"日\" in a text area of 1 column"

@@ -57,11 +57,8 @@ impl Cli {
             return Ok(now);
         };
         let time = date::parse(text, &now).map_err(CliError::InvalidNow)?;
-        let timestamp = Timestamp::from_second(time.seconds).map_err(|_| {
-            CliError::InvalidNow(DateParseError {
-                input: text.clone(),
-            })
-        })?;
+        let timestamp = Timestamp::from_second(time.seconds)
+            .map_err(|_| CliError::InvalidNow(DateParseError { input: text.clone() }))?;
         Ok(timestamp.to_zoned(timezone))
     }
 }
@@ -115,10 +112,7 @@ mod tests {
     #[test]
     fn date_format_is_parsed_like_git() {
         let cli = parse(&["--date-format", "iso-local"]).unwrap();
-        let iso_local = DateFormat {
-            style: DateStyle::Iso,
-            local: true,
-        };
+        let iso_local = DateFormat { style: DateStyle::Iso, local: true };
         assert_eq!(cli.date_format, Some(iso_local));
     }
 
@@ -192,9 +186,7 @@ mod tests {
     #[test]
     fn invalid_fake_now_is_an_error() {
         let args = ["--fake", "--fake-now", "not a date"];
-        let invalid = DateParseError {
-            input: "not a date".to_string(),
-        };
+        let invalid = DateParseError { input: "not a date".to_string() };
         assert_eq!(
             parse(&args).unwrap().now(),
             Err(CliError::InvalidNow(invalid))

@@ -255,20 +255,14 @@ pub struct Pieces {
 impl Pieces {
     /// No pieces yet, the next one being displayed at `column`.
     pub fn new(column: usize) -> Self {
-        Self {
-            pieces: Vec::new(),
-            column,
-        }
+        Self { pieces: Vec::new(), column }
     }
 
     fn push(&mut self, kind: Kind, text: &str) {
         self.column += text.width();
         match self.pieces.last_mut() {
             Some(last) if last.kind == kind => last.text.push_str(text),
-            _ => self.pieces.push(Piece {
-                text: text.to_string(),
-                kind,
-            }),
+            _ => self.pieces.push(Piece { text: text.to_string(), kind }),
         }
     }
 
@@ -388,10 +382,7 @@ mod tests {
     }
 
     fn piece(text: &str, kind: Kind) -> Piece {
-        Piece {
-            text: text.to_string(),
-            kind,
-        }
+        Piece { text: text.to_string(), kind }
     }
 
     #[test]

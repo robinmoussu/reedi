@@ -220,11 +220,7 @@ pub fn parse_file_name(name: &str) -> Result<FileName, FakeDataError> {
 
 /// `text`, an absolute date in the `git log --date=iso` format.
 fn parse_date(text: &str) -> Result<Time, FakeDataError> {
-    let invalid = || {
-        FakeDataError::InvalidDate(DateParseError {
-            input: text.to_string(),
-        })
-    };
+    let invalid = || FakeDataError::InvalidDate(DateParseError { input: text.to_string() });
     let parsed = jiff::fmt::strtime::parse(DATE_FORMAT, text).map_err(|_| invalid())?;
     let timestamp = parsed.to_timestamp().map_err(|_| invalid())?;
     let offset = parsed.offset().ok_or_else(invalid)?;
@@ -279,10 +275,7 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
             Version::After => (&mut versions.after, &mut versions.after_path),
         };
         if slot.replace(*file).is_some() {
-            return Err(FakeDataError::DuplicateFile {
-                id: name.id,
-                version: name.version,
-            });
+            return Err(FakeDataError::DuplicateFile { id: name.id, version: name.version });
         }
         *path = name.path;
     }
@@ -438,11 +431,7 @@ mod tests {
 
     #[test]
     fn file_name_is_the_id_then_the_version_then_the_path() {
-        let name = |id, version, path: &str| FileName {
-            id,
-            version,
-            path: path.to_string(),
-        };
+        let name = |id, version, path: &str| FileName { id, version, path: path.to_string() };
         assert_eq!(
             parse_file_name("01_before_src__main.rs"),
             Ok(name(1, Version::Before, "src/main.rs"))
@@ -533,9 +522,7 @@ mod tests {
             let metadata = metadata("").replace("2026-10-12 14:32:07 +0200", date);
             assert_eq!(
                 load(&metadata, &[]).unwrap_err(),
-                FakeDataError::InvalidDate(DateParseError {
-                    input: date.to_string()
-                }),
+                FakeDataError::InvalidDate(DateParseError { input: date.to_string() }),
                 "{date:?}"
             );
         }
@@ -560,10 +547,7 @@ mod tests {
 
     #[test]
     fn missing_metadata_is_an_error() {
-        let files = [RawFile {
-            name: "01_after_a.txt",
-            content: b"a\n",
-        }];
+        let files = [RawFile { name: "01_after_a.txt", content: b"a\n" }];
         assert_eq!(commit(&files).unwrap_err(), FakeDataError::MissingMetadata);
     }
 
@@ -591,9 +575,7 @@ mod tests {
                 ("deleted.txt".to_string(), FileChange::Deleted),
                 (
                     "new.rs".to_string(),
-                    FileChange::Renamed {
-                        from: "old.rs".into()
-                    }
+                    FileChange::Renamed { from: "old.rs".into() }
                 ),
             ]
         );
@@ -616,10 +598,7 @@ mod tests {
         let files: &[(&str, &[u8])] = &[("01_before_a.txt", b"a\n"), ("01_before_b.txt", b"b\n")];
         assert_eq!(
             load(&metadata(""), files).unwrap_err(),
-            FakeDataError::DuplicateFile {
-                id: 1,
-                version: Version::Before
-            }
+            FakeDataError::DuplicateFile { id: 1, version: Version::Before }
         );
     }
 
