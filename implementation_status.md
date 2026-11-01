@@ -340,7 +340,7 @@ version 0.0.8: line-diff, word-diff and syntax highlighting
      or `try_for_each`
    - [x] constants and comments of the arguments
    - [x] parameters and enums
-   - [ ] test data and test names
+   - [x] test data and test names
    - [ ] comments
 
  - [ ] extract diff machinery into a new library, `reediif` (a workspace member at the root of the

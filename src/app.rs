@@ -378,13 +378,7 @@ mod tests {
     #[test]
     fn cursor_moves_row_by_row() {
         let commits = vec![fake::file_changes()];
-        let rows = view::rows(
-            &commits,
-            /* width */ 110,
-            &Theme::monochrome(),
-            &DateDisplay::for_snapshots(),
-        )
-        .unwrap();
+        let rows = rows_of(&commits, /* width */ 110);
         let mut viewport = Viewport::default();
         viewport.down(rows.len());
         // The header of the first commit is displayed on 2 rows.
@@ -412,13 +406,7 @@ mod tests {
     #[test]
     fn rewrapping_keeps_the_cursor_on_the_first_character_of_its_row() {
         let commits = vec![fake::file_changes()];
-        let narrow = view::rows(
-            &commits,
-            /* width */ 60,
-            &Theme::monochrome(),
-            &DateDisplay::for_snapshots(),
-        )
-        .unwrap();
+        let narrow = rows_of(&commits, /* width */ 60);
         // The second row of the first line of the body (the header is the line 0, then a blank
         // line).
         let cursor = narrow
