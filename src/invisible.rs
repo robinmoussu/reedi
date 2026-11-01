@@ -125,7 +125,7 @@ impl Cluster {
 
     /// Number of columns used when displayed at `column`, if it is not next to a break.
     ///
-    /// Next to a break, it never uses more columns (see [`Cluster::push`]). This allows
+    /// Next to a break, it never uses more columns (see [`Cluster::push()`]). This allows
     /// choosing the breaks before knowing where the clusters are relative to them.
     pub fn width(&self, column: usize) -> usize {
         match &self.content {

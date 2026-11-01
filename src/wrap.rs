@@ -94,7 +94,7 @@ fn advance_if_fits(item: &Item, column: &mut usize, width: usize) -> bool {
     }
 }
 
-/// Move `column` past the items at the start of `items` while they fit, as [`advance_if_fits`]
+/// Move `column` past the items at the start of `items` while they fit, as [`advance_if_fits()`]
 /// does, and return the number of items it moved past.
 fn advance_while_fits(items: &[Item], column: &mut usize, width: usize) -> usize {
     items

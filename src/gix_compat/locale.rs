@@ -1,4 +1,4 @@
-//! The locale of the C library, used like git does: for `strftime`, and to translate messages
+//! The locale of the C library, used like git does: for `strftime()`, and to translate messages
 //! with the translations of git (gettext).
 
 use std::ffi::CStr;
@@ -24,7 +24,7 @@ const TRANSLATIONS_CHARSET: &CStr = c"UTF-8";
 /// The placeholder of the number in the messages of git.
 const COUNT_PLACEHOLDER: &str = "%lu";
 
-/// The biggest result of `strftime` that is supported.
+/// The biggest result of `strftime()` that is supported.
 const MAX_STRFTIME_LEN: usize = 1 << 16;
 
 unsafe extern "C" {
@@ -40,7 +40,7 @@ unsafe extern "C" {
     fn bind_textdomain_codeset(domain: *const c_char, codeset: *const c_char) -> *mut c_char;
 }
 
-/// A locale of the C library. It is only used by the thread using it (`uselocale`), so that
+/// A locale of the C library. It is only used by the thread using it (`uselocale()`), so that
 /// several locales can be used at the same time (like in the tests).
 #[derive(Debug)]
 pub struct Locale {
@@ -49,12 +49,12 @@ pub struct Locale {
 
 impl Drop for Locale {
     fn drop(&mut self) {
-        // SAFETY: `raw` was created by `newlocale` and is freed only here.
+        // SAFETY: `raw` was created by `newlocale()` and is freed only here.
         unsafe { libc::freelocale(self.raw) };
     }
 }
 
-/// `pattern` where `%z` and `%Z` are replaced like git does before calling `strftime`: the C
+/// `pattern` where `%z` and `%Z` are replaced like git does before calling `strftime()`: the C
 /// library would use the timezone of the process instead of the one of `zoned` for `%Z`.
 fn expand_timezone(pattern: &str, zoned: &Zoned, displayed_in: DisplayedIn) -> String {
     let mut expanded = String::new();
@@ -108,7 +108,7 @@ impl Locale {
         Self::new(&CString::new(name).ok()?)
     }
 
-    /// `zoned` formatted with the `strftime` of the C library, like
+    /// `zoned` formatted with the `strftime()` of the C library, like
     /// `git log --date=format:$pattern`: `%z` is the offset, and `%Z` the name of the timezone only
     /// if `displayed_in` is [`DisplayedIn::LocalTimezone`] (it is empty otherwise).
     pub fn strftime(&self, pattern: &str, zoned: &Zoned, displayed_in: DisplayedIn) -> String {
@@ -133,7 +133,7 @@ impl Locale {
                 .is_dst(),
         );
         tm.tm_gmtoff = zoned.offset().seconds().into();
-        // `strftime` returns 0 both when the result is empty and when the buffer is too small.
+        // `strftime()` returns 0 both when the result is empty and when the buffer is too small.
         std::iter::successors(Some(256), |len| {
             Some(len * 2).filter(|len| *len <= MAX_STRFTIME_LEN)
         })
@@ -189,7 +189,7 @@ impl Locale {
             return String::new();
         };
         self.with_translations(|| {
-            // SAFETY: same as in `translate_plural`.
+            // SAFETY: same as in `translate_plural()`.
             unsafe {
                 let translated = dcgettext(
                     GIT_TEXT_DOMAIN.as_ptr(),
