@@ -412,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn scroll_down_and_up_with_a_cursor_inside_the_scrolloff_margin() {
+    fn scroll_up_then_down_keeps_a_cursor_inside_the_scrolloff_margin_on_its_screen_row() {
         let mut viewport = Viewport { cursor: 12, top: 10 };
         viewport.scroll_down(
             /* lines_count */ 1, /* len */ 100, /* height */ 20,

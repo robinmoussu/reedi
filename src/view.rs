@@ -1380,7 +1380,7 @@ mod tests {
     }
 
     #[test]
-    fn decorations_without_head() {
+    fn detached_head_is_displayed_without_arrow() {
         let decorations = [
             Decoration::LocalBranch("feature".to_string()),
             Decoration::Head(None),
@@ -3184,7 +3184,7 @@ mod tests {
     }
 
     #[test]
-    fn status_bar_displays_the_commit_by_default() {
+    fn status_bar_displays_the_commit_without_pending_number() {
         let commits = [short_commit()];
         let backend = render(
             &commits,

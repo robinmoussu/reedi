@@ -272,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn files_without_newline_at_their_end() {
+    fn some_files_have_no_newline_at_their_end() {
         let files = file_changes().files;
         let missing = |path: &str| -> Vec<_> {
             let file = files.iter().find(|file| file.path == path).unwrap();
@@ -310,7 +310,7 @@ mod tests {
     /// In Hebrew, whose letters are of the bidi class `R`, while the other right-to-left summaries
     /// are in Arabic, whose letters are of the bidi class `AL`.
     #[test]
-    fn a_summary_is_fully_in_a_right_to_left_language() {
+    fn a_summary_is_fully_in_hebrew() {
         let directions = letters_directions(&rtl_summary());
         assert!(!directions.is_empty());
         assert!(
@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn the_new_short_commits_modify_a_single_ascii_line() {
+    fn commits_with_a_right_to_left_summary_modify_a_single_ascii_line() {
         for commit in &[
             rtl_summary(),
             rtl_then_ltr_summary(),

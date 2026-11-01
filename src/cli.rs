@@ -104,7 +104,7 @@ mod tests {
     }
 
     #[test]
-    fn no_option() {
+    fn options_are_unset_by_default() {
         let cli = parse(&[]).unwrap();
         assert!(!cli.fake);
         assert_eq!(cli.date_format, None);

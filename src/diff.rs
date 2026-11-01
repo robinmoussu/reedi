@@ -298,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn added_and_deleted_files() {
+    fn added_and_deleted_files_have_only_added_or_removed_lines() {
         let added = file(
             /* before */ None,
             /* after */ state("a", "x\ny\n"),
