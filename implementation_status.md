@@ -336,7 +336,8 @@ version 0.0.8: line-diff, word-diff and syntax highlighting
      `implementation_status.md`
    - [x] improve naming
    - [x] duplication and simplification
-   - [-] iterators instead of loops
+   - [-] iterators instead of loops, and `for` loops instead of iterators that only call `for_each`
+     or `try_for_each`
    - [ ] constants and comments of the arguments
    - [ ] parameters and enums
    - [ ] test data and test names

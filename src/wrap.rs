@@ -106,22 +106,20 @@ fn advance_while_fits(items: &[Item], column: &mut usize, width: usize) -> usize
         .count()
 }
 
-/// The items displayed on each row, the line being broken as late as possible.
+/// The number of items of `items` that fit on its first row of `width` columns.
 ///
-/// Fails with the index of an item that doesn't fit on an empty row.
-fn layout(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
-    let mut rows = Vec::new();
-    let mut row_start = 0;
+/// The row ends after the last word that fits, the whitespace ending a word not needing to fit:
+/// the whitespace that doesn't fit starts the next row. A word wider than `width` columns is
+/// split after its last cluster that fits.
+///
+/// Returns `None` if the first item doesn't fit on the row.
+fn items_count_fitting_in_first_row(items: &[Item], width: usize) -> Option<usize> {
     let mut column = 0;
-    let mut i = 0;
-    while i < items.len() {
-        let word_end = items[i..]
-            .iter()
-            .position(|item| item.break_after)
-            .map_or(items.len(), |end| i + end + 1);
-        // The spaces and tabs ending a word don't need to fit: they are moved to the next row.
-        let body_end = word_end
-            - items[i..word_end]
+    let mut word_start = 0;
+    for word in items.split_inclusive(|item| item.break_after) {
+        // The whitespace ending the word doesn't need to fit: what doesn't fit starts the next row.
+        let body_len = word.len()
+            - word
                 .iter()
                 .rev()
                 .take_while(|item| {
@@ -131,32 +129,45 @@ fn layout(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
                     )
                 })
                 .count();
-        let body_width = items[i..body_end]
+        let (body, trailing_whitespace) = word.split_at(body_len);
+        let body_width = body
             .iter()
             .fold(column, |column, item| column + item.cluster.width(column))
             - column;
-        let ends_row = if column + body_width <= width {
+        let len = if column + body_width <= width {
             column += body_width;
-            i = body_end + advance_while_fits(&items[body_end..word_end], &mut column, width);
-            i < word_end
-        } else if i > row_start {
-            true
+            let fitting_count = advance_while_fits(trailing_whitespace, &mut column, width);
+            if fitting_count == trailing_whitespace.len() {
+                word_start += word.len();
+                continue;
+            }
+            word_start + body_len + fitting_count
+        } else if word_start > 0 {
+            word_start
         } else {
             // A word wider than the text area is split after its last cluster that fits.
-            i += advance_while_fits(&items[i..body_end], &mut column, width);
-            true
+            advance_while_fits(body, &mut column, width)
         };
-        if ends_row {
-            if i == row_start {
-                return Err(i);
-            }
-            rows.push(row_start..i);
-            row_start = i;
-            column = 0;
+        return if len > 0 { Some(len) } else { None };
+    }
+    Some(items.len())
+}
+
+/// Split `items` into the rows of a text area of `width` columns, each row holding as many
+/// words as fit, and return the range of item indexes of each row.
+///
+/// If an item doesn't fit on an empty row, fails with its index.
+fn split_into_rows(items: &[Item], width: usize) -> Result<Vec<Range<usize>>, usize> {
+    let mut rows = Vec::new();
+    let mut row_start = 0;
+    loop {
+        let len = items_count_fitting_in_first_row(&items[row_start..], width).ok_or(row_start)?;
+        rows.push(row_start..row_start + len);
+        row_start += len;
+        if row_start == items.len() {
+            return Ok(rows);
         }
     }
-    rows.push(row_start..items.len());
-    Ok(rows)
 }
 
 /// Number of spaces and U+2800 in the whitespace at the start of `items`.
@@ -235,7 +246,7 @@ impl RowBreaks {
     }
 }
 
-/// The row displaying `items` (the items placed on it by [`layout`]) in a text area of `width`
+/// The row displaying `items` (its items, split by [`split_into_rows()`]) in a text area of `width`
 /// columns.
 ///
 /// `blanks_before` is the number of spaces and U+2800 around the break before the row, if it is a
@@ -332,7 +343,7 @@ pub fn wrap(
             }
         })
         .collect();
-    let rows = layout(&items, width).map_err(|i| TooNarrow {
+    let rows = split_into_rows(&items, width).map_err(|i| TooNarrow {
         width,
         cluster: text[items[i].cluster.range.clone()].to_string(),
     })?;
