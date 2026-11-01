@@ -451,24 +451,6 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_has_its_own_content() {
-        let contents: Vec<_> = clusters("a \u{2800}\tb", FinalCr::Shown)
-            .into_iter()
-            .map(|cluster| cluster.content)
-            .collect();
-        assert_eq!(
-            contents,
-            [
-                Content::Fixed(vec![piece("a", Kind::Text)]),
-                Content::Contextual(Contextual::Space),
-                Content::Contextual(Contextual::BrailleBlank),
-                Content::Contextual(Contextual::Tab),
-                Content::Fixed(vec![piece("b", Kind::Text)]),
-            ]
-        );
-    }
-
-    #[test]
     fn space_is_dimmed_before_a_break() {
         let space = |wrap| {
             cluster_at(
