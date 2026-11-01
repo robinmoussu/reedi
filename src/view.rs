@@ -727,7 +727,9 @@ impl<'a> Rows<'a> {
                 .split_terminator('\n')
                 .try_for_each(|line| self.text(&[Part::content(line, Style::new())]))?;
         }
-        commit.files.iter().try_for_each(|file| self.file(file))?;
+        for file in &commit.files {
+            self.file(file)?;
+        }
         self.blank();
         self.commit_index += 1;
         self.rule(self.theme.commit_separator);
@@ -746,7 +748,9 @@ pub fn rows(
     dates: &DateDisplay,
 ) -> Result<Vec<Row>, TooNarrow> {
     let mut rows = Rows::new(width, theme, dates);
-    commits.iter().try_for_each(|commit| rows.commit(commit))?;
+    for commit in commits {
+        rows.commit(commit)?;
+    }
     // The separator below the last commit has no next commit.
     if let Some(last) = rows.rows.last_mut() {
         last.commit_index = commits.len() - 1;
@@ -1310,14 +1314,14 @@ mod tests {
     #[test]
     fn cursor_row_is_highlighted() {
         let viewport = Viewport { cursor: 2, top: 0 };
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let backend = render(&[short_commit()], 110, 26, viewport, theme);
             let buffer = backend.buffer();
             let cursor = theme.cursor.bg.unwrap();
             assert!((0..110).all(|x| buffer[(x, 2)].bg == cursor));
             assert!((0..110).all(|x| buffer[(x, 1)].bg == Color::Reset));
             assert!((0..110).all(|x| buffer[(x, 3)].bg == Color::Reset));
-        });
+        }
     }
 
     #[test]
@@ -1326,12 +1330,12 @@ mod tests {
             cursor: 30,
             top: 20,
         };
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let backend = render(&[commit_taller_than_a_screen()], 110, 26, viewport, theme);
             let buffer = backend.buffer();
             assert_eq!(buffer[(0, 10)].bg, theme.cursor.bg.unwrap());
             assert_eq!(buffer[(0, 9)].bg, Color::Reset);
-        });
+        }
     }
 
     #[test]
@@ -1347,7 +1351,7 @@ mod tests {
     #[test]
     fn header_is_colored_like_git() {
         let commit = fake::scrolloff_rename();
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let header = header(&commit, theme);
             assert_eq!(
                 text(&header),
@@ -1362,7 +1366,7 @@ mod tests {
             assert_eq!(style_in(&header, "main"), theme.local_branch);
             assert_eq!(style_in(&header, "v1.0"), theme.tag);
             assert_eq!(style_in(&header, "origin/main"), theme.remote_branch);
-        });
+        }
     }
 
     #[test]
@@ -1458,7 +1462,7 @@ mod tests {
             &[commit_with_several_files_and_hunks()],
             &Theme::monochrome(),
         );
-        ["src/app.rs", "src/search.rs"].iter().for_each(|name| {
+        for name in &["src/app.rs", "src/search.rs"] {
             let index = file_name_row(&rows, name);
             assert_eq!(layout(&rows[index - 1..index]), [RowKind::Blank], "{name}");
             assert_eq!(
@@ -1466,7 +1470,7 @@ mod tests {
                 [RowKind::Rule],
                 "{name}"
             );
-        });
+        }
     }
 
     #[test]
@@ -1576,7 +1580,7 @@ mod tests {
     #[test]
     fn line_numbers_are_aligned_per_hunk() {
         let commit = fake::scrolloff_rename();
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let rows = Rows::new(110, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&commit.files[0].hunks[1], FinalCr::Hidden)
                 .unwrap();
@@ -1586,7 +1590,7 @@ mod tests {
             assert_eq!(text(left), "│  98 │     fn default() -> Self {");
             assert_eq!(text(right), "│  98 │     fn default() -> Self {");
             assert_eq!(left.spans[0].style, theme.line_number);
-        });
+        }
     }
 
     /// A hunk replacing the line `before` by the line `after`, displayed side by side if they are
@@ -1609,7 +1613,7 @@ mod tests {
 
     #[test]
     fn wrapped_diff_lines_have_a_marker_and_no_line_number_on_continuation_rows() {
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             // Each half is 12 columns wide: 6 for the line number column, 5 for the text, and 1
             // for the marker.
             let rows = Rows::new(24, theme, &DateDisplay::for_snapshots())
@@ -1634,7 +1638,7 @@ mod tests {
             let buf = without_left_to_right_marks(&buf);
             // In the last column of the left half.
             assert_eq!(buf[(11, 0)].symbol(), WRAP_MARKER);
-        });
+        }
     }
 
     #[test]
@@ -1698,7 +1702,7 @@ mod tests {
             Content::Split { left, right } => (left.clone(), right.clone()),
             _ => panic!("hunk rows are split"),
         };
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let rows = Rows::new(40, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&hunk, FinalCr::Hidden)
                 .unwrap();
@@ -1711,7 +1715,7 @@ mod tests {
             // The borders keep their color.
             assert_eq!(style_in(&left, "│ "), theme.line_number);
             assert_eq!(style_in(&left, " │ "), theme.line_number);
-        });
+        }
     }
 
     /// The background colors of the cells of `row`, rendered `width` columns wide.
@@ -1724,7 +1728,7 @@ mod tests {
 
     #[test]
     fn modified_lines_have_a_red_or_green_background_up_to_the_end_of_their_half() {
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let removed = theme.removed_line.bg.unwrap();
             let added = theme.added_line.bg.unwrap();
             // Each half is 20 columns wide: 6 for the line number column, 13 for the text, and 1
@@ -1742,12 +1746,12 @@ mod tests {
             assert!(second[..6].iter().all(|bg| *bg == Color::Reset));
             assert!(second[6..20].iter().all(|bg| *bg == removed));
             assert!(second[20..].iter().all(|bg| *bg == Color::Reset));
-        });
+        }
     }
 
     #[test]
     fn replacements_of_modified_lines_keep_their_background() {
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let rows = Rows::new(40, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&hunk("a b", "a\u{a0}b"), FinalCr::Hidden)
                 .unwrap();
@@ -1756,7 +1760,7 @@ mod tests {
             };
             assert_eq!(style_in(right, "⍽").bg, theme.added_line.bg);
             assert_eq!(style_in(right, "⍽").fg, theme.invisible.fg);
-        });
+        }
     }
 
     #[test]
@@ -1770,7 +1774,7 @@ mod tests {
                 missing_newline: false,
             },
         );
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let rows = Rows::new(40, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&hunk, FinalCr::Hidden)
                 .unwrap();
@@ -1785,7 +1789,7 @@ mod tests {
                     .iter()
                     .all(|bg| *bg == Color::Reset)
             );
-        });
+        }
     }
 
     #[test]
@@ -1826,7 +1830,7 @@ mod tests {
     fn missing_newline_has_the_error_color() {
         let mut hunk = hunk("aaaa", "aaaa bbbb");
         hunk.lines[0].missing_newline = true;
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let rows = Rows::new(80, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&hunk, FinalCr::Hidden)
                 .unwrap();
@@ -1834,7 +1838,7 @@ mod tests {
                 panic!("hunk rows are split");
             };
             assert_eq!(style_in(left, MISSING_NEWLINE), theme.error);
-        });
+        }
     }
 
     #[test]
@@ -1883,13 +1887,13 @@ mod tests {
             content: FileContentType::InvalidUtf8,
             hunks: Vec::new(),
         };
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let Content::Text(name) = &file_rows(&file, 110, theme)[1].content else {
                 panic!("the file name is not split");
             };
             assert_eq!(style_in(name, "a"), theme.file);
             assert_eq!(style_in(name, " (invalid utf-8 content)"), theme.error);
-        });
+        }
     }
 
     #[test]
@@ -1991,7 +1995,7 @@ mod tests {
 
     #[test]
     fn header_is_broken_inside_a_field_keeping_its_style() {
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let rows = commit_rows(&fake::scrolloff_rename(), 93, theme);
             let (first, second) = (&rows[0].content, &rows[1].content);
             let (Content::Text(first), Content::Text(second)) = (first, second) else {
@@ -2002,7 +2006,7 @@ mod tests {
             assert_eq!(first.spans.last().unwrap().style, theme.tag);
             assert_eq!(text(second), "v1.0, origin/main)");
             assert_eq!(second.spans[0].style, theme.tag);
-        });
+        }
     }
 
     #[test]
@@ -2020,7 +2024,7 @@ mod tests {
     #[test]
     fn hunk_too_narrow_is_replaced_by_an_error_message() {
         let commit = fake::scrolloff_rename();
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             // The text area of each half has no column.
             let rows = commit_rows(&commit, 12, theme);
             assert!(
@@ -2043,7 +2047,7 @@ mod tests {
                 rows.last().unwrap().line_index,
                 wide.last().unwrap().line_index
             );
-        });
+        }
     }
 
     #[test]
@@ -2128,7 +2132,7 @@ mod tests {
             &DateDisplay::for_snapshots(),
         )
         .unwrap();
-        narrow.iter().for_each(|row| {
+        for row in &narrow {
             let anchor = row.anchor();
             let i = find(&wide, anchor);
             assert_eq!(wide[i].line_index, anchor.line_index);
@@ -2139,7 +2143,7 @@ mod tests {
                 .filter(|next| next.line_index == anchor.line_index)
                 .and_then(|next| next.offset(anchor.half));
             assert!(next.is_none_or(|offset| offset > anchor.offset));
-        });
+        }
         // Each row is found back on its own screen.
         assert!(
             narrow
@@ -2165,7 +2169,7 @@ mod tests {
     #[test]
     fn rules_and_file_name_are_colored() {
         let commit = fake::scrolloff_rename();
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let rows = commit_rows(&commit, 110, theme);
             let area = Rect::new(0, 0, 110, 26);
             let mut buffer = Buffer::empty(area);
@@ -2184,18 +2188,18 @@ mod tests {
             // Separator below the commit.
             assert_eq!(buffer[(109, 25)].symbol(), "─");
             assert_eq!(buffer[(109, 25)].fg, theme.commit_separator.fg.unwrap());
-        });
+        }
     }
 
     #[test]
     fn status_bar_displays_the_mode() {
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let backend = render(&[short_commit()], 110, 26, Viewport::default(), theme);
             let buffer = backend.buffer();
             let status_bar: String = (0..8).map(|x| buffer[(x, 25)].symbol()).collect();
             assert_eq!(status_bar, " Review ");
             assert_eq!(buffer[(1, 25)].bg, theme.review_mode.bg.unwrap());
-        });
+        }
     }
 
     /// A viewport whose first row and cursor are the row `row_index`.
@@ -2306,9 +2310,9 @@ mod tests {
                     .map_or(rows.len(), |next_header_row_index| {
                         next_header_row_index - 1
                     });
-                (*header_row_index..end_row_index).for_each(|row_index| {
+                for row_index in *header_row_index..end_row_index {
                     assert_eq!(commit_index(&rows, row_index), commit, "{row_index}");
-                });
+                }
             });
     }
 
@@ -2391,14 +2395,12 @@ mod tests {
     fn status_bar_summary_is_preceded_by_a_left_to_right_mark() {
         // Summaries fully right-to-left, right-to-left then left-to-right, left-to-right then
         // right-to-left, and fully left-to-right.
-        [
+        for commit in [
             fake::rtl_summary(),
             fake::rtl_then_ltr_summary(),
             fake::ltr_then_rtl_summary(),
             fake::scrolloff_rename(),
-        ]
-        .into_iter()
-        .for_each(|commit| {
+        ] {
             let (buffer, _) = draw_with(
                 std::slice::from_ref(&commit),
                 200,
@@ -2417,7 +2419,7 @@ mod tests {
             assert_eq!(status_bar.trim_end(), expected);
             // Only before the summary.
             assert_eq!(status_bar.matches(LEFT_TO_RIGHT_MARK).count(), 1);
-        });
+        }
     }
 
     #[test]
@@ -2441,24 +2443,22 @@ mod tests {
 
     #[test]
     fn status_bar_content_is_gray() {
-        [
+        for (theme, gray, background) in &[
             (Theme::dark(), Color::Indexed(248), Color::Reset),
             (Theme::light(), Color::Indexed(240), Color::Indexed(252)),
-        ]
-        .iter()
-        .for_each(|(theme, gray, background)| {
+        ] {
             let backend = render(&[short_commit()], 200, 30, viewport_on(0), theme);
             let content = status_bar_content_cells(&backend);
             let texts: Vec<_> = content.iter().filter(|cell| cell.symbol() != " ").collect();
             assert!(!texts.is_empty());
-            texts.iter().for_each(|cell| {
+            for cell in &texts {
                 assert_eq!(cell.fg, *gray, "{}", cell.symbol());
                 assert_eq!(cell.bg, *background, "{}", cell.symbol());
-            });
+            }
             // The mode keeps its own colors.
             let mode = &backend.buffer()[(1, 29)];
             assert_eq!(mode.bg, theme.review_mode.bg.unwrap());
-        });
+        }
     }
 
     #[test]
@@ -2467,9 +2467,13 @@ mod tests {
         // Wide enough for the whole commit text, with blank columns after it.
         let backend = render(&[short_commit()], 200, 30, viewport_on(0), &theme);
         let buffer = backend.buffer();
-        (0..8).for_each(|x| assert_eq!(buffer[(x, 29)].bg, Color::Blue, "mode {x}"));
+        for x in 0..8 {
+            assert_eq!(buffer[(x, 29)].bg, Color::Blue, "mode {x}");
+        }
         // The blank column after the mode, the content and the blank columns after it.
-        (8..200).for_each(|x| assert_eq!(buffer[(x, 29)].bg, Color::Indexed(252), "{x}"));
+        for x in 8..200 {
+            assert_eq!(buffer[(x, 29)].bg, Color::Indexed(252), "{x}");
+        }
     }
 
     #[test]
@@ -2483,13 +2487,12 @@ mod tests {
 
     #[test]
     fn dark_and_monochrome_status_bars_have_no_background_but_for_the_mode() {
-        [Theme::dark(), Theme::monochrome()]
-            .iter()
-            .for_each(|theme| {
-                let backend = render(&[short_commit()], 200, 30, viewport_on(0), theme);
-                (8..200)
-                    .for_each(|x| assert_eq!(backend.buffer()[(x, 29)].bg, Color::Reset, "{x}"));
-            });
+        for theme in &[Theme::dark(), Theme::monochrome()] {
+            let backend = render(&[short_commit()], 200, 30, viewport_on(0), theme);
+            for x in 8..200 {
+                assert_eq!(backend.buffer()[(x, 29)].bg, Color::Reset, "{x}");
+            }
+        }
     }
 
     #[test]
@@ -2501,11 +2504,11 @@ mod tests {
             viewport_on(0),
             &Theme::monochrome(),
         );
-        status_bar_content_cells(&backend).iter().for_each(|cell| {
+        for cell in &status_bar_content_cells(&backend) {
             assert_eq!(cell.fg, Color::Reset, "{}", cell.symbol());
             assert_eq!(cell.bg, Color::Reset, "{}", cell.symbol());
             assert!(!cell.modifier.contains(Modifier::REVERSED));
-        });
+        }
     }
 
     #[test]
@@ -2513,7 +2516,7 @@ mod tests {
         // Its status bar content is wider than 90 columns.
         let commits = [fake::file_changes()];
         let full = format!(" Review  {}", expected_commit_status(&commits, 0));
-        [40, 60, 90].into_iter().for_each(|width| {
+        for width in [40, 60, 90] {
             let backend = render(&commits, width, 30, viewport_on(0), &Theme::monochrome());
             let expected: String = full
                 .chars()
@@ -2521,7 +2524,7 @@ mod tests {
                 .chain(['…'])
                 .collect();
             assert_eq!(status_bar(&backend), expected);
-        });
+        }
     }
 
     #[test]
@@ -2618,7 +2621,7 @@ mod tests {
     fn invisible_characters_of_the_header_are_replaced_per_field() {
         let mut commit = fake::invisible_characters();
         commit.decorations = vec![Decoration::LocalBranch("fix\u{200b} ".to_string())];
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let header = header(&commit, theme);
             assert_eq!(
                 text(&header),
@@ -2634,13 +2637,13 @@ mod tests {
                 style_in(&header, "∙"),
                 theme.local_branch.patch(theme.trailing_whitespace)
             );
-        });
+        }
     }
 
     #[test]
     fn replacements_are_bold_red_and_tabs_dim_gray() {
         let commit = fake::invisible_characters();
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let rows = commit_rows(&commit, 110, theme);
             let Content::Text(body) = &rows[2].content else {
                 panic!("the body is not split");
@@ -2662,7 +2665,7 @@ mod tests {
                 style_in(right, "⇥ "),
                 theme.trailing_whitespace.patch(theme.added_line)
             );
-        });
+        }
     }
 
     #[test]
@@ -2723,7 +2726,7 @@ mod tests {
     #[test]
     fn border_of_the_error_modal_has_the_error_style_and_its_title_in_reverse_video() {
         let error_modal = unknown_settings_error_modal();
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let backend = render_with_error_modal(
                 &[short_commit()],
                 110,
@@ -2735,22 +2738,22 @@ mod tests {
             let buffer = backend.buffer();
             let (x, y) = error_modal_corner(&backend);
             // The corner, and the left border below it.
-            [(x, y), (x, y + 1)].into_iter().for_each(|position| {
+            for position in [(x, y), (x, y + 1)] {
                 assert_eq!(buffer[position].fg, theme.error.fg.unwrap());
                 assert_eq!(buffer[position].bg, Color::Reset);
                 assert!(!buffer[position].modifier.contains(Modifier::REVERSED));
-            });
+            }
             // The space before the title, then its first letter.
             assert_eq!(buffer[(x + 2, y)].symbol(), "U");
-            [(x + 1, y), (x + 2, y)].into_iter().for_each(|position| {
+            for position in [(x + 1, y), (x + 2, y)] {
                 assert_eq!(buffer[position].fg, theme.error.fg.unwrap());
                 assert!(
                     buffer[position]
                         .modifier
                         .contains(Modifier::REVERSED | Modifier::BOLD)
                 );
-            });
-        });
+            }
+        }
     }
 
     #[test]
@@ -2777,7 +2780,7 @@ mod tests {
     #[test]
     fn bottom_border_of_the_error_modal_tells_how_to_close_it() {
         let error_modal = unknown_settings_error_modal();
-        themes().iter().for_each(|theme| {
+        for theme in &themes() {
             let backend = render_with_error_modal(
                 &[short_commit()],
                 110,
@@ -2802,38 +2805,34 @@ mod tests {
             assert!(before.chars().count().abs_diff(after.chars().count()) <= 1);
             assert!(before.chars().chain(after.chars()).all(|c| c == '━'));
             let start = left + 1 + before.chars().count() as u16;
-            (start..start + 24).for_each(|x| {
+            for x in start..start + 24 {
                 assert_eq!(buffer[(x, bottom)].fg, theme.error.fg.unwrap());
                 assert!(!buffer[(x, bottom)].modifier.contains(Modifier::REVERSED));
-            });
-        });
+            }
+        }
     }
 
     #[test]
     fn inside_of_the_error_modal_has_the_default_background() {
         let error_modal = unknown_settings_error_modal();
-        [Theme::dark(), Theme::light(), Theme::monochrome()]
-            .iter()
-            .for_each(|theme| {
-                let backend = render_with_error_modal(
-                    &[short_commit()],
-                    110,
-                    26,
-                    Viewport::default(),
-                    Some(&error_modal),
-                    theme,
-                );
-                let buffer = backend.buffer();
-                let (x, y) = error_modal_corner(&backend);
-                // The blank row, then the padding and the text below it.
-                assert_eq!(buffer[(x + 2, y + 2)].symbol(), "l");
-                [(x + 1, y + 1), (x + 1, y + 2), (x + 2, y + 2)]
-                    .into_iter()
-                    .for_each(|position| {
-                        assert_eq!(buffer[position].bg, Color::Reset);
-                        assert!(!buffer[position].modifier.contains(Modifier::REVERSED));
-                    });
-            });
+        for theme in &[Theme::dark(), Theme::light(), Theme::monochrome()] {
+            let backend = render_with_error_modal(
+                &[short_commit()],
+                110,
+                26,
+                Viewport::default(),
+                Some(&error_modal),
+                theme,
+            );
+            let buffer = backend.buffer();
+            let (x, y) = error_modal_corner(&backend);
+            // The blank row, then the padding and the text below it.
+            assert_eq!(buffer[(x + 2, y + 2)].symbol(), "l");
+            for position in [(x + 1, y + 1), (x + 1, y + 2), (x + 2, y + 2)] {
+                assert_eq!(buffer[position].bg, Color::Reset);
+                assert!(!buffer[position].modifier.contains(Modifier::REVERSED));
+            }
+        }
     }
 
     #[test]
@@ -2871,15 +2870,13 @@ mod tests {
         let headers = header_row_indexes(&commits, 110);
         headers.windows(2).enumerate().for_each(|(commit, pair)| {
             // On the header, then on the second row of the commit, then on its blank last row.
-            [pair[0], pair[0] + 1, pair[1] - 2]
-                .into_iter()
-                .for_each(|row_index| {
-                    assert_eq!(
-                        next_commit(&rows, row_index, 1),
-                        pair[1],
-                        "{commit} {row_index}"
-                    );
-                });
+            for row_index in [pair[0], pair[0] + 1, pair[1] - 2] {
+                assert_eq!(
+                    next_commit(&rows, row_index, 1),
+                    pair[1],
+                    "{commit} {row_index}"
+                );
+            }
         });
     }
 
@@ -2920,16 +2917,14 @@ mod tests {
         let rows = rows_of(&commits, 110);
         let last_header_row_index = header_row_indexes(&commits, 110).pop().unwrap();
         // The header, a row in the middle, and the separator below the last commit.
-        [
+        for row_index in [
             last_header_row_index,
             last_header_row_index + 2,
             rows.len() - 2,
             rows.len() - 1,
-        ]
-        .into_iter()
-        .for_each(|row_index| {
+        ] {
             assert_eq!(next_commit(&rows, row_index, 1), row_index, "{row_index}");
-        });
+        }
         assert_eq!(
             next_commit(&rows, last_header_row_index, 5),
             last_header_row_index
@@ -2942,15 +2937,13 @@ mod tests {
         let rows = rows_of(&commits, 110);
         let headers = header_row_indexes(&commits, 110);
         headers.windows(2).enumerate().for_each(|(commit, pair)| {
-            [pair[0] + 1, pair[0] + 3, pair[1] - 2]
-                .into_iter()
-                .for_each(|row_index| {
-                    assert_eq!(
-                        previous_commit(&rows, row_index, 1),
-                        pair[0],
-                        "{commit} {row_index}"
-                    );
-                });
+            for row_index in [pair[0] + 1, pair[0] + 3, pair[1] - 2] {
+                assert_eq!(
+                    previous_commit(&rows, row_index, 1),
+                    pair[0],
+                    "{commit} {row_index}"
+                );
+            }
         });
     }
 
@@ -3034,16 +3027,14 @@ mod tests {
 
     #[test]
     fn pending_count_status_is_gray_and_not_bold() {
-        [Theme::dark(), Theme::light(), Theme::monochrome()]
-            .iter()
-            .for_each(|theme| {
-                let line = pending_count_status(12, theme);
-                assert!(!line.spans.is_empty());
-                line.spans.iter().for_each(|span| {
-                    assert_eq!(span.style, theme.status_bar_content, "{}", span.content);
-                    assert!(!span.style.add_modifier.contains(Modifier::BOLD));
-                });
-            });
+        for theme in &[Theme::dark(), Theme::light(), Theme::monochrome()] {
+            let line = pending_count_status(12, theme);
+            assert!(!line.spans.is_empty());
+            for span in &line.spans {
+                assert_eq!(span.style, theme.status_bar_content, "{}", span.content);
+                assert!(!span.style.add_modifier.contains(Modifier::BOLD));
+            }
+        }
     }
 
     #[test]
@@ -3077,22 +3068,20 @@ mod tests {
 
     #[test]
     fn status_bar_pending_number_is_gray() {
-        [
+        for (theme, gray, background) in &[
             (Theme::dark(), Color::Indexed(248), Color::Reset),
             (Theme::light(), Color::Indexed(240), Color::Indexed(252)),
-        ]
-        .iter()
-        .for_each(|(theme, gray, background)| {
+        ] {
             let backend = render_pending(&[short_commit()], 200, 30, viewport_on(0), 12, theme);
             let content = status_bar_content_cells(&backend);
             let texts: Vec<_> = content.iter().filter(|cell| cell.symbol() != " ").collect();
             assert!(!texts.is_empty());
-            texts.iter().for_each(|cell| {
+            for cell in &texts {
                 assert_eq!(cell.fg, *gray, "{}", cell.symbol());
                 assert_eq!(cell.bg, *background, "{}", cell.symbol());
                 assert!(!cell.modifier.contains(Modifier::BOLD), "{}", cell.symbol());
-            });
-        });
+            }
+        }
     }
 
     #[test]
@@ -3113,7 +3102,7 @@ mod tests {
     #[test]
     fn draw_keeps_a_cursor_inside_the_scrolloff_margin_where_it_is() {
         // The cursor is the 3rd row of the screen, and the 27th one on the second screen.
-        [(12, 10), (36, 10)].into_iter().for_each(|(cursor, top)| {
+        for (cursor, top) in [(12, 10), (36, 10)] {
             let viewport = Viewport { cursor, top };
             let (_, drawn) = draw_with(
                 &[commit_taller_than_a_screen()],
@@ -3125,7 +3114,7 @@ mod tests {
                 &Theme::monochrome(),
             );
             assert_eq!(drawn, viewport);
-        });
+        }
     }
 
     #[test]

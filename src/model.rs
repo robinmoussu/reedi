@@ -197,10 +197,10 @@ mod tests {
     fn short_hash_has_the_abbreviation_length_of_its_commit() {
         let mut commit = fake::scrolloff_rename();
         commit.hash = "0123456789abcdef0123456789abcdef01234567".to_string();
-        [7, 10, 40].into_iter().for_each(|len| {
+        for len in [7, 10, 40] {
             commit.hash_abbrev_len = len;
             assert_eq!(commit.short_hash(), &commit.hash[..len]);
-        });
+        }
     }
 
     fn line(kind: LineKind, text: &str) -> DiffLine {

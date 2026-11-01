@@ -298,10 +298,10 @@ mod tests {
         ];
         let git =
             repository_with_a_commit_at_time("2026-10-12T17:32:07+02:00", "Europe/Paris", "C");
-        formats.into_iter().for_each(|(text, expected)| {
+        for (text, expected) in formats {
             assert!(git.author_date(Some(text)).is_ok(), "git --date={text}");
             assert_eq!(text.parse(), Ok(expected), "--date={text}");
-        });
+        }
     }
 
     #[test]
@@ -334,7 +334,7 @@ mod tests {
                 DateFormatError::MissingColon("format-local".to_string()),
             ),
         ];
-        refused.into_iter().for_each(|(text, expected)| {
+        for (text, expected) in refused {
             let git_error = git.author_date(Some(text)).unwrap_err();
             assert_eq!(
                 git_error,
@@ -342,7 +342,7 @@ mod tests {
                 "git --date={text}"
             );
             assert_eq!(text.parse::<DateFormat>(), Err(expected), "--date={text}");
-        });
+        }
     }
 
     /// Compared with `TZ=Europe/Paris GIT_TEST_DATE_NOW=… git commit --date=$input`, then
@@ -367,7 +367,7 @@ mod tests {
             "noon",
             "not a date",
         ];
-        dates.into_iter().for_each(|input| {
+        for input in dates {
             let git = Git::new(&now, "C");
             let expected = match git.commit_with_date(input) {
                 Ok(()) => Ok(git.author_time()),
@@ -376,7 +376,7 @@ mod tests {
                 }),
             };
             assert_eq!(parse(input, &now), expected, "--date={input}");
-        });
+        }
     }
 
     /// Compared with `LC_ALL=C TZ=America/New_York git log --date=$format`.
@@ -409,14 +409,14 @@ mod tests {
             "format-local:%Y %H %Z",
             "format:%A %d %B %c",
         ];
-        formats.into_iter().for_each(|text| {
+        for text in formats {
             let format = text.parse().unwrap();
             assert_eq!(
                 display(TIME, &format, &environment),
                 git.author_date(Some(text)).unwrap(),
                 "--date={text}"
             );
-        });
+        }
     }
 
     /// Compared with `LC_ALL=C GIT_TEST_DATE_NOW=… git log --date=relative`, and `--date=human`,
@@ -441,22 +441,20 @@ mod tests {
             "2026-10-01T10:00:00+02:00",
         ];
         let formats = ["relative", "human"];
-        nows.into_iter().for_each(|now| {
-            ["Europe/Paris", "America/New_York"]
-                .into_iter()
-                .for_each(|timezone| {
-                    let git = repository_with_a_commit_at_time(now, timezone, "C");
-                    let environment = environment(now, timezone);
-                    formats.into_iter().for_each(|text| {
-                        let format = text.parse().unwrap();
-                        assert_eq!(
-                            display(TIME, &format, &environment),
-                            git.author_date(Some(text)).unwrap(),
-                            "--date={text}, now: {now} in {timezone}"
-                        );
-                    });
-                });
-        });
+        for now in nows {
+            for timezone in ["Europe/Paris", "America/New_York"] {
+                let git = repository_with_a_commit_at_time(now, timezone, "C");
+                let environment = environment(now, timezone);
+                for text in formats {
+                    let format = text.parse().unwrap();
+                    assert_eq!(
+                        display(TIME, &format, &environment),
+                        git.author_date(Some(text)).unwrap(),
+                        "--date={text}, now: {now} in {timezone}"
+                    );
+                }
+            }
+        }
     }
 
     /// Compared with `LC_ALL=fr_FR.UTF-8 git log --date=$format` (which is in English if the
@@ -474,13 +472,13 @@ mod tests {
             locale,
         };
         let formats = ["default", "rfc", "relative", "human", "format:%A %d %B %c"];
-        formats.into_iter().for_each(|text| {
+        for text in formats {
             let format = text.parse().unwrap();
             assert_eq!(
                 display(TIME, &format, &environment),
                 git.author_date(Some(text)).unwrap(),
                 "--date={text}"
             );
-        });
+        }
     }
 }
