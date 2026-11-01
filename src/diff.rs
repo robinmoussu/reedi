@@ -28,10 +28,20 @@ pub struct FileState<'a> {
     pub content: &'a [u8],
 }
 
+/// Whether a file is diffed as binary or as text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffAs {
+    Binary,
+    Text,
+    /// Binary if a version contains a NUL byte, like git.
+    Auto,
+}
+
 /// The modifications of a file from `before` to `after` (`None` if the file doesn't exist in that
 /// version), with `context` unchanged lines around the modified lines.
 ///
-/// Binary files, and files with a version that is not valid UTF-8, have no hunks.
+/// Files diffed as binary (according to `diff_as`), and files with a version that is not valid
+/// UTF-8, have no hunks.
 ///
 /// # Panics
 ///
@@ -39,7 +49,7 @@ pub struct FileState<'a> {
 pub fn file(
     before: Option<FileState>,
     after: Option<FileState>,
-    binary: bool,
+    diff_as: DiffAs,
     context: usize,
 ) -> FileDiff {
     let (path, change) = match (before, after) {
@@ -56,6 +66,11 @@ pub fn file(
     };
     let before = before.map(|state| state.content).unwrap_or_default();
     let after = after.map(|state| state.content).unwrap_or_default();
+    let binary = match diff_as {
+        DiffAs::Binary => true,
+        DiffAs::Text => false,
+        DiffAs::Auto => before.contains(&0) || after.contains(&0),
+    };
     let texts = str::from_utf8(before).ok().zip(str::from_utf8(after).ok());
     let (content, hunks) = match texts {
         _ if binary => (FileContentType::Binary, Vec::new()),
@@ -153,7 +168,7 @@ mod tests {
     }
 
     fn modified(before: &str, after: &str) -> FileDiff {
-        file(state("a", before), state("a", after), false, CONTEXT)
+        file(state("a", before), state("a", after), DiffAs::Text, CONTEXT)
     }
 
     /// The lines `first_number..=last_number`, each one ending with a newline.
@@ -279,11 +294,11 @@ mod tests {
 
     #[test]
     fn added_and_deleted_files() {
-        let added = file(None, state("a", "x\ny\n"), false, CONTEXT);
+        let added = file(None, state("a", "x\ny\n"), DiffAs::Text, CONTEXT);
         assert_eq!(added.change, FileChange::Added);
         assert_eq!(lines(&added.hunks[0]), [(Added, "x"), (Added, "y")]);
         assert_eq!(added.hunks[0].after_first_line, 1);
-        let deleted = file(state("a", "x\n"), None, false, CONTEXT);
+        let deleted = file(state("a", "x\n"), None, DiffAs::Text, CONTEXT);
         assert_eq!(deleted.path, "a");
         assert_eq!(deleted.change, FileChange::Deleted);
         assert_eq!(lines(&deleted.hunks[0]), [(Removed, "x")]);
@@ -291,7 +306,7 @@ mod tests {
 
     #[test]
     fn renamed_file_is_displayed_with_its_new_path() {
-        let diff = file(state("a", "x\n"), state("b", "x\n"), false, CONTEXT);
+        let diff = file(state("a", "x\n"), state("b", "x\n"), DiffAs::Text, CONTEXT);
         assert_eq!(diff.path, "b");
         assert_eq!(diff.change, FileChange::Renamed { from: "a".into() });
         assert!(diff.hunks.is_empty());
@@ -299,18 +314,38 @@ mod tests {
 
     #[test]
     fn binary_files_have_no_hunks() {
-        let diff = file(state("a", "x\0"), state("a", "y\0"), true, CONTEXT);
+        let diff = file(
+            state("a", "x\0"),
+            state("a", "y\0"),
+            DiffAs::Binary,
+            CONTEXT,
+        );
         assert_eq!(diff.content, FileContentType::Binary);
         assert!(diff.hunks.is_empty());
     }
 
     #[test]
+    fn auto_files_are_binary_if_a_version_has_a_nul_byte() {
+        let diff = file(state("a", "x\n"), state("a", "y\0"), DiffAs::Auto, CONTEXT);
+        assert_eq!(diff.content, FileContentType::Binary);
+        let diff = file(state("a", "x\n"), state("a", "y\n"), DiffAs::Auto, CONTEXT);
+        assert_eq!(diff.content, FileContentType::Text);
+    }
+
+    #[test]
+    fn text_files_with_a_nul_byte_are_diffed_as_text() {
+        let diff = file(state("a", "x\0"), state("a", "y\0"), DiffAs::Text, CONTEXT);
+        assert_eq!(diff.content, FileContentType::Text);
+        assert!(!diff.hunks.is_empty());
+    }
+
+    #[test]
     fn files_that_are_not_valid_utf8_have_no_hunks() {
         let invalid = FileState { path: "a".into(), content: b"caf\xe9\n" };
-        let diff = file(state("a", "cafe\n"), Some(invalid), false, CONTEXT);
+        let diff = file(state("a", "cafe\n"), Some(invalid), DiffAs::Text, CONTEXT);
         assert_eq!(diff.content, FileContentType::InvalidUtf8);
         assert!(diff.hunks.is_empty());
-        let diff = file(Some(invalid), None, false, CONTEXT);
+        let diff = file(Some(invalid), None, DiffAs::Text, CONTEXT);
         assert_eq!(diff.content, FileContentType::InvalidUtf8);
     }
 }

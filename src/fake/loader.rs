@@ -14,6 +14,7 @@ use serde::Deserialize;
 
 use crate::date::DateParseError;
 use crate::diff;
+use crate::diff::DiffAs;
 use crate::diff::FileState;
 use crate::model::Commit;
 use crate::model::Decoration;
@@ -227,19 +228,19 @@ fn parse_date(text: &str) -> Result<Time, FakeDataError> {
     Ok(Time::new(timestamp.as_second(), offset.seconds()))
 }
 
-/// Whether `attributes` (the attributes of a line of a `.gitattributes` file) make a file binary
-/// (`Some(true)`), text (`Some(false)`), or let git decide from its content (`None`).
-fn is_binary(attributes: &str) -> Option<bool> {
+/// Whether `attributes` (the attributes of a line of a `.gitattributes` file) make a file binary,
+/// text, or let git decide from its content ([`DiffAs::Auto`]).
+fn diff_as(attributes: &str) -> DiffAs {
     let mut attributes = attributes.split_whitespace();
     if attributes
         .clone()
         .any(|attribute| BINARY_ATTRIBUTES.contains(&attribute))
     {
-        Some(true)
+        DiffAs::Binary
     } else if attributes.any(|attribute| attribute == TEXT_ATTRIBUTE) {
-        Some(false)
+        DiffAs::Text
     } else {
-        None
+        DiffAs::Auto
     }
 }
 
@@ -303,28 +304,26 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
         return Err(FakeDataError::UnknownGitattributesFile(unknown.clone()));
     }
 
-    let attributes = |file: &Option<RawFile>| {
+    let diff_as_of = |file: &Option<RawFile>| {
         file.and_then(|file| metadata.gitattributes.get(file.name))
-            .and_then(|attributes| is_binary(attributes))
+            .map_or(DiffAs::Auto, |attributes| diff_as(attributes))
     };
     let files: Vec<FileDiff> = versions_by_id
         .values()
         .map(|versions| {
-            let has_nul =
-                |file: &Option<RawFile>| file.is_some_and(|file| file.content.contains(&0));
-            // Like git: the attributes decide, otherwise a NUL byte makes a file binary.
-            let declared = [attributes(&versions.before), attributes(&versions.after)];
-            let binary = if declared.contains(&Some(true)) {
-                true
-            } else if declared.contains(&Some(false)) {
-                false
+            // Like git, the attributes of either version decide, binary first.
+            let declared = [diff_as_of(&versions.before), diff_as_of(&versions.after)];
+            let diff_as = if declared.contains(&DiffAs::Binary) {
+                DiffAs::Binary
+            } else if declared.contains(&DiffAs::Text) {
+                DiffAs::Text
             } else {
-                has_nul(&versions.before) || has_nul(&versions.after)
+                DiffAs::Auto
             };
             diff::file(
                 state(&versions.before, &versions.before_path),
                 state(&versions.after, &versions.after_path),
-                binary,
+                diff_as,
                 diff::CONTEXT,
             )
         })
