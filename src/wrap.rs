@@ -395,55 +395,64 @@ mod tests {
 
     #[test]
     fn short_lines_are_not_wrapped() {
-        assert_eq!(rows("let a = b;", 10), ["let a = b;"]);
+        assert_eq!(rows("let a = b;", /* width */ 10), ["let a = b;"]);
     }
 
     #[test]
     fn empty_lines_have_one_empty_row() {
-        assert_eq!(rows("", 10), [""]);
+        assert_eq!(rows("", /* width */ 10), [""]);
         // Even if the text area has no column.
-        assert_eq!(rows("", 0), [""]);
+        assert_eq!(rows("", /* width */ 0), [""]);
     }
 
     #[test]
     fn lines_are_broken_at_spaces_as_late_as_possible() {
-        assert_eq!(rows("the quick brown fox", 10), ["the quick ", "brown fox"]);
+        assert_eq!(
+            rows("the quick brown fox", /* width */ 10),
+            ["the quick ", "brown fox"]
+        );
     }
 
     #[test]
     fn lines_are_broken_after_a_hyphen() {
-        assert_eq!(rows("a well-known word", 9), ["a well-", "known ", "word"]);
+        assert_eq!(
+            rows("a well-known word", /* width */ 9),
+            ["a well-", "known ", "word"]
+        );
     }
 
     #[test]
     fn lines_are_not_broken_between_a_dot_and_a_letter() {
-        assert_eq!(rows("see example.com", 12), ["see ", "example.com"]);
+        assert_eq!(
+            rows("see example.com", /* width */ 12),
+            ["see ", "example.com"]
+        );
     }
 
     #[test]
     fn words_wider_than_the_text_area_are_split() {
-        assert_eq!(rows("abcdefgh", 3), ["abc", "def", "gh"]);
+        assert_eq!(rows("abcdefgh", /* width */ 3), ["abc", "def", "gh"]);
     }
 
     #[test]
     fn words_are_split_between_grapheme_clusters() {
-        assert_eq!(rows("abe\u{301}cd", 3), ["abe\u{301}", "cd"]);
+        assert_eq!(rows("abe\u{301}cd", /* width */ 3), ["abe\u{301}", "cd"]);
     }
 
     #[test]
     fn wide_characters_that_do_not_fit_go_to_the_next_row() {
         // `日` and `本` are 2 columns wide, with a break opportunity between them.
-        assert_eq!(rows("a日本", 4), ["a日", "本"]);
+        assert_eq!(rows("a日本", /* width */ 4), ["a日", "本"]);
         // No break opportunity before `。`, so the word `日。` is split.
-        assert_eq!(rows("日。", 3), ["日", "。"]);
+        assert_eq!(rows("日。", /* width */ 3), ["日", "。"]);
     }
 
     #[test]
     fn single_space_at_a_break_is_not_displayed() {
         // Moved to the next row.
-        assert_eq!(rows("abc d", 3), ["abc", " d"]);
+        assert_eq!(rows("abc d", /* width */ 3), ["abc", " d"]);
         assert_eq!(
-            pieces("ab cd", 3),
+            pieces("ab cd", /* width */ 3),
             [
                 vec![piece("ab ", Kind::Text)],
                 vec![piece("cd", Kind::Text)]
@@ -451,7 +460,7 @@ mod tests {
         );
         // Unless they are trailing spaces.
         assert_eq!(
-            pieces("ab  ", 3)[0],
+            pieces("ab  ", /* width */ 3)[0],
             [
                 piece("ab", Kind::Text),
                 piece("∙", Kind::TrailingWhitespace)
@@ -462,7 +471,7 @@ mod tests {
     #[test]
     fn spaces_before_a_break_are_dimmed_if_there_are_several() {
         assert_eq!(
-            pieces("ab  cd", 4),
+            pieces("ab  cd", /* width */ 4),
             [
                 vec![piece("ab", Kind::Text), piece("∙∙", Kind::DimmedWhitespace)],
                 vec![piece("cd", Kind::Text)],
@@ -472,15 +481,15 @@ mod tests {
 
     #[test]
     fn spaces_that_do_not_fit_are_moved_to_the_next_row() {
-        assert_eq!(rows("abc   def", 5), ["abc∙∙", " def"]);
+        assert_eq!(rows("abc   def", /* width */ 5), ["abc∙∙", " def"]);
         // The spaces moved to the next row count as being around the break.
-        assert_eq!(rows("abc  def", 4), ["abc∙", " def"]);
+        assert_eq!(rows("abc  def", /* width */ 4), ["abc∙", " def"]);
     }
 
     #[test]
     fn trailing_whitespace_is_wrapped_and_highlighted() {
         assert_eq!(
-            pieces("ab    ", 3),
+            pieces("ab    ", /* width */ 3),
             [
                 vec![
                     piece("ab", Kind::Text),
@@ -490,7 +499,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            pieces("ab\t\t", 4),
+            pieces("ab\t\t", /* width */ 4),
             [
                 vec![
                     piece("ab", Kind::Text),
@@ -504,30 +513,30 @@ mod tests {
     #[test]
     fn tab_before_a_break_is_displayed_alone() {
         // The tab fits, but `cdef` doesn't.
-        assert_eq!(rows("ab\tcdef", 6), ["ab⇥", "cdef"]);
+        assert_eq!(rows("ab\tcdef", /* width */ 6), ["ab⇥", "cdef"]);
         // Only `⇥` fits.
-        assert_eq!(rows("abcde\tx", 6), ["abcde⇥", "x"]);
+        assert_eq!(rows("abcde\tx", /* width */ 6), ["abcde⇥", "x"]);
         assert_eq!(
-            pieces("ab\tcdef", 6)[0],
+            pieces("ab\tcdef", /* width */ 6)[0],
             [piece("ab", Kind::Text), piece("⇥", Kind::DimmedWhitespace)]
         );
     }
 
     #[test]
     fn tab_after_a_break_reaches_the_next_tab_stop() {
-        assert_eq!(rows("abcdef\tx", 6), ["abcdef", "⇥   x"]);
+        assert_eq!(rows("abcdef\tx", /* width */ 6), ["abcdef", "⇥   x"]);
         // Tab stops are counted from the start of the text area.
-        assert_eq!(rows("abcdef g\tx", 6), ["abcdef", " g⇥ x"]);
+        assert_eq!(rows("abcdef g\tx", /* width */ 6), ["abcdef", " g⇥ x"]);
     }
 
     #[test]
     fn braille_blanks_at_a_break_are_dimmed_if_there_are_several() {
         assert_eq!(
-            pieces("a\u{2800}\u{2800}cd", 3)[0],
+            pieces("a\u{2800}\u{2800}cd", /* width */ 3)[0],
             [piece("a", Kind::Text), piece("∙∙", Kind::DimmedWhitespace)]
         );
         assert_eq!(
-            pieces("abc\u{2800}\u{2800}d", 3)[1],
+            pieces("abc\u{2800}\u{2800}d", /* width */ 3)[1],
             [piece("∙∙", Kind::DimmedWhitespace), piece("d", Kind::Text)]
         );
     }
@@ -535,27 +544,30 @@ mod tests {
     #[test]
     fn single_braille_blank_at_a_break_is_not_displayed() {
         assert_eq!(
-            pieces("ab\u{2800}cd", 3),
+            pieces("ab\u{2800}cd", /* width */ 3),
             [
                 vec![piece("ab ", Kind::Text)],
                 vec![piece("cd", Kind::Text)]
             ]
         );
         // Its column is left blank.
-        assert_eq!(pieces("abc\u{2800}d", 3)[1], [piece(" d", Kind::Text)]);
-        assert_eq!(rows("a\u{2800}b", 10), ["a\u{2800}b"]);
+        assert_eq!(
+            pieces("abc\u{2800}d", /* width */ 3)[1],
+            [piece(" d", Kind::Text)]
+        );
+        assert_eq!(rows("a\u{2800}b", /* width */ 10), ["a\u{2800}b"]);
     }
 
     #[test]
     fn break_opportunities_are_computed_on_the_original_text() {
         // There is a break opportunity after a zero-width space, but not after `⌁`.
-        assert_eq!(rows("ab\u{200b}cd", 4), ["ab⌁", "cd"]);
+        assert_eq!(rows("ab\u{200b}cd", /* width */ 4), ["ab⌁", "cd"]);
     }
 
     #[test]
     fn segments_are_wrapped_as_a_single_line() {
         let segments = ["abc ", "de", "f gh"].map(Segment::new);
-        let rows = wrap(&segments, FinalCr::Shown, 8).unwrap();
+        let rows = wrap(&segments, FinalCr::Shown, /* width */ 8).unwrap();
         assert_eq!(
             rows,
             [
@@ -580,7 +592,12 @@ mod tests {
 
     #[test]
     fn tab_stops_are_counted_from_the_start_of_the_row_in_all_segments() {
-        let rows = wrap(&["ab", "\tc"].map(Segment::new), FinalCr::Shown, 20).unwrap();
+        let rows = wrap(
+            &["ab", "\tc"].map(Segment::new),
+            FinalCr::Shown,
+            /* width */ 20,
+        )
+        .unwrap();
         assert_eq!(rows[0].pieces[1], (1, piece("⇥ ", Kind::DimmedWhitespace)));
     }
 
@@ -598,7 +615,7 @@ mod tests {
             markup("b  "),
             markup("  c "),
         ];
-        let rows = wrap(&segments, FinalCr::Shown, 7).unwrap();
+        let rows = wrap(&segments, FinalCr::Shown, /* width */ 7).unwrap();
         assert_eq!(
             rows,
             [
@@ -623,38 +640,47 @@ mod tests {
 
     #[test]
     fn rows_start_at_their_first_character() {
-        let starts: Vec<_> = wrap(&[Segment::new("the quick brown")], FinalCr::Shown, 10)
-            .unwrap()
-            .into_iter()
-            .map(|row| row.start_byte)
-            .collect();
+        let starts: Vec<_> = wrap(
+            &[Segment::new("the quick brown")],
+            FinalCr::Shown,
+            /* width */ 10,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|row| row.start_byte)
+        .collect();
         assert_eq!(starts, [0, 10]);
     }
 
     #[test]
     fn width_of_a_row_is_counted_per_grapheme_cluster() {
         // As a whole, `unicode-width` counts the lam-alef ligature `لا` as 1 column.
-        let rows = wrap(&[Segment::new("سلام")], FinalCr::Shown, 10).unwrap();
+        let rows = wrap(&[Segment::new("سلام")], FinalCr::Shown, /* width */ 10).unwrap();
         assert_eq!(rows[0].columns_count, 4);
     }
 
     #[test]
     fn hidden_carriage_return_is_not_displayed() {
-        let rows = wrap(&[Segment::new("ab\r")], FinalCr::Hidden, 10).unwrap();
+        let rows = wrap(
+            &[Segment::new("ab\r")],
+            FinalCr::Hidden,
+            /* width */ 10,
+        )
+        .unwrap();
         assert_eq!(rows[0].pieces, [(0, piece("ab", Kind::Text))]);
-        let rows = wrap(&[Segment::new("ab\r")], FinalCr::Shown, 10).unwrap();
+        let rows = wrap(&[Segment::new("ab\r")], FinalCr::Shown, /* width */ 10).unwrap();
         assert_eq!(rows[0].pieces[1], (0, piece("␍", Kind::Replacement)));
     }
 
     #[test]
     fn too_narrow_text_area_is_an_error() {
-        let error = wrap(&[Segment::new("a日")], FinalCr::Shown, 1).unwrap_err();
+        let error = wrap(&[Segment::new("a日")], FinalCr::Shown, /* width */ 1).unwrap_err();
         assert_eq!(error, TooNarrow { width: 1, cluster: "日".to_string() });
         assert_eq!(
             error.to_string(),
             "the terminal is too narrow to display \"日\" in a text area of 1 column"
         );
-        assert!(wrap(&[Segment::new("a")], FinalCr::Shown, 0).is_err());
-        assert!(wrap(&[Segment::new(" ")], FinalCr::Shown, 0).is_err());
+        assert!(wrap(&[Segment::new("a")], FinalCr::Shown, /* width */ 0).is_err());
+        assert!(wrap(&[Segment::new(" ")], FinalCr::Shown, /* width */ 0).is_err());
     }
 }
