@@ -125,7 +125,7 @@ mod tests {
     #[test]
     fn named_functions_return_a_commit_of_all() {
         let hashes: Vec<_> = all().into_iter().map(|commit| commit.hash).collect();
-        [
+        for commit in [
             file_changes(),
             line_wrapping(),
             invisible_characters(),
@@ -134,9 +134,9 @@ mod tests {
             rtl_summary(),
             rtl_then_ltr_summary(),
             ltr_then_rtl_summary(),
-        ]
-        .into_iter()
-        .for_each(|commit| assert!(hashes.contains(&commit.hash), "{}", commit.subject));
+        ] {
+            assert!(hashes.contains(&commit.hash), "{}", commit.subject);
+        }
     }
 
     #[test]
@@ -182,7 +182,7 @@ mod tests {
             .output()
             .unwrap();
         let attributes = String::from_utf8(output.stdout).unwrap();
-        paths.iter().for_each(|path| {
+        for path in &paths {
             assert!(
                 attributes.contains(&format!("{path}: text: unset")),
                 "{path}"
@@ -191,7 +191,7 @@ mod tests {
                 attributes.contains(&format!("{path}: whitespace: unset")),
                 "{path}"
             );
-        });
+        }
     }
 
     #[test]
@@ -218,29 +218,27 @@ mod tests {
             .skip(1)
             .take_while(|line| !line.starts_with('['))
             .collect();
-        [
+        for property in [
             "charset",
             "end_of_line",
             "indent_style",
             "insert_final_newline",
             "trim_trailing_whitespace",
-        ]
-        .into_iter()
-        .for_each(|property| {
+        ] {
             assert!(
                 section.contains(&format!("{property} = unset").as_str()),
                 "{property}"
             );
-        });
+        }
     }
 
     #[test]
     fn fake_hashes_are_full_hashes() {
-        all().iter().for_each(|commit| {
+        for commit in &all() {
             let hash = commit.hash.to_string();
             assert_eq!(hash.len(), 40, "{hash}");
             assert!(hash.bytes().all(|byte| byte.is_ascii_hexdigit()), "{hash}");
-        });
+        }
     }
 
     #[test]
@@ -361,13 +359,11 @@ mod tests {
 
     #[test]
     fn the_new_short_commits_modify_a_single_ascii_line() {
-        [
+        for commit in &[
             rtl_summary(),
             rtl_then_ltr_summary(),
             ltr_then_rtl_summary(),
-        ]
-        .iter()
-        .for_each(|commit| {
+        ] {
             assert_eq!(commit.files.len(), 1, "{}", commit.subject);
             let file = &commit.files[0];
             assert_eq!(file.hunks.len(), 1, "{}", commit.subject);
@@ -375,6 +371,6 @@ mod tests {
             let kinds: Vec<_> = lines.iter().map(|line| line.kind).collect();
             assert_eq!(kinds, [LineKind::Removed, LineKind::Added]);
             assert!(lines.iter().all(|line| line.text.is_ascii()));
-        });
+        }
     }
 }

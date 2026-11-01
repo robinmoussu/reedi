@@ -164,20 +164,20 @@ fn operations(x: &[&str], y: &[&str]) -> Vec<(Operation, usize)> {
         };
         columns * (y.len() + 1)
     ];
-    (1..columns).for_each(|i| {
+    for i in 1..columns {
         table[index(i, 0)] = Cell {
             parent: 0,
             operation: Operation::Deletion,
             cost: i * DELETION_COST + INITIAL_MISMATCH_PENALTY,
         };
-    });
-    (1..=y.len()).for_each(|j| {
+    }
+    for j in 1..=y.len() {
         table[index(0, j)] = Cell {
             parent: 0,
             operation: Operation::Insertion,
             cost: j * INSERTION_COST + INITIAL_MISMATCH_PENALTY,
         };
-    });
+    }
     let mismatch_cost = |table: &[Cell], parent: usize, cost: usize| {
         let penalty = if table[parent].operation == Operation::NoOp {
             INITIAL_MISMATCH_PENALTY

@@ -691,28 +691,24 @@ mod tests {
 
     #[test]
     fn half_page_down_does_nothing_when_the_last_row_is_displayed() {
-        [(95, 80), (85, 80), (80, 80)]
-            .into_iter()
-            .for_each(|(cursor, top)| {
-                let mut viewport = viewport(cursor, top);
-                viewport.half_page_down(1, 100, 20);
-                assert_eq!(viewport, Viewport { cursor, top });
-                viewport.half_page_down(usize::MAX, 100, 20);
-                assert_eq!(viewport, Viewport { cursor, top });
-            });
+        for (cursor, top) in [(95, 80), (85, 80), (80, 80)] {
+            let mut viewport = viewport(cursor, top);
+            viewport.half_page_down(1, 100, 20);
+            assert_eq!(viewport, Viewport { cursor, top });
+            viewport.half_page_down(usize::MAX, 100, 20);
+            assert_eq!(viewport, Viewport { cursor, top });
+        }
     }
 
     #[test]
     fn half_page_up_does_nothing_when_the_first_row_is_displayed() {
-        [(0, 0), (5, 0), (10, 0)]
-            .into_iter()
-            .for_each(|(cursor, top)| {
-                let mut viewport = viewport(cursor, top);
-                viewport.half_page_up(1, 100, 20);
-                assert_eq!(viewport, Viewport { cursor, top });
-                viewport.half_page_up(usize::MAX, 100, 20);
-                assert_eq!(viewport, Viewport { cursor, top });
-            });
+        for (cursor, top) in [(0, 0), (5, 0), (10, 0)] {
+            let mut viewport = viewport(cursor, top);
+            viewport.half_page_up(1, 100, 20);
+            assert_eq!(viewport, Viewport { cursor, top });
+            viewport.half_page_up(usize::MAX, 100, 20);
+            assert_eq!(viewport, Viewport { cursor, top });
+        }
     }
 
     #[test]

@@ -553,10 +553,10 @@ mod tests {
 
     #[test]
     fn digits_are_actions() {
-        ('0'..='9').for_each(|c| {
+        for c in '0'..='9' {
             let digit = c.to_digit(10).unwrap() as u8;
             assert_eq!(action(&key(KeyCode::Char(c))), Some(Action::Digit(digit)));
-        });
+        }
     }
 
     fn type_keys(count: &mut Count, keys: &str) {
@@ -632,16 +632,14 @@ mod tests {
 
     #[test]
     fn any_other_key_cancels_the_pending_number() {
-        [
+        for event in &[
             key(KeyCode::Esc),
             key(KeyCode::Enter),
             key(KeyCode::Tab),
             press(KeyCode::BackTab, KeyModifiers::SHIFT),
             key(KeyCode::Char('a')),
             ctrl('j'),
-        ]
-        .iter()
-        .for_each(|event| {
+        ] {
             let mut count = Count::default();
             type_keys(&mut count, "5");
             assert_eq!(count.apply(event), None, "{event:?}");
@@ -651,13 +649,13 @@ mod tests {
                 Some((Action::Down, None)),
                 "{event:?}"
             );
-        });
+        }
     }
 
     #[test]
     fn the_number_is_given_to_every_movement() {
         let shift = |c| press(KeyCode::Char(c), KeyModifiers::SHIFT);
-        [
+        for (event, expected) in [
             (key(KeyCode::Char('j')), Action::Down),
             (key(KeyCode::Down), Action::Down),
             (key(KeyCode::Char('k')), Action::Up),
@@ -680,13 +678,11 @@ mod tests {
                 press(KeyCode::Up, KeyModifiers::CONTROL),
                 Action::PreviousCommit,
             ),
-        ]
-        .into_iter()
-        .for_each(|(event, expected)| {
+        ] {
             let mut count = Count::default();
             type_keys(&mut count, "3");
             assert_eq!(count.apply(&event), Some((expected, Some(3))), "{event:?}");
-        });
+        }
     }
 
     #[test]
@@ -1134,24 +1130,22 @@ mod tests {
     fn navigate_ignores_actions_that_are_not_movements() {
         let rows = rows_of_a_long_commit();
         let before = viewport(20, 10);
-        [Action::Quit, Action::Suspend, Action::Digit(3)]
-            .into_iter()
-            .for_each(|action| assert_eq!(navigated(&rows, action, None, before), before));
+        for action in [Action::Quit, Action::Suspend, Action::Digit(3)] {
+            assert_eq!(navigated(&rows, action, None, before), before);
+        }
     }
 
     #[test]
     fn navigate_without_rows_does_nothing() {
-        [
+        for action in [
             Action::Down,
             Action::Last,
             Action::NextCommit,
             Action::HalfPageDown,
-        ]
-        .into_iter()
-        .for_each(|action| {
+        ] {
             let mut viewport = Viewport::default();
             navigate(action, Some(3), &mut viewport, &[], HEIGHT);
             assert_eq!(viewport, Viewport::default(), "{action:?}");
-        });
+        }
     }
 }

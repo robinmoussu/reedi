@@ -114,7 +114,7 @@ mod tests {
             "raw",
             "format:%d/%m/%Y",
         ];
-        values.into_iter().for_each(|value| {
+        for value in values {
             let (git, repository) = repository_with_a_commit_at_time(Some(value));
             let format = log_date_of(&repository).unwrap().unwrap();
             let environment = Environment {
@@ -129,7 +129,7 @@ mod tests {
                 git.author_date(None).unwrap(),
                 "log.date = {value}"
             );
-        });
+        }
     }
 
     #[test]

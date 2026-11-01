@@ -72,10 +72,10 @@ pub fn unknown_settings_error_modal() -> ErrorModal {
 /// `buffer`, without the left-to-right marks, which are invisible in the snapshots.
 pub fn without_left_to_right_marks(buffer: &Buffer) -> Buffer {
     let mut buffer = buffer.clone();
-    buffer.content.iter_mut().for_each(|cell| {
+    for cell in &mut buffer.content {
         let symbol = cell.symbol().replace(LEFT_TO_RIGHT_MARK, "");
         cell.set_symbol(&symbol);
-    });
+    }
     buffer
 }
 

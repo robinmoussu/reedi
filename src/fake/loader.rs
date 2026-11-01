@@ -427,15 +427,13 @@ mod tests {
 
     #[test]
     fn invalid_folder_names_are_errors() {
-        ["", "00", "00_", "_x", "0_x", "000_x", "ab_x", "00-x"]
-            .into_iter()
-            .for_each(|name| {
-                assert_eq!(
-                    parse_folder_name(name),
-                    Err(FakeDataError::InvalidFolderName(name.to_string())),
-                    "{name:?}"
-                );
-            });
+        for name in ["", "00", "00_", "_x", "0_x", "000_x", "ab_x", "00-x"] {
+            assert_eq!(
+                parse_folder_name(name),
+                Err(FakeDataError::InvalidFolderName(name.to_string())),
+                "{name:?}"
+            );
+        }
     }
 
     #[test]
@@ -467,13 +465,13 @@ mod tests {
             "01_before",
             "ab_after_a",
         ];
-        invalid.into_iter().for_each(|name| {
+        for name in invalid {
             assert_eq!(
                 parse_file_name(name),
                 Err(FakeDataError::InvalidFileName(name.to_string())),
                 "{name:?}"
             );
-        });
+        }
     }
 
     #[test]
@@ -531,7 +529,7 @@ mod tests {
             "yesterday",
             "not a date",
         ];
-        invalid.into_iter().for_each(|date| {
+        for date in invalid {
             let metadata = metadata("").replace("2026-10-12 14:32:07 +0200", date);
             assert_eq!(
                 load(&metadata, &[]).unwrap_err(),
@@ -540,7 +538,7 @@ mod tests {
                 }),
                 "{date:?}"
             );
-        });
+        }
     }
 
     #[test]
@@ -551,13 +549,13 @@ mod tests {
             metadata("").replace(HASH, "abc123"),
             "this is not toml".to_string(),
         ];
-        invalid.into_iter().for_each(|metadata| {
+        for metadata in invalid {
             let error = load(&metadata, &[]).unwrap_err();
             assert!(
                 matches!(error, FakeDataError::InvalidMetadata(_)),
                 "{error:?}"
             );
-        });
+        }
     }
 
     #[test]

@@ -143,9 +143,9 @@ impl Cluster {
     pub fn push(&self, pieces: &mut Pieces, wrap: Wrap, room: usize) {
         let whitespace = match &self.content {
             Content::Fixed(fixed) => {
-                fixed
-                    .iter()
-                    .for_each(|piece| pieces.push(piece.kind, &piece.text));
+                for piece in fixed {
+                    pieces.push(piece.kind, &piece.text);
+                }
                 return;
             }
             Content::Contextual(whitespace) => *whitespace,
@@ -359,9 +359,9 @@ mod tests {
     /// otherwise.
     fn display(line: &str, final_cr: FinalCr) -> Vec<Piece> {
         let mut pieces = Pieces::new(0);
-        clusters(line, final_cr)
-            .iter()
-            .for_each(|cluster| cluster.push(&mut pieces, Wrap::None, usize::MAX));
+        for cluster in &clusters(line, final_cr) {
+            cluster.push(&mut pieces, Wrap::None, usize::MAX);
+        }
         pieces.pieces
     }
 
@@ -569,21 +569,19 @@ mod tests {
             Wrap::Single,
         ];
         // The whitespace is the first cluster, and is trailing whitespace in the last three lines.
-        [" x", "\u{2800}x", "\tx", " ", "\u{2800}", "\t"]
-            .into_iter()
-            .for_each(|line| {
-                let cluster = clusters(line, FinalCr::Shown).remove(0);
-                (0..TAB_WIDTH).for_each(|column| {
-                    wraps.into_iter().for_each(|wrap| {
-                        let mut pieces = Pieces::new(column);
-                        cluster.push(&mut pieces, wrap, usize::MAX);
-                        assert!(
-                            pieces.column - column <= cluster.width(column),
-                            "{line:?} at column {column}, {wrap:?}"
-                        );
-                    });
-                });
-            });
+        for line in [" x", "\u{2800}x", "\tx", " ", "\u{2800}", "\t"] {
+            let cluster = clusters(line, FinalCr::Shown).remove(0);
+            for column in 0..TAB_WIDTH {
+                for wrap in wraps {
+                    let mut pieces = Pieces::new(column);
+                    cluster.push(&mut pieces, wrap, usize::MAX);
+                    assert!(
+                        pieces.column - column <= cluster.width(column),
+                        "{line:?} at column {column}, {wrap:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -669,9 +667,9 @@ mod tests {
         let family = "👨\u{200d}👩\u{200d}👧";
         let heart = "❤\u{fe0f}";
         let scotland = "🏴\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}";
-        [family, heart, scotland].into_iter().for_each(|emoji| {
+        for emoji in [family, heart, scotland] {
             assert_eq!(display(emoji, FinalCr::Shown), [piece(emoji, Kind::Text)])
-        });
+        }
     }
 
     #[test]
