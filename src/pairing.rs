@@ -1,4 +1,4 @@
-//! Pairing of the removed and added lines of a chunk, like `delta` (with its default settings)
+//! Pairing of the removed and added lines of a hunk, like `delta` (with its default settings)
 //! does: a removed line is displayed next to an added line only if they are similar enough.
 
 use std::iter;
@@ -8,11 +8,11 @@ use regex::Regex;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::model::Chunk;
 use crate::model::DiffLine;
+use crate::model::Hunk;
 use crate::model::LineKind;
 
-/// Maximum distance (between 0 and 1, see [`distance`]) between a removed and an added line for
+/// Maximum distance (between 0 and 1, see [`distance()`]) between a removed and an added line for
 /// them to be paired.
 const MAX_LINE_DISTANCE: f64 = 0.6;
 
@@ -27,21 +27,21 @@ const INSERTION_COST: usize = 2;
 /// Extra cost for starting a new group of deleted or inserted tokens.
 const INITIAL_MISMATCH_PENALTY: usize = 1;
 
-/// A row of a chunk: the indexes (in [`Chunk::lines`]) of the lines displayed in each half.
+/// A row of a hunk: the indexes (in [`Hunk::lines`]) of the lines displayed in each half.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pair {
     pub before: Option<usize>,
     pub after: Option<usize>,
 }
 
-/// The rows of `chunk`, in order.
+/// The rows of `hunk`, in order.
 ///
 /// An unchanged line is displayed in both halves. The removed and added lines between two
 /// unchanged lines are paired greedily: each removed line is paired with the first following added
 /// line that is similar enough, and the added lines skipped to find it are unpaired. A removed line
 /// with no similar added line is unpaired.
-pub fn pairs(chunk: &Chunk) -> Vec<Pair> {
-    let lines: Vec<_> = chunk.lines.iter().enumerate().collect();
+pub fn pairs(hunk: &Hunk) -> Vec<Pair> {
+    let lines: Vec<_> = hunk.lines.iter().enumerate().collect();
     lines
         .chunk_by(|(_, a), (_, b)| {
             (a.kind == LineKind::Unchanged) == (b.kind == LineKind::Unchanged)
@@ -54,12 +54,11 @@ pub fn pairs(chunk: &Chunk) -> Vec<Pair> {
                     .map(|(index, _)| *index)
                     .collect::<Vec<_>>()
             };
-            let unchanged = indexes(LineKind::Unchanged).into_iter().map(|index| Pair {
-                before: Some(index),
-                after: Some(index),
-            });
+            let unchanged = indexes(LineKind::Unchanged)
+                .into_iter()
+                .map(|index| Pair { before: Some(index), after: Some(index) });
             let modified = pair_modified(
-                &chunk.lines,
+                &hunk.lines,
                 &indexes(LineKind::Removed),
                 &indexes(LineKind::Added),
             );
@@ -68,7 +67,7 @@ pub fn pairs(chunk: &Chunk) -> Vec<Pair> {
         .collect()
 }
 
-/// The rows displaying the `removed` and `added` lines (indexes in `lines`), see [`pairs`].
+/// The rows displaying the `removed` and `added` lines (indexes in `lines`), see [`pairs()`].
 fn pair_modified(lines: &[DiffLine], removed: &[usize], added: &[usize]) -> Vec<Pair> {
     let mut next = 0;
     let mut pairs: Vec<_> = removed
@@ -80,32 +79,27 @@ fn pair_modified(lines: &[DiffLine], removed: &[usize], added: &[usize]) -> Vec<
             let rows: Vec<_> = match similar {
                 Some(skipped) => added[next..next + skipped]
                     .iter()
-                    .map(|&after| Pair {
-                        before: None,
-                        after: Some(after),
-                    })
+                    .map(|&after| Pair { before: None, after: Some(after) })
                     .chain(iter::once(Pair {
                         before: Some(before),
                         after: Some(added[next + skipped]),
                     }))
                     .collect(),
-                None => vec![Pair {
-                    before: Some(before),
-                    after: None,
-                }],
+                None => vec![Pair { before: Some(before), after: None }],
             };
             next += similar.map_or(0, |skipped| skipped + 1);
             rows
         })
         .collect();
-    pairs.extend(added[next..].iter().map(|&after| Pair {
-        before: None,
-        after: Some(after),
-    }));
+    pairs.extend(
+        added[next..]
+            .iter()
+            .map(|&after| Pair { before: None, after: Some(after) }),
+    );
     pairs
 }
 
-/// The tokens of `line`, aligned by [`operations`]: its words, and each grapheme cluster between
+/// The tokens of `line`, aligned by [`operations()`]: its words, and each grapheme cluster between
 /// them, after one (or two, if the line doesn't start with a word) empty tokens.
 fn tokenize(line: &str) -> Vec<&str> {
     let words: Vec<_> = WORD.find_iter(line).collect();
@@ -126,7 +120,11 @@ fn tokenize(line: &str) -> Vec<&str> {
     let tokens = ends
         .zip(starts)
         .zip(words)
-        .flat_map(|((end, start), word)| line[end..start].graphemes(true).chain(word));
+        .flat_map(|((end, start), word)| {
+            line[end..start]
+                .graphemes(/* is_extended */ true)
+                .chain(word)
+        });
     iter::once("").chain(second_empty).chain(tokens).collect()
 }
 
@@ -164,20 +162,20 @@ fn operations(x: &[&str], y: &[&str]) -> Vec<(Operation, usize)> {
         };
         columns * (y.len() + 1)
     ];
-    (1..columns).for_each(|i| {
+    for i in 1..columns {
         table[index(i, 0)] = Cell {
             parent: 0,
             operation: Operation::Deletion,
             cost: i * DELETION_COST + INITIAL_MISMATCH_PENALTY,
         };
-    });
-    (1..=y.len()).for_each(|j| {
+    }
+    for j in 1..=y.len() {
         table[index(0, j)] = Cell {
             parent: 0,
             operation: Operation::Insertion,
             cost: j * INSERTION_COST + INITIAL_MISMATCH_PENALTY,
         };
-    });
+    }
     let mismatch_cost = |table: &[Cell], parent: usize, cost: usize| {
         let penalty = if table[parent].operation == Operation::NoOp {
             INITIAL_MISMATCH_PENALTY
@@ -243,18 +241,33 @@ fn distance(before: &str, after: &str) -> f64 {
     let width = |tokens: &[&str]| tokens.concat().trim().width();
     let (_, _, changed, total) = operations(&x, &y).into_iter().fold(
         (0, 0, 0, 0),
-        |(x_offset, y_offset, changed, total), (operation, n)| match operation {
+        |(x_offset, y_offset, changed, total), (operation, tokens_count)| match operation {
             Operation::Deletion => {
-                let width = width(&x[x_offset..x_offset + n]);
-                (x_offset + n, y_offset, changed + width, total + width)
+                let width = width(&x[x_offset..x_offset + tokens_count]);
+                (
+                    x_offset + tokens_count,
+                    y_offset,
+                    changed + width,
+                    total + width,
+                )
             }
             Operation::Insertion => {
-                let width = width(&y[y_offset..y_offset + n]);
-                (x_offset, y_offset + n, changed + width, total + width)
+                let width = width(&y[y_offset..y_offset + tokens_count]);
+                (
+                    x_offset,
+                    y_offset + tokens_count,
+                    changed + width,
+                    total + width,
+                )
             }
             Operation::NoOp => {
-                let width = width(&x[x_offset..x_offset + n]);
-                (x_offset + n, y_offset + n, changed, total + 2 * width)
+                let width = width(&x[x_offset..x_offset + tokens_count]);
+                (
+                    x_offset + tokens_count,
+                    y_offset + tokens_count,
+                    changed,
+                    total + 2 * width,
+                )
             }
         },
     );
@@ -280,8 +293,8 @@ mod tests {
         }
     }
 
-    fn chunk(lines: &[(LineKind, &str)]) -> Chunk {
-        Chunk {
+    fn hunk(lines: &[(LineKind, &str)]) -> Hunk {
+        Hunk {
             before_first_line: 1,
             after_first_line: 1,
             lines: lines.iter().map(|(kind, text)| line(*kind, text)).collect(),
@@ -290,7 +303,7 @@ mod tests {
 
     /// The pairs, as `(before, after)` tuples.
     fn pairs_of(lines: &[(LineKind, &str)]) -> Vec<(Option<usize>, Option<usize>)> {
-        pairs(&chunk(lines))
+        pairs(&hunk(lines))
             .into_iter()
             .map(|pair| (pair.before, pair.after))
             .collect()

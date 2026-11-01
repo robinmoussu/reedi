@@ -1,4 +1,4 @@
-//! The locale of the C library, used like git does: for `strftime`, and to translate messages
+//! The locale of the C library, used like git does: for `strftime()`, and to translate messages
 //! with the translations of git (gettext).
 
 use std::ffi::CStr;
@@ -9,6 +9,8 @@ use std::ffi::c_ulong;
 use std::ptr;
 
 use jiff::Zoned;
+
+use crate::gix_compat::date::DisplayedIn;
 
 /// The text domain of the translations of git.
 const GIT_TEXT_DOMAIN: &CStr = c"git";
@@ -22,7 +24,7 @@ const TRANSLATIONS_CHARSET: &CStr = c"UTF-8";
 /// The placeholder of the number in the messages of git.
 const COUNT_PLACEHOLDER: &str = "%lu";
 
-/// The biggest result of `strftime` that is supported.
+/// The biggest result of `strftime()` that is supported.
 const MAX_STRFTIME_LEN: usize = 1 << 16;
 
 unsafe extern "C" {
@@ -38,7 +40,7 @@ unsafe extern "C" {
     fn bind_textdomain_codeset(domain: *const c_char, codeset: *const c_char) -> *mut c_char;
 }
 
-/// A locale of the C library. It is only used by the thread using it (`uselocale`), so that
+/// A locale of the C library. It is only used by the thread using it (`uselocale()`), so that
 /// several locales can be used at the same time (like in the tests).
 #[derive(Debug)]
 pub struct Locale {
@@ -47,14 +49,14 @@ pub struct Locale {
 
 impl Drop for Locale {
     fn drop(&mut self) {
-        // SAFETY: `raw` was created by `newlocale` and is freed only here.
+        // SAFETY: `raw` was created by `newlocale()` and is freed only here.
         unsafe { libc::freelocale(self.raw) };
     }
 }
 
-/// `pattern` where `%z` and `%Z` are replaced like git does before calling `strftime`: the C
+/// `pattern` where `%z` and `%Z` are replaced like git does before calling `strftime()`: the C
 /// library would use the timezone of the process instead of the one of `zoned` for `%Z`.
-fn expand_timezone(pattern: &str, zoned: &Zoned, local: bool) -> String {
+fn expand_timezone(pattern: &str, zoned: &Zoned, displayed_in: DisplayedIn) -> String {
     let mut expanded = String::new();
     let mut chars = pattern.chars();
     while let Some(char) = chars.next() {
@@ -63,14 +65,9 @@ fn expand_timezone(pattern: &str, zoned: &Zoned, local: bool) -> String {
             continue;
         }
         match chars.next() {
-            Some('z') => {
-                let seconds = zoned.offset().seconds();
-                let minutes = seconds.abs() / 60;
-                let sign = if seconds < 0 { '-' } else { '+' };
-                expanded += &format!("{sign}{:02}{:02}", minutes / 60, minutes % 60);
-            }
+            Some('z') => expanded += &zoned.strftime("%z").to_string(),
             Some('Z') => {
-                if local {
+                if displayed_in == DisplayedIn::LocalTimezone {
                     let info = zoned.time_zone().to_offset_info(zoned.timestamp());
                     expanded += &info.abbreviation().replace('%', "%%");
                 }
@@ -111,11 +108,11 @@ impl Locale {
         Self::new(&CString::new(name).ok()?)
     }
 
-    /// `time` (in the timezone of `zoned`) formatted with the `strftime` of the C library, like
-    /// `git log --date=format:$pattern`: `%z` is the offset, and `%Z` the name of the timezone
-    /// only if `local` (it is empty otherwise).
-    pub fn strftime(&self, pattern: &str, zoned: &Zoned, local: bool) -> String {
-        let Ok(pattern) = CString::new(expand_timezone(pattern, zoned, local)) else {
+    /// `zoned` formatted with the `strftime()` of the C library, like
+    /// `git log --date=format:$pattern`: `%z` is the offset, and `%Z` the name of the timezone only
+    /// if `displayed_in` is [`DisplayedIn::LocalTimezone`] (it is empty otherwise).
+    pub fn strftime(&self, pattern: &str, zoned: &Zoned, displayed_in: DisplayedIn) -> String {
+        let Ok(pattern) = CString::new(expand_timezone(pattern, zoned, displayed_in)) else {
             return String::new();
         };
         // SAFETY: `tm` is a plain C struct, for which all zeros is valid.
@@ -136,7 +133,7 @@ impl Locale {
                 .is_dst(),
         );
         tm.tm_gmtoff = zoned.offset().seconds().into();
-        // `strftime` returns 0 both when the result is empty and when the buffer is too small.
+        // `strftime()` returns 0 both when the result is empty and when the buffer is too small.
         std::iter::successors(Some(256), |len| {
             Some(len * 2).filter(|len| *len <= MAX_STRFTIME_LEN)
         })
@@ -183,7 +180,7 @@ impl Locale {
                 CStr::from_ptr(translated).to_string_lossy().into_owned()
             }
         });
-        translated.replacen(COUNT_PLACEHOLDER, &count.to_string(), 1)
+        translated.replacen(COUNT_PLACEHOLDER, &count.to_string(), /* count */ 1)
     }
 
     /// The translation by git of `message` (`_()` in git).
@@ -192,7 +189,7 @@ impl Locale {
             return String::new();
         };
         self.with_translations(|| {
-            // SAFETY: same as in `translate_plural`.
+            // SAFETY: same as in `translate_plural()`.
             unsafe {
                 let translated = dcgettext(
                     GIT_TEXT_DOMAIN.as_ptr(),
@@ -238,11 +235,11 @@ mod tests {
         let locale = Locale::c();
         assert_eq!(locale.translate("in the future"), "in the future");
         assert_eq!(
-            locale.translate_plural("%lu hour ago", "%lu hours ago", 1),
+            locale.translate_plural("%lu hour ago", "%lu hours ago", /* count */ 1),
             "1 hour ago"
         );
         assert_eq!(
-            locale.translate_plural("%lu hour ago", "%lu hours ago", 3),
+            locale.translate_plural("%lu hour ago", "%lu hours ago", /* count */ 3),
             "3 hours ago"
         );
     }

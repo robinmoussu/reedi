@@ -1,4 +1,4 @@
-//! Computation of the chunks of a file, from its before and after versions.
+//! Computation of the hunks of a file, from its before and after versions.
 
 use std::ops::Range;
 use std::str;
@@ -10,11 +10,11 @@ use gix::diff::blob::InternedInput;
 use gix::diff::blob::Token;
 use gix::diff::blob::sources;
 
-use crate::model::Chunk;
 use crate::model::DiffLine;
 use crate::model::FileChange;
 use crate::model::FileContentType;
 use crate::model::FileDiff;
+use crate::model::Hunk;
 use crate::model::LineKind;
 
 /// Number of unchanged lines displayed before and after the modified lines.
@@ -28,10 +28,20 @@ pub struct FileState<'a> {
     pub content: &'a [u8],
 }
 
+/// Whether a file is diffed as binary or as text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffAs {
+    Binary,
+    Text,
+    /// Binary if a version contains a NUL byte, like git.
+    Auto,
+}
+
 /// The modifications of a file from `before` to `after` (`None` if the file doesn't exist in that
 /// version), with `context` unchanged lines around the modified lines.
 ///
-/// Binary files, and files with a version that is not valid UTF-8, have no chunks.
+/// Files diffed as binary (according to `diff_as`), and files with a version that is not valid
+/// UTF-8, have no hunks.
 ///
 /// # Panics
 ///
@@ -39,7 +49,7 @@ pub struct FileState<'a> {
 pub fn file(
     before: Option<FileState>,
     after: Option<FileState>,
-    binary: bool,
+    diff_as: DiffAs,
     context: usize,
 ) -> FileDiff {
     let (path, change) = match (before, after) {
@@ -50,35 +60,38 @@ pub fn file(
         }
         (Some(before), Some(after)) => (
             after.path,
-            FileChange::Renamed {
-                from: before.path.to_owned(),
-            },
+            FileChange::Renamed { from: before.path.to_owned() },
         ),
         (None, None) => panic!("the file exists in at least one version"),
     };
     let before = before.map(|state| state.content).unwrap_or_default();
     let after = after.map(|state| state.content).unwrap_or_default();
+    let binary = match diff_as {
+        DiffAs::Binary => true,
+        DiffAs::Text => false,
+        DiffAs::Auto => before.contains(&0) || after.contains(&0),
+    };
     let texts = str::from_utf8(before).ok().zip(str::from_utf8(after).ok());
-    let (content, chunks) = match texts {
+    let (content, hunks) = match texts {
         _ if binary => (FileContentType::Binary, Vec::new()),
-        Some((before, after)) => (FileContentType::Text, chunks(before, after, context)),
+        Some((before, after)) => (FileContentType::Text, hunks(before, after, context)),
         None => (FileContentType::InvalidUtf8, Vec::new()),
     };
     FileDiff {
         path: path.to_owned(),
         change,
         content,
-        chunks,
+        hunks,
     }
 }
 
-/// The chunks modifying `before` into `after`, with `context` unchanged lines around the modified
+/// The hunks modifying `before` into `after`, with `context` unchanged lines around the modified
 /// lines.
 ///
 /// The lines are compared like git does by default: with the Myers algorithm, and the indent
-/// heuristic to choose between equivalent diffs. Like git, the modifications separated by at most
-/// `2 * context` unchanged lines are in the same chunk.
-fn chunks(before: &str, after: &str, context: usize) -> Vec<Chunk> {
+/// heuristic to choose between equivalent diffs. Like git, the changes separated by at most
+/// `2 * context` unchanged lines are in the same hunk.
+fn hunks(before: &str, after: &str, context: usize) -> Vec<Hunk> {
     let input = InternedInput::new(sources::lines(before), sources::lines(after));
     let mut diff = Diff::compute(Algorithm::Myers, &input);
     diff.postprocess_lines(&input);
@@ -106,32 +119,35 @@ fn chunks(before: &str, after: &str, context: usize) -> Vec<Chunk> {
             .map(move |token| line(token, kind))
     };
     let unchanged = |range: Range<u32>| lines(range, LineKind::Unchanged);
-    let hunks: Vec<_> = diff.hunks().collect();
+    // What `gix` calls a hunk is a single run of removed and added lines, without context: what git
+    // calls a change (`xdchange_t`). The definition we use for `Hunk`, like the hunks of git,
+    // groups several changes with the unchanged lines around them.
+    let changes: Vec<_> = diff.hunks().collect();
     let before_len = input.before.len() as u32;
     let context = context as u32;
-    hunks
+    changes
         .chunk_by(|previous, next| next.before.start - previous.before.end <= 2 * context)
-        .map(|hunks| {
-            let (first, last) = (&hunks[0], &hunks[hunks.len() - 1]);
-            // The unchanged lines before a hunk are the same in both versions.
+        .map(|changes| {
+            let (first, last) = (&changes[0], &changes[changes.len() - 1]);
+            // The unchanged lines before a change are the same in both versions.
             let leading = first.before.start.min(context);
             let trailing = (before_len - last.before.end).min(context);
             let mut position = first.before.start - leading;
-            let mut chunk_lines: Vec<_> = hunks
+            let mut hunk_lines: Vec<_> = changes
                 .iter()
-                .flat_map(|hunk| {
-                    let unchanged = unchanged(position..hunk.before.start);
-                    position = hunk.before.end;
+                .flat_map(|change| {
+                    let unchanged = unchanged(position..change.before.start);
+                    position = change.before.end;
                     unchanged
-                        .chain(lines(hunk.before.clone(), LineKind::Removed))
-                        .chain(lines(hunk.after.clone(), LineKind::Added))
+                        .chain(lines(change.before.clone(), LineKind::Removed))
+                        .chain(lines(change.after.clone(), LineKind::Added))
                 })
                 .collect();
-            chunk_lines.extend(unchanged(position..last.before.end + trailing));
-            Chunk {
+            hunk_lines.extend(unchanged(position..last.before.end + trailing));
+            Hunk {
                 before_first_line: (first.before.start - leading) as usize + 1,
                 after_first_line: (first.after.start - leading) as usize + 1,
-                lines: chunk_lines,
+                lines: hunk_lines,
             }
         })
         .collect()
@@ -152,41 +168,47 @@ mod tests {
     }
 
     fn modified(before: &str, after: &str) -> FileDiff {
-        file(state("a", before), state("a", after), false, CONTEXT)
+        file(
+            /* before */ state("a", before),
+            /* after */ state("a", after),
+            DiffAs::Text,
+            CONTEXT,
+        )
     }
 
-    /// The lines `first..=last`, each one ending with a newline.
-    fn numbered(first: usize, last: usize) -> String {
-        (first..=last).map(|n| format!("{n}\n")).collect()
+    /// The lines `first_number..=last_number`, each one ending with a newline.
+    fn numbered(first_number: usize, last_number: usize) -> String {
+        (first_number..=last_number)
+            .map(|number| format!("{number}\n"))
+            .collect()
     }
 
-    /// The kind and text of the lines of `chunk`.
-    fn lines(chunk: &Chunk) -> Vec<(LineKind, &str)> {
-        chunk
-            .lines
+    /// The kind and text of the lines of `hunk`.
+    fn lines(hunk: &Hunk) -> Vec<(LineKind, &str)> {
+        hunk.lines
             .iter()
             .map(|line| (line.kind, line.text.as_str()))
             .collect()
     }
 
     #[test]
-    fn identical_versions_have_no_chunks() {
+    fn identical_versions_have_no_hunks() {
         let diff = modified("a\nb\n", "a\nb\n");
         assert_eq!(diff.change, FileChange::Modified);
         assert_eq!(diff.content, FileContentType::Text);
-        assert!(diff.chunks.is_empty());
+        assert!(diff.hunks.is_empty());
     }
 
     #[test]
     fn modified_lines_are_surrounded_by_three_unchanged_lines() {
-        let before = numbered(1, 20);
+        let before = numbered(/* first_number */ 1, /* last_number */ 20);
         let after = before.replace("10\n", "ten\n");
         let diff = modified(&before, &after);
-        assert_eq!(diff.chunks.len(), 1);
-        let chunk = &diff.chunks[0];
-        assert_eq!((chunk.before_first_line, chunk.after_first_line), (7, 7));
+        assert_eq!(diff.hunks.len(), 1);
+        let hunk = &diff.hunks[0];
+        assert_eq!((hunk.before_first_line, hunk.after_first_line), (7, 7));
         assert_eq!(
-            lines(chunk),
+            lines(hunk),
             [
                 (Unchanged, "7"),
                 (Unchanged, "8"),
@@ -203,9 +225,9 @@ mod tests {
     #[test]
     fn context_is_cropped_at_the_edges_of_the_file() {
         let diff = modified("1\n2\n3\n", "one\n2\nthree\n");
-        assert_eq!(diff.chunks.len(), 1);
+        assert_eq!(diff.hunks.len(), 1);
         assert_eq!(
-            lines(&diff.chunks[0]),
+            lines(&diff.hunks[0]),
             [
                 (Removed, "1"),
                 (Added, "one"),
@@ -217,35 +239,38 @@ mod tests {
     }
 
     #[test]
-    fn modifications_separated_by_at_most_six_lines_are_in_the_same_chunk() {
-        let before = numbered(1, 30);
+    fn changes_separated_by_at_most_six_lines_are_in_the_same_hunk() {
+        let before = numbered(/* first_number */ 1, /* last_number */ 30);
         // 6 unchanged lines between them.
         let after = before
             .replace("10\n", "ten\n")
             .replace("17\n", "seventeen\n");
-        assert_eq!(modified(&before, &after).chunks.len(), 1);
+        assert_eq!(modified(&before, &after).hunks.len(), 1);
         // 7 unchanged lines between them.
         let after = before
             .replace("10\n", "ten\n")
             .replace("18\n", "eighteen\n");
         let diff = modified(&before, &after);
-        assert_eq!(diff.chunks.len(), 2);
-        let second = &diff.chunks[1];
+        assert_eq!(diff.hunks.len(), 2);
+        let second = &diff.hunks[1];
         assert_eq!(second.before_first_line, 15);
         assert_eq!(lines(second)[0], (Unchanged, "15"));
     }
 
     #[test]
     fn line_numbers_of_each_version_are_counted_separately() {
-        let before = numbered(1, 20);
+        let before = numbered(/* first_number */ 1, /* last_number */ 20);
         // The line 2 is removed, and a line is added after the line 15.
-        let after = numbered(1, 1) + &numbered(3, 15) + "fifteen\n" + &numbered(16, 20);
+        let after = numbered(/* first_number */ 1, /* last_number */ 1)
+            + &numbered(/* first_number */ 3, /* last_number */ 15)
+            + "fifteen\n"
+            + &numbered(/* first_number */ 16, /* last_number */ 20);
         let diff = modified(&before, &after);
-        assert_eq!(diff.chunks.len(), 2);
+        assert_eq!(diff.hunks.len(), 2);
         assert_eq!(
             (
-                diff.chunks[1].before_first_line,
-                diff.chunks[1].after_first_line
+                diff.hunks[1].before_first_line,
+                diff.hunks[1].after_first_line
             ),
             (13, 12)
         );
@@ -255,7 +280,7 @@ mod tests {
     fn carriage_returns_are_kept() {
         let diff = modified("a\r\nb\r\n", "a\r\nc\r\n");
         assert_eq!(
-            lines(&diff.chunks[0]),
+            lines(&diff.hunks[0]),
             [(Unchanged, "a\r"), (Removed, "b\r"), (Added, "c\r")]
         );
     }
@@ -263,56 +288,109 @@ mod tests {
     #[test]
     fn missing_newline_is_a_modification() {
         let diff = modified("a\nb", "a\nb\n");
-        let chunk = &diff.chunks[0];
+        let hunk = &diff.hunks[0];
         assert_eq!(
-            lines(chunk),
+            lines(hunk),
             [(Unchanged, "a"), (Removed, "b"), (Added, "b")]
         );
-        let missing: Vec<_> = chunk
-            .lines
-            .iter()
-            .map(|line| line.missing_newline)
-            .collect();
+        let missing: Vec<_> = hunk.lines.iter().map(|line| line.missing_newline).collect();
         assert_eq!(missing, [false, true, false]);
     }
 
     #[test]
-    fn added_and_deleted_files() {
-        let added = file(None, state("a", "x\ny\n"), false, CONTEXT);
+    fn added_and_deleted_files_have_only_added_or_removed_lines() {
+        let added = file(
+            /* before */ None,
+            /* after */ state("a", "x\ny\n"),
+            DiffAs::Text,
+            CONTEXT,
+        );
         assert_eq!(added.change, FileChange::Added);
-        assert_eq!(lines(&added.chunks[0]), [(Added, "x"), (Added, "y")]);
-        assert_eq!(added.chunks[0].after_first_line, 1);
-        let deleted = file(state("a", "x\n"), None, false, CONTEXT);
+        assert_eq!(lines(&added.hunks[0]), [(Added, "x"), (Added, "y")]);
+        assert_eq!(added.hunks[0].after_first_line, 1);
+        let deleted = file(
+            /* before */ state("a", "x\n"),
+            /* after */ None,
+            DiffAs::Text,
+            CONTEXT,
+        );
         assert_eq!(deleted.path, "a");
         assert_eq!(deleted.change, FileChange::Deleted);
-        assert_eq!(lines(&deleted.chunks[0]), [(Removed, "x")]);
+        assert_eq!(lines(&deleted.hunks[0]), [(Removed, "x")]);
     }
 
     #[test]
     fn renamed_file_is_displayed_with_its_new_path() {
-        let diff = file(state("a", "x\n"), state("b", "x\n"), false, CONTEXT);
+        let diff = file(
+            /* before */ state("a", "x\n"),
+            /* after */ state("b", "x\n"),
+            DiffAs::Text,
+            CONTEXT,
+        );
         assert_eq!(diff.path, "b");
         assert_eq!(diff.change, FileChange::Renamed { from: "a".into() });
-        assert!(diff.chunks.is_empty());
+        assert!(diff.hunks.is_empty());
     }
 
     #[test]
-    fn binary_files_have_no_chunks() {
-        let diff = file(state("a", "x\0"), state("a", "y\0"), true, CONTEXT);
+    fn binary_files_have_no_hunks() {
+        let diff = file(
+            /* before */ state("a", "x\0"),
+            /* after */ state("a", "y\0"),
+            DiffAs::Binary,
+            CONTEXT,
+        );
         assert_eq!(diff.content, FileContentType::Binary);
-        assert!(diff.chunks.is_empty());
+        assert!(diff.hunks.is_empty());
     }
 
     #[test]
-    fn files_that_are_not_valid_utf8_have_no_chunks() {
-        let invalid = FileState {
-            path: "a".into(),
-            content: b"caf\xe9\n",
-        };
-        let diff = file(state("a", "cafe\n"), Some(invalid), false, CONTEXT);
+    fn auto_files_are_binary_if_a_version_has_a_nul_byte() {
+        let diff = file(
+            /* before */ state("a", "x\n"),
+            /* after */ state("a", "y\0"),
+            DiffAs::Auto,
+            CONTEXT,
+        );
+        assert_eq!(diff.content, FileContentType::Binary);
+        let diff = file(
+            /* before */ state("a", "x\n"),
+            /* after */ state("a", "y\n"),
+            DiffAs::Auto,
+            CONTEXT,
+        );
+        assert_eq!(diff.content, FileContentType::Text);
+    }
+
+    #[test]
+    fn text_files_with_a_nul_byte_are_diffed_as_text() {
+        let diff = file(
+            /* before */ state("a", "x\0"),
+            /* after */ state("a", "y\0"),
+            DiffAs::Text,
+            CONTEXT,
+        );
+        assert_eq!(diff.content, FileContentType::Text);
+        assert!(!diff.hunks.is_empty());
+    }
+
+    #[test]
+    fn files_that_are_not_valid_utf8_have_no_hunks() {
+        let invalid = FileState { path: "a".into(), content: b"caf\xe9\n" };
+        let diff = file(
+            /* before */ state("a", "cafe\n"),
+            /* after */ Some(invalid),
+            DiffAs::Text,
+            CONTEXT,
+        );
         assert_eq!(diff.content, FileContentType::InvalidUtf8);
-        assert!(diff.chunks.is_empty());
-        let diff = file(Some(invalid), None, false, CONTEXT);
+        assert!(diff.hunks.is_empty());
+        let diff = file(
+            /* before */ Some(invalid),
+            /* after */ None,
+            DiffAs::Text,
+            CONTEXT,
+        );
         assert_eq!(diff.content, FileContentType::InvalidUtf8);
     }
 }

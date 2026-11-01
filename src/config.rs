@@ -31,16 +31,16 @@ pub struct Config {
     pub colorscheme: Option<Colorscheme>,
 }
 
-/// A key of the config file that is not a setting, with its value.
+/// A setting of the config file that reedi does not know, with its value.
 #[derive(Debug, Clone, PartialEq)]
-pub struct UnknownKey {
+pub struct UnknownSetting {
     pub key: String,
     pub value: toml::Value,
     /// The line of the key in the file, starting at 1.
-    pub line: usize,
+    pub line_number: usize,
 }
 
-impl fmt::Display for UnknownKey {
+impl fmt::Display for UnknownSetting {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "`{} = {}`", self.key, self.value)
     }
@@ -51,7 +51,7 @@ impl fmt::Display for UnknownKey {
 pub struct ConfigFile {
     pub config: Config,
     /// In the order of the file.
-    pub unknown_keys: Vec<UnknownKey>,
+    pub unknown_settings: Vec<UnknownSetting>,
 }
 
 /// The content of a config file, as deserialized.
@@ -59,49 +59,49 @@ pub struct ConfigFile {
 struct RawConfigFile {
     #[serde(flatten)]
     config: Config,
-    /// The keys not deserialized in `config`.
+    /// The settings not deserialized in `config`.
     #[serde(flatten)]
-    unknown_keys: toml::Table,
+    unknown_settings: toml::Table,
 }
 
-/// Deserializes the line of each key of `keys`, the keys not used by [`Config`] in the config file
-/// whose text is `text`.
+/// The deserializer of the line of each key of `keys`, the keys not used by [`Config`] in the
+/// config file whose text is `text`.
 ///
 /// It is needed because the position of the keys is lost by `#[serde(flatten)]`.
-struct UnknownKeys<'a> {
+struct UnknownSettings<'a> {
     keys: toml::Table,
     text: &'a str,
 }
 
-impl<'de> DeserializeSeed<'de> for UnknownKeys<'_> {
-    type Value = Vec<UnknownKey>;
+impl<'de> DeserializeSeed<'de> for UnknownSettings<'_> {
+    type Value = Vec<UnknownSetting>;
 
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
         deserializer.deserialize_map(self)
     }
 }
 
-impl<'de> Visitor<'de> for UnknownKeys<'_> {
-    type Value = Vec<UnknownKey>;
+impl<'de> Visitor<'de> for UnknownSettings<'_> {
+    type Value = Vec<UnknownSetting>;
 
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str("a table of settings")
     }
 
     fn visit_map<A: MapAccess<'de>>(mut self, mut map: A) -> Result<Self::Value, A::Error> {
-        let mut unknown_keys = Vec::new();
+        let mut unknown_settings = Vec::new();
         while let Some(key) = map.next_key::<Spanned<String>>()? {
             map.next_value::<IgnoredAny>()?;
             if let Some(value) = self.keys.remove(key.get_ref()) {
-                unknown_keys.push(UnknownKey {
+                unknown_settings.push(UnknownSetting {
                     // The span of the key is in bytes.
-                    line: self.text[..key.span().start].matches('\n').count() + 1,
+                    line_number: self.text[..key.span().start].matches('\n').count() + 1,
                     key: key.into_inner(),
                     value,
                 });
             }
         }
-        Ok(unknown_keys)
+        Ok(unknown_settings)
     }
 }
 
@@ -148,29 +148,21 @@ pub fn file_path() -> Option<PathBuf> {
 pub fn parse(text: &str) -> Result<ConfigFile, String> {
     let to_string = |error: toml::de::Error| error.to_string();
     let raw: RawConfigFile = toml::from_str(text).map_err(to_string)?;
-    let unknown_keys = if raw.unknown_keys.is_empty() {
+    let unknown_settings = if raw.unknown_settings.is_empty() {
         Vec::new()
     } else {
-        // Like `toml::from_str`, which cannot be given the keys to look for.
-        UnknownKeys {
-            keys: raw.unknown_keys,
-            text,
-        }
-        .deserialize(toml::Deserializer::parse(text).map_err(to_string)?)
-        .map_err(to_string)?
+        // The text is deserialized again like `toml::from_str()` does, since it cannot be given the
+        // keys to look for.
+        UnknownSettings { keys: raw.unknown_settings, text }
+            .deserialize(toml::Deserializer::parse(text).map_err(to_string)?)
+            .map_err(to_string)?
     };
-    Ok(ConfigFile {
-        config: raw.config,
-        unknown_keys,
-    })
+    Ok(ConfigFile { config: raw.config, unknown_settings })
 }
 
 /// The content of the config file at `path`. A missing file has no settings set.
 pub fn read(path: &Path) -> Result<ConfigFile, ConfigError> {
-    let error = |problem| ConfigError {
-        path: path.to_path_buf(),
-        problem,
-    };
+    let error = |problem| ConfigError { path: path.to_path_buf(), problem };
     match fs::read_to_string(path) {
         Ok(text) => parse(&text).map_err(|reason| error(Problem::Invalid(reason))),
         Err(io_error) if io_error.kind() == io::ErrorKind::NotFound => Ok(ConfigFile::default()),
@@ -219,13 +211,13 @@ mod tests {
     }
 
     #[test]
-    fn unknown_keys_are_reported() {
+    fn unknown_settings_are_reported() {
         let file = parse("scrolloff = 3\ncolorscheme = \"dark\"\n[keys]\nquit = \"q\"\n").unwrap();
         assert_eq!(file.config.colorscheme, Some(Colorscheme::Dark));
         let keys: Vec<_> = file
-            .unknown_keys
+            .unknown_settings
             .iter()
-            .map(|unknown_key| (unknown_key.line, unknown_key.to_string()))
+            .map(|unknown_setting| (unknown_setting.line_number, unknown_setting.to_string()))
             .collect();
         assert_eq!(
             keys,
@@ -237,18 +229,21 @@ mod tests {
     }
 
     /// A path in the temporary directory, unique to this process and to `name`.
-    fn temporary(name: &str) -> PathBuf {
+    fn temporary_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("reedi-{}-{name}", process::id()))
     }
 
     #[test]
     fn missing_file_has_no_settings_set() {
-        assert_eq!(read(&temporary("missing")).unwrap(), ConfigFile::default());
+        assert_eq!(
+            read(&temporary_path("missing")).unwrap(),
+            ConfigFile::default()
+        );
     }
 
     #[test]
     fn file_is_read() {
-        let path = temporary("config.toml");
+        let path = temporary_path("config.toml");
         fs::write(&path, "colorscheme = \"light\"\n").unwrap();
         let file = read(&path);
         fs::remove_file(&path).unwrap();
@@ -266,7 +261,7 @@ mod tests {
 
     #[test]
     fn invalid_file_is_an_error_naming_the_file() {
-        let path = temporary("invalid.toml");
+        let path = temporary_path("invalid.toml");
         fs::write(&path, "colorscheme = \"blue\"\n").unwrap();
         let error = read(&path);
         fs::remove_file(&path).unwrap();

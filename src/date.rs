@@ -5,15 +5,15 @@ use std::fmt;
 use std::str::FromStr;
 
 use gix::date::Time;
-use jiff::Timestamp;
 use jiff::Zoned;
 use jiff::tz::Offset;
+#[cfg(any(test, feature = "test-support"))]
 use jiff::tz::TimeZone;
 
 use crate::gix_compat;
-use crate::gix_compat::date::MONTHS;
-use crate::gix_compat::date::WEEKDAYS;
-use crate::gix_compat::date::hhmm;
+use crate::gix_compat::date::DisplayedIn;
+use crate::gix_compat::date::RAW_FORMAT;
+use crate::gix_compat::date::to_zoned;
 use crate::gix_compat::locale::Locale;
 
 /// Prefix of the date formats that depend on whether the output is a terminal.
@@ -23,9 +23,7 @@ const AUTO_PREFIX: &str = "auto:";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DateFormat {
     pub style: DateStyle,
-    /// Whether the date is displayed in the current timezone instead of its own offset (the
-    /// `-local` suffix).
-    pub local: bool,
+    pub displayed_in: DisplayedIn,
 }
 
 /// The formats of `git log --date=`, without their `-local` suffix.
@@ -57,7 +55,7 @@ impl DateFormat {
     /// The format used when neither `--date-format` nor the `log.date` git setting is set.
     pub const HUMAN: DateFormat = DateFormat {
         style: DateStyle::Human,
-        local: false,
+        displayed_in: DisplayedIn::OriginalOffset,
     };
 }
 
@@ -100,21 +98,21 @@ impl FromStr for DateFormat {
         if let Some(pattern) = name.strip_prefix("format-local:") {
             return Ok(DateFormat {
                 style: DateStyle::Strftime(pattern.to_string()),
-                local: true,
+                displayed_in: DisplayedIn::LocalTimezone,
             });
         }
         if let Some(pattern) = name.strip_prefix("format:") {
             return Ok(DateFormat {
                 style: DateStyle::Strftime(pattern.to_string()),
-                local: false,
+                displayed_in: DisplayedIn::OriginalOffset,
             });
         }
         if name == "format" || name == "format-local" {
             return Err(DateFormatError::MissingColon(format.to_string()));
         }
-        let (name, local) = match name.strip_suffix("-local") {
-            Some(name) => (name, true),
-            None => (name, false),
+        let (name, displayed_in) = match name.strip_suffix("-local") {
+            Some(name) => (name, DisplayedIn::LocalTimezone),
+            None => (name, DisplayedIn::OriginalOffset),
         };
         let style = match name {
             "default" => DateStyle::Default,
@@ -128,7 +126,7 @@ impl FromStr for DateFormat {
             "raw" => DateStyle::Raw,
             _ => return Err(unknown()),
         };
-        Ok(DateFormat { style, local })
+        Ok(DateFormat { style, displayed_in })
     }
 }
 
@@ -175,12 +173,9 @@ impl DateDisplay {
         DateDisplay {
             format: DateFormat {
                 style: DateStyle::Strftime("%d/%m/%Y".to_string()),
-                local: false,
+                displayed_in: DisplayedIn::OriginalOffset,
             },
-            environment: Environment {
-                now: snapshot_now(),
-                locale: Locale::c(),
-            },
+            environment: Environment { now: snapshot_now(), locale: Locale::c() },
         }
     }
 }
@@ -189,7 +184,10 @@ impl DateDisplay {
 #[cfg(any(test, feature = "test-support"))]
 fn snapshot_now() -> Zoned {
     jiff::civil::date(2026, 10, 12)
-        .at(14, 32, 7, 0)
+        .at(
+            /* hour */ 14, /* minute */ 32, /* second */ 7,
+            /* subsec_nanosecond */ 0,
+        )
         .to_zoned(TimeZone::UTC)
         .unwrap()
 }
@@ -197,57 +195,37 @@ fn snapshot_now() -> Zoned {
 /// `input`, parsed like `git commit --date` does. Relative dates (like `yesterday`) and dates
 /// without an offset are resolved with `now` and its timezone.
 pub fn parse(input: &str, now: &Zoned) -> Result<Time, DateParseError> {
-    gix_compat::date::parse(input, now).ok_or_else(|| DateParseError {
-        input: input.to_string(),
-    })
+    gix_compat::date::parse(input, now).ok_or_else(|| DateParseError { input: input.to_string() })
 }
 
 /// `time`, displayed with `format` like `git log --date=` does.
 pub fn display(time: Time, format: &DateFormat, environment: &Environment) -> String {
     let now = &environment.now;
-    let timestamp = Timestamp::from_second(time.seconds).unwrap_or_default();
-    let zone = if format.local {
-        now.time_zone().clone()
-    } else {
-        Offset::from_seconds(time.offset).map_or(TimeZone::UTC, TimeZone::fixed)
-    };
-    let zoned = timestamp.to_zoned(zone);
-    let tz = hhmm(zoned.offset().seconds());
-    let weekday = WEEKDAYS[usize::try_from(zoned.weekday().to_sunday_zero_offset()).unwrap_or(0)];
-    let month = MONTHS[usize::try_from(zoned.month() - 1).unwrap_or(0)];
-    let (year, day, month_number) = (zoned.year(), zoned.day(), zoned.month());
-    let (hour, minute, second) = (zoned.hour(), zoned.minute(), zoned.second());
+    let zoned = to_zoned(time, now, format.displayed_in);
+    // The names of the weekdays and months of `jiff` are in English, like the ones of git, which
+    // never translates them.
+    let formatted = |format: &str| zoned.strftime(format).to_string();
     match &format.style {
         DateStyle::Unix => time.seconds.to_string(),
-        DateStyle::Raw => format!("{} {tz:+05}", time.seconds),
+        DateStyle::Raw => formatted(RAW_FORMAT),
         DateStyle::Relative => gix_compat::date::relative(time, now, &environment.locale),
-        DateStyle::Human => gix_compat::date::human(time, now, format.local, &environment.locale),
-        DateStyle::Short => format!("{year:04}-{month_number:02}-{day:02}"),
-        DateStyle::Iso => format!(
-            "{year:04}-{month_number:02}-{day:02} {hour:02}:{minute:02}:{second:02} {tz:+05}"
-        ),
-        DateStyle::IsoStrict => {
-            let offset = if tz == 0 {
-                "Z".to_string()
-            } else {
-                format!("{:+03}:{:02}", tz / 100, (tz % 100).abs())
-            };
-            format!(
-                "{year:04}-{month_number:02}-{day:02}T{hour:02}:{minute:02}:{second:02}{offset}"
-            )
+        DateStyle::Human => {
+            gix_compat::date::human(time, now, format.displayed_in, &environment.locale)
         }
-        DateStyle::Rfc => {
-            format!("{weekday}, {day} {month} {year} {hour:02}:{minute:02}:{second:02} {tz:+05}")
+        DateStyle::Short => formatted("%Y-%m-%d"),
+        DateStyle::Iso => formatted("%Y-%m-%d %H:%M:%S %z"),
+        DateStyle::IsoStrict if zoned.offset() == Offset::UTC => formatted("%Y-%m-%dT%H:%M:%SZ"),
+        DateStyle::IsoStrict => formatted("%Y-%m-%dT%H:%M:%S%:z"),
+        DateStyle::Rfc => formatted("%a, %-d %b %Y %H:%M:%S %z"),
+        DateStyle::Default if format.displayed_in == DisplayedIn::LocalTimezone => {
+            formatted("%a %b %-d %H:%M:%S %Y")
         }
-        DateStyle::Default => {
-            let date = format!("{weekday} {month} {day} {hour:02}:{minute:02}:{second:02} {year}");
-            if format.local {
-                date
-            } else {
-                format!("{date} {tz:+05}")
-            }
+        DateStyle::Default => formatted("%a %b %-d %H:%M:%S %Y %z"),
+        DateStyle::Strftime(pattern) => {
+            environment
+                .locale
+                .strftime(pattern, &zoned, format.displayed_in)
         }
-        DateStyle::Strftime(pattern) => environment.locale.strftime(pattern, &zoned, format.local),
     }
 }
 
@@ -258,12 +236,11 @@ mod tests {
 
     use super::*;
     use crate::test_git::Git;
+    use DisplayedIn::LocalTimezone;
+    use DisplayedIn::OriginalOffset;
 
     /// `2026-10-12 14:32:07 +0200`, the date used by all the display tests.
-    const TIME: Time = Time {
-        seconds: 1_791_808_327,
-        offset: 7200,
-    };
+    const TIME: Time = Time { seconds: 1_791_808_327, offset: 7200 };
 
     /// `now` (RFC 3339) in `timezone` (IANA name).
     fn zoned(now: &str, timezone: &str) -> Zoned {
@@ -271,24 +248,16 @@ mod tests {
         now.parse::<Timestamp>().unwrap().to_zoned(timezone)
     }
 
-    /// `now` (RFC 3339) in `timezone` (IANA name), with the C locale.
-    fn environment(now: &str, timezone: &str) -> Environment {
-        Environment {
-            now: zoned(now, timezone),
-            locale: Locale::c(),
-        }
+    fn format(style: DateStyle, displayed_in: DisplayedIn) -> DateFormat {
+        DateFormat { style, displayed_in }
     }
 
-    fn format(style: DateStyle, local: bool) -> DateFormat {
-        DateFormat { style, local }
-    }
-
-    fn strftime(pattern: &str, local: bool) -> DateFormat {
-        format(DateStyle::Strftime(pattern.to_string()), local)
+    fn strftime(pattern: &str, displayed_in: DisplayedIn) -> DateFormat {
+        format(DateStyle::Strftime(pattern.to_string()), displayed_in)
     }
 
     /// A repository where the current date is `now` in `timezone`, whose only commit is at `TIME`.
-    fn git(now: &str, timezone: &str, locale: &str) -> Git {
+    fn repository_with_a_commit_at_time(now: &str, timezone: &str, locale: &str) -> Git {
         let git = Git::new(&zoned(now, timezone), locale);
         git.commit_at(TIME);
         git
@@ -297,50 +266,61 @@ mod tests {
     #[test]
     fn date_formats_of_git_are_accepted() {
         let formats = [
-            ("default", format(DateStyle::Default, false)),
-            ("default-local", format(DateStyle::Default, true)),
-            ("local", format(DateStyle::Default, true)),
-            ("iso", format(DateStyle::Iso, false)),
-            ("iso-local", format(DateStyle::Iso, true)),
-            ("iso8601", format(DateStyle::Iso, false)),
-            ("iso8601-local", format(DateStyle::Iso, true)),
-            ("iso-strict", format(DateStyle::IsoStrict, false)),
-            ("iso-strict-local", format(DateStyle::IsoStrict, true)),
-            ("iso8601-strict", format(DateStyle::IsoStrict, false)),
-            ("rfc", format(DateStyle::Rfc, false)),
-            ("rfc-local", format(DateStyle::Rfc, true)),
-            ("rfc2822", format(DateStyle::Rfc, false)),
-            ("short", format(DateStyle::Short, false)),
-            ("short-local", format(DateStyle::Short, true)),
-            ("relative", format(DateStyle::Relative, false)),
-            ("relative-local", format(DateStyle::Relative, true)),
-            ("human", format(DateStyle::Human, false)),
-            ("human-local", format(DateStyle::Human, true)),
-            ("unix", format(DateStyle::Unix, false)),
-            ("unix-local", format(DateStyle::Unix, true)),
-            ("raw", format(DateStyle::Raw, false)),
-            ("raw-local", format(DateStyle::Raw, true)),
-            ("format:%Y %Z", strftime("%Y %Z", false)),
-            ("format-local:%Y %H %Z", strftime("%Y %H %Z", true)),
+            ("default", format(DateStyle::Default, OriginalOffset)),
+            ("default-local", format(DateStyle::Default, LocalTimezone)),
+            ("local", format(DateStyle::Default, LocalTimezone)),
+            ("iso", format(DateStyle::Iso, OriginalOffset)),
+            ("iso-local", format(DateStyle::Iso, LocalTimezone)),
+            ("iso8601", format(DateStyle::Iso, OriginalOffset)),
+            ("iso8601-local", format(DateStyle::Iso, LocalTimezone)),
+            ("iso-strict", format(DateStyle::IsoStrict, OriginalOffset)),
+            (
+                "iso-strict-local",
+                format(DateStyle::IsoStrict, LocalTimezone),
+            ),
+            (
+                "iso8601-strict",
+                format(DateStyle::IsoStrict, OriginalOffset),
+            ),
+            ("rfc", format(DateStyle::Rfc, OriginalOffset)),
+            ("rfc-local", format(DateStyle::Rfc, LocalTimezone)),
+            ("rfc2822", format(DateStyle::Rfc, OriginalOffset)),
+            ("short", format(DateStyle::Short, OriginalOffset)),
+            ("short-local", format(DateStyle::Short, LocalTimezone)),
+            ("relative", format(DateStyle::Relative, OriginalOffset)),
+            ("relative-local", format(DateStyle::Relative, LocalTimezone)),
+            ("human", format(DateStyle::Human, OriginalOffset)),
+            ("human-local", format(DateStyle::Human, LocalTimezone)),
+            ("unix", format(DateStyle::Unix, OriginalOffset)),
+            ("unix-local", format(DateStyle::Unix, LocalTimezone)),
+            ("raw", format(DateStyle::Raw, OriginalOffset)),
+            ("raw-local", format(DateStyle::Raw, LocalTimezone)),
+            ("format:%Y %Z", strftime("%Y %Z", OriginalOffset)),
+            ("format-local:%Y %H %Z", strftime("%Y %H %Z", LocalTimezone)),
         ];
-        let git = git("2026-10-12T17:32:07+02:00", "Europe/Paris", "C");
-        formats.into_iter().for_each(|(text, expected)| {
+        let git =
+            repository_with_a_commit_at_time("2026-10-12T17:32:07+02:00", "Europe/Paris", "C");
+        for (text, expected) in formats {
             assert!(git.author_date(Some(text)).is_ok(), "git --date={text}");
             assert_eq!(text.parse(), Ok(expected), "--date={text}");
-        });
+        }
     }
 
     #[test]
     fn auto_date_format_is_the_format_itself() {
-        assert_eq!("auto:iso".parse(), Ok(format(DateStyle::Iso, false)));
+        assert_eq!(
+            "auto:iso".parse(),
+            Ok(format(DateStyle::Iso, OriginalOffset))
+        );
         assert_eq!("auto:human".parse(), Ok(DateFormat::HUMAN));
-        assert_eq!("auto:format:%Y".parse(), Ok(strftime("%Y", false)));
+        assert_eq!("auto:format:%Y".parse(), Ok(strftime("%Y", OriginalOffset)));
     }
 
     /// The date formats that git refuses are errors, worded like git.
     #[test]
     fn date_formats_refused_by_git_are_errors() {
-        let git = git("2026-10-12T17:32:07+02:00", "Europe/Paris", "C");
+        let git =
+            repository_with_a_commit_at_time("2026-10-12T17:32:07+02:00", "Europe/Paris", "C");
         let refused = [
             (
                 "local-local",
@@ -359,7 +339,7 @@ mod tests {
                 DateFormatError::MissingColon("format-local".to_string()),
             ),
         ];
-        refused.into_iter().for_each(|(text, expected)| {
+        for (text, expected) in refused {
             let git_error = git.author_date(Some(text)).unwrap_err();
             assert_eq!(
                 git_error,
@@ -367,49 +347,64 @@ mod tests {
                 "git --date={text}"
             );
             assert_eq!(text.parse::<DateFormat>(), Err(expected), "--date={text}");
-        });
+        }
     }
 
-    /// Compared with `TZ=Europe/Paris GIT_TEST_DATE_NOW=… git commit --date=$input`, then
-    /// `git log --date=raw`.
+    /// `date` (`%Y-%m-%d %H:%M:%S %z`).
+    fn time(date: &str) -> Time {
+        let zoned = Zoned::strptime("%Y-%m-%d %H:%M:%S %z", date).unwrap();
+        Time {
+            seconds: zoned.timestamp().as_second(),
+            offset: zoned.offset().seconds(),
+        }
+    }
+
+    /// The expected dates are the ones of `TZ=Europe/Paris GIT_TEST_DATE_NOW=… git commit
+    /// --date=$input`, then `git log --date=raw`, or `None` if git refuses `input`.
     #[test]
     fn dates_are_parsed_like_git_commit() {
         let now = zoned("2026-10-21T02:30:00+02:00", "Europe/Paris");
         let dates = [
-            "2026-10-12 14:32:07 +0200",
-            "2026-10-12T14:32:07+02:00",
-            "Mon, 12 Oct 2026 14:32:07 +0200",
-            "1791808327 +0200",
-            "@1791808327 +0200",
+            (
+                "2026-10-12 14:32:07 +0200",
+                Some("2026-10-12 14:32:07 +0200"),
+            ),
+            (
+                "2026-10-12T14:32:07+02:00",
+                Some("2026-10-12 14:32:07 +0200"),
+            ),
+            (
+                "Mon, 12 Oct 2026 14:32:07 +0200",
+                Some("2026-10-12 14:32:07 +0200"),
+            ),
+            ("1791808327 +0200", Some("2026-10-12 14:32:07 +0200")),
+            ("@1791808327 +0200", Some("2026-10-12 14:32:07 +0200")),
             // Without offset: in the timezone of `now`.
-            "2026-10-12 14:32:07",
+            ("2026-10-12 14:32:07", Some("2026-10-12 14:32:07 +0200")),
             // Month first, and in winter time.
-            "12/10/2026 14:32",
-            "yesterday",
-            "3 hours ago",
-            "2 weeks ago",
-            // Noon is already past today.
-            "noon",
-            "not a date",
+            ("12/10/2026 14:32", Some("2026-12-10 14:32:00 +0100")),
+            ("yesterday", Some("2026-10-20 02:30:00 +0200")),
+            ("3 hours ago", Some("2026-10-20 23:30:00 +0200")),
+            ("2 weeks ago", Some("2026-10-07 02:30:00 +0200")),
+            // Noon is not reached yet today: the one of yesterday.
+            ("noon", Some("2026-10-20 12:00:00 +0200")),
+            ("not a date", None),
         ];
-        dates.into_iter().for_each(|input| {
-            let git = Git::new(&now, "C");
-            let expected = match git.commit_with_date(input) {
-                Ok(()) => Ok(git.author_time()),
-                Err(_) => Err(DateParseError {
-                    input: input.to_string(),
-                }),
+        for (input, expected) in dates {
+            let expected = match expected {
+                Some(date) => Ok(time(date)),
+                None => Err(DateParseError { input: input.to_string() }),
             };
             assert_eq!(parse(input, &now), expected, "--date={input}");
-        });
+        }
     }
 
     /// Compared with `LC_ALL=C TZ=America/New_York git log --date=$format`.
     #[test]
     fn dates_are_displayed_like_git_log() {
         let now = "2026-10-12T17:32:07+02:00";
-        let git = git(now, "America/New_York", "C");
-        let environment = environment(now, "America/New_York");
+        let git = repository_with_a_commit_at_time(now, "America/New_York", "C");
+        let environment = git.environment();
         let formats = [
             "default",
             "local",
@@ -434,14 +429,14 @@ mod tests {
             "format-local:%Y %H %Z",
             "format:%A %d %B %c",
         ];
-        formats.into_iter().for_each(|text| {
+        for text in formats {
             let format = text.parse().unwrap();
             assert_eq!(
                 display(TIME, &format, &environment),
                 git.author_date(Some(text)).unwrap(),
                 "--date={text}"
             );
-        });
+        }
     }
 
     /// Compared with `LC_ALL=C GIT_TEST_DATE_NOW=… git log --date=relative`, and `--date=human`,
@@ -466,46 +461,41 @@ mod tests {
             "2026-10-01T10:00:00+02:00",
         ];
         let formats = ["relative", "human"];
-        nows.into_iter().for_each(|now| {
-            ["Europe/Paris", "America/New_York"]
-                .into_iter()
-                .for_each(|timezone| {
-                    let git = git(now, timezone, "C");
-                    let environment = environment(now, timezone);
-                    formats.into_iter().for_each(|text| {
-                        let format = text.parse().unwrap();
-                        assert_eq!(
-                            display(TIME, &format, &environment),
-                            git.author_date(Some(text)).unwrap(),
-                            "--date={text}, now: {now} in {timezone}"
-                        );
-                    });
-                });
-        });
+        for now in nows {
+            for timezone in ["Europe/Paris", "America/New_York"] {
+                let git = repository_with_a_commit_at_time(now, timezone, "C");
+                let environment = git.environment();
+                for text in formats {
+                    let format = text.parse().unwrap();
+                    assert_eq!(
+                        display(TIME, &format, &environment),
+                        git.author_date(Some(text)).unwrap(),
+                        "--date={text}, now: {now} in {timezone}"
+                    );
+                }
+            }
+        }
     }
 
     /// Compared with `LC_ALL=fr_FR.UTF-8 git log --date=$format` (which is in English if the
     /// translations of git are not installed). Skipped if the French locale is not installed.
     #[test]
     fn dates_are_translated_like_git_log() {
-        let Some(locale) = Locale::named("fr_FR.UTF-8") else {
+        if Locale::named("fr_FR.UTF-8").is_none() {
             eprintln!("skipped: the fr_FR.UTF-8 locale is not installed");
             return;
-        };
+        }
         let now = "2026-10-12T17:32:07+02:00";
-        let git = git(now, "Europe/Paris", "fr_FR.UTF-8");
-        let environment = Environment {
-            now: zoned(now, "Europe/Paris"),
-            locale,
-        };
+        let git = repository_with_a_commit_at_time(now, "Europe/Paris", "fr_FR.UTF-8");
+        let environment = git.environment();
         let formats = ["default", "rfc", "relative", "human", "format:%A %d %B %c"];
-        formats.into_iter().for_each(|text| {
+        for text in formats {
             let format = text.parse().unwrap();
             assert_eq!(
                 display(TIME, &format, &environment),
                 git.author_date(Some(text)).unwrap(),
                 "--date={text}"
             );
-        });
+        }
     }
 }

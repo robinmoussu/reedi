@@ -1,5 +1,5 @@
-//! The `relative` and `human` date formats of git (`show_date_relative` and `show_date_normal` in
-//! git's `date.c`), which `gix` doesn't have, and the parsing of dates (`approxidate`), which
+//! The `relative` and `human` date formats of git (`show_date_relative()` and `show_date_normal()`
+//! in git's `date.c`), which `gix` doesn't have, and the parsing of dates (`approxidate()`), which
 //! `gix` only partially has.
 
 use std::process::Command;
@@ -7,129 +7,127 @@ use std::process::Command;
 use gix::date::Time;
 use jiff::Timestamp;
 use jiff::Zoned;
+use jiff::fmt::strtime;
 use jiff::tz::Offset;
 use jiff::tz::TimeZone;
 
 use crate::gix_compat::locale::Locale;
 
-/// The English names of the weekdays and months, never translated by git, starting with Sunday
-/// and January.
-pub const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-pub const MONTHS: [&str; 12] = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
+/// The timezone a date is displayed in, selected by the `-local` suffix of the date formats of
+/// git.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayedIn {
+    /// The offset the date was recorded with.
+    OriginalOffset,
+    /// The timezone of the current date (`-local`).
+    LocalTimezone,
+}
+
+/// The `strftime` format of a date as git stores it (`--date=raw`): `1791808327 +0200`.
+pub const RAW_FORMAT: &str = "%s %z";
 
 /// `time` relative to `now`, like `git log --date=relative`: `3 hours ago`, translated with
 /// `locale`.
 pub fn relative(time: Time, now: &Zoned, locale: &Locale) -> String {
-    let Ok(mut diff) = u64::try_from(now.timestamp().as_second() - time.seconds) else {
+    let Ok(seconds) = u64::try_from(now.timestamp().as_second() - time.seconds) else {
         return locale.translate("in the future");
     };
-    let count =
+    let translated =
         |singular: &str, plural: &str, count: u64| locale.translate_plural(singular, plural, count);
-    if diff < 90 {
-        return count("%lu second ago", "%lu seconds ago", diff);
+    if seconds < 90 {
+        return translated("%lu second ago", "%lu seconds ago", seconds);
     }
-    // Minutes.
-    diff = (diff + 30) / 60;
-    if diff < 90 {
-        return count("%lu minute ago", "%lu minutes ago", diff);
+    let minutes = (seconds + 30) / 60;
+    if minutes < 90 {
+        return translated("%lu minute ago", "%lu minutes ago", minutes);
     }
-    // Hours.
-    diff = (diff + 30) / 60;
-    if diff < 36 {
-        return count("%lu hour ago", "%lu hours ago", diff);
+    let hours = (minutes + 30) / 60;
+    if hours < 36 {
+        return translated("%lu hour ago", "%lu hours ago", hours);
     }
-    // Days.
-    diff = (diff + 12) / 24;
-    if diff < 14 {
-        return count("%lu day ago", "%lu days ago", diff);
+    let days = (hours + 12) / 24;
+    if days < 14 {
+        return translated("%lu day ago", "%lu days ago", days);
     }
     // Weeks, for the past 10 weeks or so.
-    if diff < 70 {
-        return count("%lu week ago", "%lu weeks ago", (diff + 3) / 7);
+    if days < 70 {
+        return translated("%lu week ago", "%lu weeks ago", (days + 3) / 7);
     }
     // Months, for the past 12 months or so.
-    if diff < 365 {
-        return count("%lu month ago", "%lu months ago", (diff + 15) / 30);
+    if days < 365 {
+        return translated("%lu month ago", "%lu months ago", (days + 15) / 30);
     }
     // Years and months, for 5 years or so.
-    if diff < 1825 {
-        let total_months = (diff * 12 * 2 + 365) / (365 * 2);
+    if days < 1825 {
+        let total_months = (days * 12 * 2 + 365) / (365 * 2);
         let (years, months) = (total_months / 12, total_months % 12);
-        let years_text = count("%lu year", "%lu years", years);
+        let years_text = translated("%lu year", "%lu years", years);
         if months == 0 {
-            return count("%lu year ago", "%lu years ago", years);
+            return translated("%lu year ago", "%lu years ago", years);
         }
-        return count("%s, %lu month ago", "%s, %lu months ago", months).replacen(
+        return translated("%s, %lu month ago", "%s, %lu months ago", months).replacen(
             "%s",
             &years_text,
-            1,
+            /* count */ 1,
         );
     }
     // Only years.
-    count("%lu year ago", "%lu years ago", (diff + 183) / 365)
-}
-
-/// `offset` as git stores it in a number: `+0200` is 200.
-pub fn hhmm(offset_seconds: i32) -> i32 {
-    let minutes = offset_seconds.abs() / 60;
-    offset_seconds.signum() * (minutes / 60 * 100 + minutes % 60)
+    translated("%lu year ago", "%lu years ago", (days + 183) / 365)
 }
 
 /// `time` displayed like `git log --date=human`, `now` being the current date and timezone:
-/// relative for recent dates, otherwise without the parts that are the same as `now`. If `local`,
-/// `time` is displayed in the timezone of `now`.
-pub fn human(time: Time, now: &Zoned, local: bool, locale: &Locale) -> String {
-    let timezone = if local {
-        now.time_zone().clone()
-    } else {
-        Offset::from_seconds(time.offset).map_or(TimeZone::UTC, TimeZone::fixed)
-    };
-    let date = Timestamp::from_second(time.seconds)
-        .unwrap_or_default()
-        .to_zoned(timezone);
+/// relative for recent dates, otherwise without the parts that are the same as `now`. `time` is
+/// displayed in the timezone selected by `displayed_in`.
+pub fn human(time: Time, now: &Zoned, displayed_in: DisplayedIn, locale: &Locale) -> String {
+    let date = to_zoned(time, now, displayed_in);
 
     let same_year = date.year() == now.year();
     let same_month = same_year && date.month() == now.month();
-    let mut hide_date = false;
-    let mut hide_weekday = false;
-    if same_month && date.day() == now.day() {
-        hide_date = true;
-        hide_weekday = true;
-    } else if same_month && date.day() < now.day() && date.day() + 5 > now.day() {
-        // A few days ago: only the weekday.
-        hide_date = true;
-    }
     // Today: only the relative time.
-    if hide_weekday {
+    if same_month && date.day() == now.day() {
         return relative(time, now, locale);
     }
+    // A few days ago: only the weekday.
+    let hide_date = same_month && date.day() < now.day() && date.day() + 5 > now.day();
 
     let hide_timezone =
-        local || hhmm(date.offset().seconds()) == hhmm(now.offset().seconds()) || !hide_date;
+        displayed_in == DisplayedIn::LocalTimezone || date.offset() == now.offset() || !hide_date;
     let mut text = String::new();
+    // The names of the weekdays and months of `jiff` are in English, like the ones of git, which
+    // never translates them.
     if same_year {
-        let weekday = usize::try_from(date.weekday().to_sunday_zero_offset()).unwrap_or_default();
-        text += &format!("{} ", WEEKDAYS[weekday]);
+        text += &date.strftime("%a ").to_string();
     }
     if !hide_date {
-        let month = usize::try_from(date.month() - 1).unwrap_or_default();
-        text += &format!("{} {} ", MONTHS[month], date.day());
+        text += &date.strftime("%b %-d ").to_string();
     }
     if same_year {
-        text += &format!("{:02}:{:02}", date.hour(), date.minute());
+        text += &date.strftime("%H:%M").to_string();
     } else {
         text.truncate(text.trim_end().len());
-        text += &format!(" {}", date.year());
+        text += &date.strftime(" %Y").to_string();
     }
     if !hide_timezone {
-        text += &format!(" {:+05}", hhmm(date.offset().seconds()));
+        text += &date.strftime(" %z").to_string();
     }
     text
 }
 
-/// `input` parsed by `git`, like `git commit --date` does (`approxidate` in git's `date.c`, which
+/// `time` in the timezone selected by `displayed_in`, the one of `now` for
+/// [`DisplayedIn::LocalTimezone`].
+pub fn to_zoned(time: Time, now: &Zoned, displayed_in: DisplayedIn) -> Zoned {
+    let timezone = match displayed_in {
+        DisplayedIn::LocalTimezone => now.time_zone().clone(),
+        DisplayedIn::OriginalOffset => {
+            Offset::from_seconds(time.offset).map_or(TimeZone::UTC, TimeZone::fixed)
+        }
+    };
+    Timestamp::from_second(time.seconds)
+        .unwrap_or_default()
+        .to_zoned(timezone)
+}
+
+/// `input` parsed by `git`, like `git commit --date` does (`approxidate()` in git's `date.c`, which
 /// handles dates like `noon`, or without an offset), or `None` if git refuses it. Relative dates
 /// and dates without an offset are resolved with `now` and its timezone.
 ///
@@ -167,15 +165,15 @@ pub fn parse(input: &str, now: &Zoned) -> Option<Time> {
         &date,
     ])?;
     let output = git(&["log", "-1", "--format=%ad", "--date=raw"])?;
-    // `$seconds $offset`
-    let raw = String::from_utf8(output.stdout).ok()?;
-    let (seconds, offset) = raw.trim_end().split_once(' ')?;
-    let sign = if offset.starts_with('-') { -1 } else { 1 };
-    let hours: i32 = offset.get(1..3)?.parse().ok()?;
-    let minutes: i32 = offset.get(3..5)?.parse().ok()?;
+    parse_raw(String::from_utf8(output.stdout).ok()?.trim_end())
+}
+
+/// `text`, a date as git stores it (see [`RAW_FORMAT`]).
+fn parse_raw(text: &str) -> Option<Time> {
+    let parsed = strtime::parse(RAW_FORMAT, text).ok()?;
     Some(Time {
-        seconds: seconds.parse().ok()?,
-        offset: sign * (hours * 60 + minutes) * 60,
+        seconds: parsed.to_timestamp().ok()?.as_second(),
+        offset: parsed.offset()?.seconds(),
     })
 }
 
@@ -185,10 +183,6 @@ fn posix_timezone(now: &Zoned) -> String {
     if let Some(name) = now.time_zone().iana_name() {
         return name.to_string();
     }
-    let seconds = now.offset().seconds();
-    let minutes = seconds.abs() / 60;
-    let sign = if seconds < 0 { '-' } else { '+' };
-    let inverted = if seconds < 0 { '+' } else { '-' };
-    let (hours, minutes) = (minutes / 60, minutes % 60);
-    format!("<{sign}{hours:02}{minutes:02}>{inverted}{hours}:{minutes:02}")
+    let inverted = now.with_time_zone(TimeZone::fixed(-now.offset()));
+    format!("<{}>{}", now.strftime("%z"), inverted.strftime("%:z"))
 }

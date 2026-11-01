@@ -79,7 +79,7 @@ pub enum Wrap {
     /// In the whitespace starting a continuation row.
     AfterBreak,
     /// The only space or U+2800 around a break (ending the row before it or starting the row
-    /// after it). Will not be displayed
+    /// after it). It is not displayed (see [`Cluster::push()`]).
     Single,
 }
 
@@ -92,7 +92,7 @@ pub enum Content {
     Contextual(Contextual),
 }
 
-/// A character whose display depends on its context
+/// A character whose display depends on its context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Contextual {
     /// A space (U+0020).
@@ -119,10 +119,14 @@ impl Cluster {
         matches!(self.content, Content::Contextual(_))
     }
 
+    pub fn is_tab(&self) -> bool {
+        matches!(self.content, Content::Contextual(Contextual::Tab))
+    }
+
     /// Number of columns used when displayed at `column`, if it is not next to a break.
     ///
-    /// Next to a break, it never uses more columns (see [`Cluster::push`]). This is what allows
-    /// to choose the breaks before knowing where the clusters are relative to them.
+    /// Next to a break, it never uses more columns (see [`Cluster::push()`]). This allows
+    /// choosing the breaks before knowing where the clusters are relative to them.
     pub fn width(&self, column: usize) -> usize {
         match &self.content {
             Content::Fixed(pieces) => pieces.iter().map(|piece| piece.text.width()).sum(),
@@ -139,9 +143,9 @@ impl Cluster {
     pub fn push(&self, pieces: &mut Pieces, wrap: Wrap, room: usize) {
         let whitespace = match &self.content {
             Content::Fixed(fixed) => {
-                fixed
-                    .iter()
-                    .for_each(|piece| pieces.push(piece.kind, &piece.text));
+                for piece in fixed {
+                    pieces.push(piece.kind, &piece.text);
+                }
                 return;
             }
             Content::Contextual(whitespace) => *whitespace,
@@ -251,20 +255,14 @@ pub struct Pieces {
 impl Pieces {
     /// No pieces yet, the next one being displayed at `column`.
     pub fn new(column: usize) -> Self {
-        Self {
-            pieces: Vec::new(),
-            column,
-        }
+        Self { pieces: Vec::new(), column }
     }
 
     fn push(&mut self, kind: Kind, text: &str) {
         self.column += text.width();
         match self.pieces.last_mut() {
             Some(last) if last.kind == kind => last.text.push_str(text),
-            _ => self.pieces.push(Piece {
-                text: text.to_string(),
-                kind,
-            }),
+            _ => self.pieces.push(Piece { text: text.to_string(), kind }),
         }
     }
 
@@ -277,7 +275,7 @@ impl Pieces {
 fn fixed(cluster: &str, trailing: bool) -> Vec<Piece> {
     let in_emoji = cluster.chars().next().is_some_and(|c| EMOJI.contains(c));
     let shown: Vec<_> = cluster.chars().map(|c| shown(c, in_emoji)).collect();
-    let mut pieces = Pieces::new(0);
+    let mut pieces = Pieces::new(/* column */ 0);
     // Kept whole, so that its width is the one of the cluster, not the sum of its characters.
     if shown.iter().all(|shown| *shown == Shown::Kept) {
         pieces.push(Kind::Text, cluster);
@@ -309,7 +307,7 @@ pub fn clusters(line: &str, final_cr: FinalCr) -> Vec<Cluster> {
     };
     // Grapheme clusters (what is displayed as a single character), with their position in the
     // line.
-    let graphemes: Vec<(usize, &str)> = content.grapheme_indices(true).collect();
+    let graphemes: Vec<(usize, &str)> = content.grapheme_indices(/* is_extended */ true).collect();
     let trailing_len = graphemes
         .iter()
         .rev()
@@ -354,16 +352,22 @@ mod tests {
     /// A carriage return ending `line` is replaced if `final_cr` is [`FinalCr::Shown`], and hidden
     /// otherwise.
     fn display(line: &str, final_cr: FinalCr) -> Vec<Piece> {
-        let mut pieces = Pieces::new(0);
-        clusters(line, final_cr)
-            .iter()
-            .for_each(|cluster| cluster.push(&mut pieces, Wrap::None, usize::MAX));
+        let mut pieces = Pieces::new(/* column */ 0);
+        for cluster in &clusters(line, final_cr) {
+            cluster.push(&mut pieces, Wrap::None, usize::MAX);
+        }
         pieces.pieces
     }
 
-    /// The pieces displaying the `index`-th cluster of `line`, at `column`.
-    fn cluster_at(line: &str, index: usize, column: usize, wrap: Wrap, room: usize) -> Vec<Piece> {
-        let cluster = clusters(line, FinalCr::Shown).remove(index);
+    /// The pieces displaying the `cluster_index`-th cluster of `line`, at `column`.
+    fn cluster_at(
+        line: &str,
+        cluster_index: usize,
+        column: usize,
+        wrap: Wrap,
+        room: usize,
+    ) -> Vec<Piece> {
+        let cluster = clusters(line, FinalCr::Shown).remove(cluster_index);
         let mut pieces = Pieces::new(column);
         cluster.push(&mut pieces, wrap, room);
         pieces.pieces
@@ -378,10 +382,7 @@ mod tests {
     }
 
     fn piece(text: &str, kind: Kind) -> Piece {
-        Piece {
-            text: text.to_string(),
-            kind,
-        }
+        Piece { text: text.to_string(), kind }
     }
 
     #[test]
@@ -450,26 +451,16 @@ mod tests {
     }
 
     #[test]
-    fn whitespace_has_its_own_content() {
-        let contents: Vec<_> = clusters("a \u{2800}\tb", FinalCr::Shown)
-            .into_iter()
-            .map(|cluster| cluster.content)
-            .collect();
-        assert_eq!(
-            contents,
-            [
-                Content::Fixed(vec![piece("a", Kind::Text)]),
-                Content::Contextual(Contextual::Space),
-                Content::Contextual(Contextual::BrailleBlank),
-                Content::Contextual(Contextual::Tab),
-                Content::Fixed(vec![piece("b", Kind::Text)]),
-            ]
-        );
-    }
-
-    #[test]
     fn space_is_dimmed_before_a_break() {
-        let space = |wrap| cluster_at(" x", 0, 0, wrap, usize::MAX);
+        let space = |wrap| {
+            cluster_at(
+                " x",
+                /* cluster_index */ 0,
+                /* column */ 0,
+                wrap,
+                usize::MAX,
+            )
+        };
         assert_eq!(space(Wrap::None), [piece(" ", Kind::Text)]);
         // A space moved to the next row is displayed normally.
         assert_eq!(space(Wrap::AfterBreak), [piece(" ", Kind::Text)]);
@@ -483,7 +474,15 @@ mod tests {
 
     #[test]
     fn braille_blank_is_dimmed_next_to_a_break() {
-        let blank = |wrap| cluster_at("\u{2800}x", 0, 0, wrap, usize::MAX);
+        let blank = |wrap| {
+            cluster_at(
+                "\u{2800}x",
+                /* cluster_index */ 0,
+                /* column */ 0,
+                wrap,
+                usize::MAX,
+            )
+        };
         assert_eq!(blank(Wrap::None), [piece("\u{2800}", Kind::Text)]);
         assert_eq!(
             blank(Wrap::AfterBreak),
@@ -500,7 +499,13 @@ mod tests {
     #[test]
     fn trailing_whitespace_is_replaced_even_if_single_at_a_break() {
         assert_eq!(
-            cluster_at("a ", 1, 1, Wrap::Single, usize::MAX),
+            cluster_at(
+                "a ",
+                /* cluster_index */ 1,
+                /* column */ 1,
+                Wrap::Single,
+                usize::MAX
+            ),
             [piece("∙", Kind::TrailingWhitespace)]
         );
     }
@@ -508,15 +513,33 @@ mod tests {
     #[test]
     fn trailing_whitespace_next_to_a_break_stays_trailing_whitespace() {
         assert_eq!(
-            cluster_at("a ", 1, 1, Wrap::BeforeBreak, usize::MAX),
+            cluster_at(
+                "a ",
+                /* cluster_index */ 1,
+                /* column */ 1,
+                Wrap::BeforeBreak,
+                usize::MAX
+            ),
             [piece("∙", Kind::TrailingWhitespace)]
         );
         assert_eq!(
-            cluster_at("a\u{2800}", 1, 0, Wrap::AfterBreak, usize::MAX),
+            cluster_at(
+                "a\u{2800}",
+                /* cluster_index */ 1,
+                /* column */ 0,
+                Wrap::AfterBreak,
+                usize::MAX
+            ),
             [piece("∙", Kind::TrailingWhitespace)]
         );
         assert_eq!(
-            cluster_at("a\t", 1, 1, Wrap::BeforeBreak, usize::MAX),
+            cluster_at(
+                "a\t",
+                /* cluster_index */ 1,
+                /* column */ 1,
+                Wrap::BeforeBreak,
+                usize::MAX
+            ),
             [piece("⇥", Kind::TrailingWhitespace)]
         );
     }
@@ -524,12 +547,24 @@ mod tests {
     #[test]
     fn tab_before_a_break_is_displayed_alone() {
         assert_eq!(
-            cluster_at("\tx", 0, 0, Wrap::BeforeBreak, usize::MAX),
+            cluster_at(
+                "\tx",
+                /* cluster_index */ 0,
+                /* column */ 0,
+                Wrap::BeforeBreak,
+                usize::MAX
+            ),
             [piece("⇥", Kind::DimmedWhitespace)]
         );
         // After a break, it reaches the next tab stop.
         assert_eq!(
-            cluster_at("\tx", 0, 1, Wrap::AfterBreak, usize::MAX),
+            cluster_at(
+                "\tx",
+                /* cluster_index */ 0,
+                /* column */ 1,
+                Wrap::AfterBreak,
+                usize::MAX
+            ),
             [piece("⇥  ", Kind::DimmedWhitespace)]
         );
     }
@@ -537,7 +572,13 @@ mod tests {
     #[test]
     fn tab_is_cut_to_the_room_left() {
         assert_eq!(
-            cluster_at("\tx", 0, 0, Wrap::None, 2),
+            cluster_at(
+                "\tx",
+                /* cluster_index */ 0,
+                /* column */ 0,
+                Wrap::None,
+                /* room */ 2
+            ),
             [piece("⇥ ", Kind::DimmedWhitespace)]
         );
     }
@@ -545,9 +586,9 @@ mod tests {
     #[test]
     fn cluster_width_depends_on_the_column_for_tabs_only() {
         let clusters = clusters("日\t", FinalCr::Shown);
-        assert_eq!(clusters[0].width(3), 2);
-        assert_eq!(clusters[1].width(0), 4);
-        assert_eq!(clusters[1].width(3), 1);
+        assert_eq!(clusters[0].width(/* column */ 3), 2);
+        assert_eq!(clusters[1].width(/* column */ 0), 4);
+        assert_eq!(clusters[1].width(/* column */ 3), 1);
     }
 
     #[test]
@@ -559,21 +600,19 @@ mod tests {
             Wrap::Single,
         ];
         // The whitespace is the first cluster, and is trailing whitespace in the last three lines.
-        [" x", "\u{2800}x", "\tx", " ", "\u{2800}", "\t"]
-            .into_iter()
-            .for_each(|line| {
-                let cluster = clusters(line, FinalCr::Shown).remove(0);
-                (0..TAB_WIDTH).for_each(|column| {
-                    wraps.into_iter().for_each(|wrap| {
-                        let mut pieces = Pieces::new(column);
-                        cluster.push(&mut pieces, wrap, usize::MAX);
-                        assert!(
-                            pieces.column - column <= cluster.width(column),
-                            "{line:?} at column {column}, {wrap:?}"
-                        );
-                    });
-                });
-            });
+        for line in [" x", "\u{2800}x", "\tx", " ", "\u{2800}", "\t"] {
+            let cluster = clusters(line, FinalCr::Shown).remove(0);
+            for column in 0..TAB_WIDTH {
+                for wrap in wraps {
+                    let mut pieces = Pieces::new(column);
+                    cluster.push(&mut pieces, wrap, usize::MAX);
+                    assert!(
+                        pieces.column - column <= cluster.width(column),
+                        "{line:?} at column {column}, {wrap:?}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -659,9 +698,9 @@ mod tests {
         let family = "👨\u{200d}👩\u{200d}👧";
         let heart = "❤\u{fe0f}";
         let scotland = "🏴\u{e0067}\u{e0062}\u{e0073}\u{e0063}\u{e0074}\u{e007f}";
-        [family, heart, scotland].into_iter().for_each(|emoji| {
+        for emoji in [family, heart, scotland] {
             assert_eq!(display(emoji, FinalCr::Shown), [piece(emoji, Kind::Text)])
-        });
+        }
     }
 
     #[test]

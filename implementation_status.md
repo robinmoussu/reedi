@@ -325,18 +325,18 @@ version 0.0.8: internal refactoring
  - [x] unit tests for the layout (blank rows between the header, the body, the files and the
    hunks), which was only covered by the snapshots
 
- - [ ] Review the whole codebase style and readability
-   - [ ] `README.md` and `implementation_status.md`: typos and naming uniformization
-   - [ ] "chunk" renamed "hunk" in the code, `README.md` (with its definition) and
+ - [x] Review the whole codebase style and readability
+   - [x] `README.md` and `implementation_status.md`: typos and naming uniformization
+   - [x] "chunk" renamed "hunk" in the code, `README.md` (with its definition) and
      `implementation_status.md`
-   - [ ] improve naming
-   - [ ] duplication and simplification
-   - [ ] iterators instead of loops, and `for` loops instead of iterators that only call `for_each`
+   - [x] improve naming
+   - [x] duplication and simplification
+   - [x] iterators instead of loops, and `for` loops instead of iterators that only call `for_each`
      or `try_for_each`
-   - [ ] constants and comments of the arguments
-   - [ ] parameters and enums
-   - [ ] test data and test names
-   - [ ] comments
+   - [x] constants and comments of the arguments
+   - [x] parameters and enums
+   - [x] test data and test names
+   - [x] comments
 
  - [ ] extract gix-compat into a new library, `reedi-gix-compat` (a workspace member at the root of
    the repository, with the same version as `reedi`, licensed `MIT OR Apache-2.0` like `gix`)

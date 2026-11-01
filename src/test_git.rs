@@ -5,17 +5,22 @@ use std::process::Command;
 use std::process::Output;
 
 use gix::date::Time;
+use jiff::Timestamp;
 use jiff::Zoned;
+use jiff::tz::Offset;
+use jiff::tz::TimeZone;
 use tempfile::TempDir;
+
+use crate::date::Environment;
+use crate::gix_compat::date::RAW_FORMAT;
+use crate::gix_compat::locale::Locale;
 
 /// A new repository, and the environment `git` runs in. The configuration of the user is not
 /// read, so that the tests don't depend on it.
 pub struct Git {
     directory: TempDir,
-    /// The IANA name of the current timezone (`TZ`).
-    timezone: String,
-    /// The current date, in seconds since the epoch (`GIT_TEST_DATE_NOW`).
-    now: i64,
+    /// The current date (`GIT_TEST_DATE_NOW`), in the current timezone (`TZ`).
+    now: Zoned,
     /// `LC_ALL`.
     locale: String,
 }
@@ -26,12 +31,19 @@ impl Git {
     pub fn new(now: &Zoned, locale: &str) -> Self {
         let git = Git {
             directory: tempfile::tempdir().unwrap(),
-            timezone: now.time_zone().iana_name().unwrap().to_string(),
-            now: now.timestamp().as_second(),
+            now: now.clone(),
             locale: locale.to_string(),
         };
         assert!(git.run(&["init", "--quiet"]).status.success());
         git
+    }
+
+    /// The environment `git` runs in, to display the dates like it.
+    pub fn environment(&self) -> Environment {
+        Environment {
+            now: self.now.clone(),
+            locale: Locale::named(&self.locale).unwrap(),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -39,7 +51,7 @@ impl Git {
     }
 
     /// `git $args`, whatever its exit status.
-    pub fn run(&self, args: &[&str]) -> Output {
+    fn run(&self, args: &[&str]) -> Output {
         Command::new("git")
             .args(args)
             .current_dir(self.path())
@@ -52,8 +64,11 @@ impl Git {
             .env("GIT_AUTHOR_EMAIL", "author@example.com")
             .env("GIT_COMMITTER_NAME", "Committer")
             .env("GIT_COMMITTER_EMAIL", "committer@example.com")
-            .env("TZ", &self.timezone)
-            .env("GIT_TEST_DATE_NOW", self.now.to_string())
+            .env("TZ", self.now.time_zone().iana_name().unwrap())
+            .env(
+                "GIT_TEST_DATE_NOW",
+                self.now.timestamp().as_second().to_string(),
+            )
             .env("LC_ALL", &self.locale)
             .output()
             .unwrap()
@@ -65,7 +80,7 @@ impl Git {
     }
 
     /// `git commit --date=$date`, whose stderr is the error if git refuses `date`.
-    pub fn commit_with_date(&self, date: &str) -> Result<(), String> {
+    fn commit_with_date(&self, date: &str) -> Result<(), String> {
         let output = self.run(&[
             "commit",
             "--quiet",
@@ -83,15 +98,12 @@ impl Git {
 
     /// A commit authored at `time`.
     pub fn commit_at(&self, time: Time) {
-        let sign = if time.offset < 0 { '-' } else { '+' };
-        let minutes = time.offset.abs() / 60;
-        let date = format!(
-            "{} {sign}{:02}{:02}",
-            time.seconds,
-            minutes / 60,
-            minutes % 60
-        );
-        self.commit_with_date(&date).unwrap();
+        let offset = Offset::from_seconds(time.offset).unwrap();
+        let zoned = Timestamp::from_second(time.seconds)
+            .unwrap()
+            .to_zoned(TimeZone::fixed(offset));
+        self.commit_with_date(&zoned.strftime(RAW_FORMAT).to_string())
+            .unwrap();
     }
 
     /// The author date of the last commit, displayed by `git log` with `--date=$format` (or with
@@ -107,19 +119,6 @@ impl Git {
             Ok(stdout.strip_suffix('\n').unwrap().to_string())
         } else {
             Err(String::from_utf8(output.stderr).unwrap())
-        }
-    }
-
-    /// The author date of the last commit, as stored (`--date=raw`).
-    pub fn author_time(&self) -> Time {
-        let raw = self.author_date(Some("raw")).unwrap();
-        let (seconds, offset) = raw.split_once(' ').unwrap();
-        let sign = if offset.starts_with('-') { -1 } else { 1 };
-        let hours: i32 = offset[1..3].parse().unwrap();
-        let minutes: i32 = offset[3..5].parse().unwrap();
-        Time {
-            seconds: seconds.parse().unwrap(),
-            offset: sign * (hours * 60 + minutes) * 60,
         }
     }
 }

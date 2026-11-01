@@ -7,24 +7,24 @@ reedi
 
 - It is a TUI tool to review unpushed commits.
 - Commits are displayed (with their diff) in reverse topological order (oldest first).
-- The general interface is the same than `delta`, but commits messages, author, date and hunks are
+- The general interface is the same as `delta`, but commit messages, author, date and hunks are
   editable.
-- All chunks have syntax and diff-aware coloration (including word-level diff)
+- All hunks have syntax and diff-aware coloration (including word-level diff)
 - When saving all changes are applied, as-if an interactive rebase was done (note: maybe using `jj`
   instead of `git rebase` would lead to a better UX).
 - In review mode the closest editable area is highlighted and the cursor visible (if the cursor is
   on an editable area, this one, otherwise the next one)
 - In visual mode (selection) the current selection is highlighted
-- If the terminal size change, the UI is updated automatically
+- If the terminal size changes, the UI is updated automatically
 - If available, the kitty terminal protocol is used
 - Like less, it uses the alternate screen
-- Only support utf-8, if data is invalid an error message describing the issue is shown
+- Only supports utf-8, if data is invalid an error message describing the issue is shown
 - Non-latin scripts are expected to be properly supported (best effort, I don’t read them,
-  especially right-to-left scripts, but it’s a goal). For RTL scripts, it is expected than a
-  terminal that support bidirectional algorithm is used (like GNOME VTE or Konsole).
+  especially right-to-left scripts, but it’s a goal). For RTL scripts, it is expected that a
+  terminal that supports bidirectional algorithm is used (like GNOME VTE or Konsole).
 - Supports `.gitattributes`
-- Binary file only show a message if they differ. Non-valid utf8 files are treated the same.
-- Likewise commit message, author name and other metadate must be valid utf8 or are replaced by an
+- Binary files only show a message if they differ. Non-valid utf8 files are treated the same.
+- Likewise commit message, author name and other metadata must be valid utf8 or are replaced by an
   error message.
 - Read git configuration, and re-use its settings
 
@@ -39,8 +39,8 @@ Performance:
 - move detection + word diff have a common timeout of 1s max per commit
   - if move detection hit timeout, removed/added is used as fallback
   - if word-diff hit timeout, the whole line will use the same result as the line-diff
-- a full-file syntax highlight limit of 500ms per file before fallback (per chunk syntax color,
-  with a 50ms timeout per chunk, then no syntax highlight)
+- a full-file syntax highlight limit of 500ms per file before fallback (per hunk syntax color,
+  with a 50ms timeout per hunk, then no syntax highlight)
 
 ```
 $hash $commit_subject $author $date ($tags, $branches)
@@ -84,26 +84,26 @@ $file
 $status_line
 ```
 
-For exact template and colors, inspiration should be taken from `delta` (except for chunk header `@@
--a,b +c,d @@` which is not shown.
+For exact template and colors, inspiration should be taken from `delta` (except for hunk header `@@
+-a,b +c,d @@` which is not shown).
 
 Areas
 -----
 
 - `$hash` (short form) is non-editable
 - `$commit_subject` is editable
-- `commit_message_body` is editable
+- `$commit_message_body` is editable
 - `$author` (author name) and `$date` (author date, using current git date format) are editable
 - `$line` is non-editable and automatically updated both in the before (left) and after (right). The
-  width of this field fit the largest number of that chunk.
+  width of this field fits the largest number of that hunk.
 
 - The general idea is to have a navigation mode, in which you can read the diffs, execute commands
   and navigate between the editable areas.
 - Editable areas can either be modified using the embedded editor that can use vim (and ideally
-  ibm/emacs/helix) style keybinding, or using an external editor (`$VISUAL`, or `EDITOR as
-  fallback`).
+  CUA (`ctrl+c`, `ctrl+z`, `ctrl+a`, …)/emacs/helix) style keybinding, or using an external editor
+  (`$VISUAL`, or `EDITOR as fallback`).
 - The diffs splits the screen 50/50 (right bigger if odd)
-- A status bar display the current mode and each mode has an accent color for the background of the
+- A status bar displays the current mode and each mode has an accent color for the background of the
   name of the current mode (`Review`: blue, `Edit`: light green, `Search`: honey, `Comment`: dark
   green, `Command`: mango, `Selection`: purple, `Move`: dark red)
 - After the mode, the status bar displays in gray
@@ -115,7 +115,8 @@ Areas
 Expected implementation
 =======================
 
-The software is mainly a lib, with a slim binary who only read the config an command line options.
+The software is mainly a lib, with a slim binary which only reads the config and command line
+options.
 
 Interactivity
 -------------
@@ -123,7 +124,7 @@ Interactivity
 Saving and applying modifications:
 
 - When starting `reedi` the current git state is saved
-- Each time the `save` command is executed, this new state is save
+- Each time the `save` command is executed, this new state is saved
 - It is always possible to undo all changes and restore the last saved state
 - All modifications are immediately applied when leaving an editable area (but this state is not
   saved)
@@ -139,10 +140,10 @@ Cursor:
 - The position of the cursor is made visible by highlighting the background of the current row
   (with a dim gray color)
 - `$commit_subject`, `$author` and `$date` are on the same line. `right` and `left` is the only way
-  to edit `$author` and `$date`, since the cursor is row-based. `right`/`left` Can therefore select
-  which of those 3 field is active, and is highlighted when the cursor is on those lines. `j`/`k` do
-  not stop on `$date` and `$author` (unless there is line wrapping) and reset to `$commit_subject`
-  each time they leave and go back the line containing the subject.
+  to edit `$author` and `$date`, since the cursor is row-based. `right`/`left` can therefore select
+  which of those 3 fields is active, and is highlighted when the cursor is on those lines. `j`/`k`
+  do not stop on `$date` and `$author` (unless there is line wrapping) and reset to
+  `$commit_subject` each time they leave and go back the line containing the subject.
 - When resizing, the cursor screen position stays the same. The cursor goes on the row displaying
   the character that was the first of its row: the one of the right half of a diff if this half
   displayed text on that row, otherwise the one of the left half. For example if a line was
@@ -152,15 +153,15 @@ Cursor:
 
 Review mode:
 
-- Invisible characters are displayed with a replacements character (trailing whitespace are always
+- Invisible characters are displayed with a replacement character (trailing whitespace are always
   displayed, even if the line is wrapped)
 - TODO: how is non-linear history displayed
 
 - `j`/`k` or `up`/`down` move the cursor one row. The screen automatically move so that there is
   always 5 extra rows on top/bottom (unless the beginning/end of the file is reached)
-- `tab`/`shift+tab` or `left`/`right` move the cursor to the next/previous editable area (this does include
-    `commit_subject`, `author` and `date` that are on the same line)
-- `g`/`G` move the cursor to first/last line
+- `tab`/`shift+tab` or `left`/`right` move the cursor to the next/previous editable area (this does
+  include `commit_subject`, `author` and `date` that are on the same line)
+- `g`/`G` move the cursor to first/last row
 - `J`/`K` or `ctrl+down`/`ctrl+up` jumps to the next/previous commit
 - `[`/`]` jumps to the next/previous merge conflict
 
@@ -171,12 +172,12 @@ Review mode:
   the last/first row is displayed
 
 - numbers before a move repeat that move by this amount
-- `${number}g` or `${number}G` move the cursor to the `number`th line from the top (like `${number}G`
-  in vim)
+- `${number}g` or `${number}G` move the cursor to the `number`th row from the top (like
+  `${number}G` in vim)
 
 - `enter` edit the current editable area (or the next one if on a line with only non-editable
-    elements
-- `ctl+enter` (or `alt+enter`) edit the current editable area (or next if on a non-editable area)
+  elements)
+- `ctrl+enter` (or `alt+enter`) edit the current editable area (or next if on a non-editable area)
   with `$VISUAL` (or `$EDITOR` if unset)
 - `c` enters comment mode / `C` with the external editor
 
@@ -192,30 +193,32 @@ Review mode:
 - `w` or `ctrl+s` save the current git state (by default the state when opening `reedi`)
 - `ctrl+r` undo all changes and restore the saved git state after a confirmation dialog
 
-- `v` starts visual mode (available only on a chunk diff)
+- `v` starts visual mode (available only on a hunk diff)
 - maintaining `shift` and pressing `up`/`down` or `j`/`k` select those lines (like what the visual
   mode does), and when `shift` is released comment mode is opened on those lines. Same behavior
   with click+drag with the mouse
 
-- `m` start move move (available only on a chunk diff). The moved span is all modified lines of the
-  current chunk
-- In visual mode, `m` start move mode, and the span are the selected lines
+- `m` starts move mode (available only on a hunk diff). The moved span is all modified lines of the
+  current hunk
+- In visual mode, `m` starts move mode, and the span is the selected lines
 
-- `b`/`e` adds lines at the beginning/end of the current chunk (possibly merging it with adjacent
-- `space` toggle between expanding all chunks of the current file and restoring their default state
+- `b`/`e` adds lines at the beginning/end of the current hunk (possibly merging it with adjacent
+  hunks)
+- `space` toggle between expanding all hunks of the current file and restoring their default state
 
 - `!` enters command mode
 
 Selection (visual mode):
 
-- selection can only be done in a single file, with a continuous range of lines. TODO: Until `b`/`e` are
-  implemented, it is therefore limited to a single chunk. Once those will be implemented, trying to
-  extend a range outside a chunk expand the chunk alongside the selection.
+- selection can only be done in a single file, with a continuous range of lines. TODO: Until `b`/`e`
+  are implemented, it is therefore limited to a single hunk. Once those will be implemented, trying
+  to extend a range outside a hunk expand the hunk alongside the selection.
 - `up`/`down` or `j`/`k` extend the selection in that direction
 - `c`/`C` and `enter`/`ctrl+enter`(or `alt+enter`) enters comment mode with the embedded/external
-   editor
-- `escape` return to review mode. This is also applies to `shift`-selection and drag-selection
-- `o` switch to the other side of the selection (ie. next `up`/`down` will expand/shrink from the other side)
+  editor
+- `escape` return to review mode. This also applies to `shift`-selection and drag-selection
+- `o` switch to the other side of the selection (ie. next `up`/`down` will expand/shrink from the
+  other side)
 
 Comment mode:
 
@@ -223,38 +226,38 @@ Comment mode:
 - Each comment is associated with a span. If comment mode was opened with `c`/`C` it is the whole
   highlighted area. If it was opened after a selection, the span is the span of the
   selection
-- A non-empty comment create a new editable zone, clearing all its content remote it
+- A non-empty comment creates a new editable area, clearing all its content removes it
 - When exiting comment mode the comment file is updated. TODO: specify the format, but something
   like `file:begin-end\nindented multi-line comment` should work, more probably a `.typ` file
 - When exiting `reedi` or saving, the human-readable comment file is updated. It should probably be
-  a pdf generated with typst, that embeed the before/after state of the code + a few (3?) lines of
+  a pdf generated with typst, that embeds the before/after state of the code + a few (3?) lines of
   context + the comment
-- comments can also be send to a MCP client (with a disabled-by-default cargo feature)
+- comments can also be sent to a MCP client (with a disabled-by-default cargo feature)
 
 Search mode:
 
 - It’s a one-line editable area inside the status bar
-- It use perl regex, in smartcase by default
-- an initial `\I` force to ignore case, `\C` to match the case, `\S` to use smartcase
-- an initial `\R` force regex use, `\L` an literal search
+- It uses perl regex, in smartcase by default
+- an initial `\I` forces to ignore case, `\C` to match the case, `\S` to use smartcase
+- an initial `\R` forces regex use, `\L` a literal search
 - both of the above settings can be combined. If the first character of the search pattern is a `\`
   it should be doubled
 - search is incremental, highlight all results, and automatically move the screen to the
   next/previous match (if it was started with `/` or `?`)
-- Search ignore invisible characters replacement
+- Search ignores the replacements of the invisible characters
 
 - `enter` save the current search pattern and return to review mode
 - `escape` doesn’t save the current search pattern, move back the cursor and screen position to what
   it was before the search
 - `up`/`down` restore the previous/next search pattern
 - default emacs style edition works: `left`/`right`, `ctrl+w`/`alt+d`, `ctrl+b`/`ctrl+f`,
-   `alt+b`/`alt+f`, `ctrl+d`/`ctrl+h`, …
+  `alt+b`/`alt+f`, `ctrl+d`/`ctrl+h`, …
 - `alt+e` open the search pattern in the external editor
 
 Command mode:
 
 - The interface is the same as the search mode
-- `enter` will run `$command` at the current commit (as-it `exec $command` had been used in
+- `enter` will run `$command` at the current commit (as if `exec $command` had been used in
   `git rebase --interactive` after the current commit).
 - The output of the command is displayed on the full screen, usual pager command (`j`/`k`,
   `ctrl+d`/`ctrl+e`,  …) should work and `q` or `enter` close it.
@@ -267,17 +270,18 @@ Edit mode (embedded editor):
 - Invisible characters are displayed normally (no replacements character)
 - Right-to-left text is reordered and joined by the terminal. The cursor moves in memory order, and
   is displayed on the character it is on
-- Copy interact with the system clipboard. In non-vim mode, `ctrl+c` copy
+- Copy interacts with the system clipboard. In non-vim mode, `ctrl+c` copy
 - Each editable area has a separate undo tree
 - This undo tree is associated with the patch id of the associated commit, and thus re-loaded
   automatically between sessions
 - `ctrl+escape` (or `alt+escape`, or `escape,escape` for old terminals) exit edit mode (reset to
   review mode)
-- If the current edition mode is using vim-style keybinds, the vim mode is displayed in the status bar
+- If the current edition mode is using vim-style keybinds, the vim mode is displayed in the status
+  bar
 - `author` and `date` are validated. During edition, if invalid, with a red background, when exiting
   edit mode, if still invalid, they are reset to the value before edition (e.g. multiline or invalid
   date format).
-- When modified, `date` (if valid) is re-formated using the current git date format preference
+- When modified, `date` (if valid) is re-formatted using the current git date format preference
 - When editing the `author` field `author <email>` should be used (with autocompletion for the list
   of recent authors), but only the author name is displayed. When entering edit mode, the author
   name is replaced by `author <email>`
@@ -286,7 +290,7 @@ Edit mode (embedded editor):
 
 Merge conflicts:
 
-- Merge conflicts are displayed with the `<<</===/>>>` chunks, and are expected to be fixed
+- Merge conflicts are displayed with the `<<</===/>>>` hunks, and are expected to be fixed
 - A merge conflict indicator is displayed in the status bar
 - `[`/`]` jumps to the next/previous merge conflict
 - TODO: maybe using `jj` would help for merge conflicts
@@ -294,7 +298,7 @@ Merge conflicts:
 Move mode:
 
 - `k`/`j` and `up`/`down` move the current span to the previous/next commit
-- in move mode, all files/chunks are hidden, except for the current span and its surrounding context
+- in move mode, all files/hunks are hidden, except for the current span and its surrounding context
 
 Terminal protocol:
 - Use kitty protocol by default, with a fallback for non-kitty-aware terminals
@@ -349,7 +353,7 @@ displaying the part of a line that did not fit on the previous row.
     - the last column of each half is always reserved for the `↵` marker, which is displayed on
       each row followed by a continuation row of the same line
     - continuation rows display the line number column without number (`│    │`, as wide as the
-      line number column of the chunk)
+      line number column of the hunk)
     - if one side of a line wraps on more rows than the other, the shorter side is padded with rows
       displaying only the line number column without number
 - The header, the commit message and the file names are wrapped the same way, but without `↵`
@@ -361,7 +365,7 @@ displaying the part of a line that did not fit on the previous row.
   displayed on either side of its left-to-right part. Rows are still left-aligned.
 - A text area too narrow to display a grapheme cluster of its line (0 column, or 1 column for a wide
   character) cannot be wrapped. In a diff, a clear error message is displayed in place of the
-  chunk. Elsewhere, or if this error message cannot be displayed either, `reedi` exits with a clear
+  hunk. Elsewhere, or if this error message cannot be displayed either, `reedi` exits with a clear
   error message.
 
 Settings
@@ -371,17 +375,16 @@ Settings
   `~/.config/reedi/config.toml`)
 - A missing file, or a file without the preference key, means the preference is unset
 - An unreadable file, an invalid TOML file, or an invalid value makes `reedi` exit with a
- clear error message
+  clear error message
 - A warning is displayed if an unknown key is used (displaying both the faulty key and its value)
 
-- There is a named action for each of them for each shortcut, and they can be all remapped (and
-  unmapped).
+- There is a named action for each shortcut, and all of them can be remapped (and unmapped).
 - Incremental search can be toggled off
 - Scrolloff (by default 5) can be changed
 - external editor (by default `$VISUAL`, then `$EDITOR`) can be changed
 - search case setting can be set to smartcase (default), ignorecase, and noignorecase
 - search pattern setting can be set to perl regex (default) or literal
-- embedded editor style can be set to vim (default) / emacs / standard / helix
+- embedded editor style can be set to vim (default) / emacs / CUA / helix
 - tab width is 4 spaces by default
 - theme has light, dark, and monochrome variant (terminal theme by default, dark otherwise)
 - each invisible character replacements can be configured. Default:
@@ -407,7 +410,6 @@ Settings
     - any other invisible character (control characters U+0080–U+009F, Hangul fillers U+115F,
       U+1160, U+3164 and U+FFA0, and the other characters with the Unicode property
       `Default_Ignorable_Code_Point`): `⍰`
-    - ZWNJ is not replaced (and thus not colored)
 - color of each invisible character replacements category:
     - dimmed whitespace: dim gray
     - trailing whitespace: bold red
@@ -431,16 +433,20 @@ Settings
   - within a commit: 0.5
 - embedded bidi support for RTL language on terminal that do not support it: auto (default), enable
   or disabled (using `unicode-bidi` + terminal detection for auto (and config suggestion for proper
-RTL support if auto is used and RTL languages are used))
+  RTL support if auto is used and RTL languages are used))
 
 Diff model
 ----------
+
+A hunk is a group of modified lines of a file, with the unchanged lines around them (the context),
+like the `@@` sections of `git diff`. Changes separated by few enough unchanged lines are in the
+same hunk.
 
 All the diff machinery is available as a standalone internal library: `reediif`
 - TODO: validate public interface (as long as this note is here, there is strictly ZERO backward
   compatibility promise, the goal is to refine the interface)
 
-A chunk is a list of lines, each one being either unchanged, removed, added or moved, with the line
+A hunk is a list of lines, each one being either unchanged, removed, added or moved, with the line
 number of its first line in the before and after version of the file matching the color of the
 background of that line.
 
@@ -537,10 +543,10 @@ Colorscheme
 - The colorscheme for syntax highlighting follows the current git colorscheme used by delta.
 - The line between commits is red (TODO: make it configurable, ideally re-use something from git
   colorscheme that would make sense)
-- `$hash`, `$author`, `$date`, $tags and `$branche` uses git coloration
+- `$hash`, `$author`, `$date`, `$tags` and `$branches` use git coloration
 - `$file` and the line just below share the same color (blue)
 - The `↵` marker of wrapped lines has the same color as `$line` (blue)
-- Replacements characters of invisible characters have 3 catégories:
+- Replacement characters of invisible characters have 3 categories:
     - dimmed whitespace: non-trailing spaces before a line wrap, non-trailing U+2800 at the end or
       at the beginning of a row because of a line wrap (except the only space or U+2800 around a
       line wrap, which is not displayed), and non-trailing tabs (including before a line wrap)
@@ -551,11 +557,11 @@ Line-level diff:
 - change the background color of the whole affected line (including leading and trailing
   whitespace)
 - moves are blue, move-copy are italic + dim blue, deletion red, addition green
-- monochrome use inverted display for all, move-copy are italic
+- monochrome uses inverted display for all, move-copy are italic
 
 Word-level diff:
-- light/dark theme use bold + another shade of the same background color
-- monochrome use underline
+- light/dark themes use bold + another shade of the same background color
+- monochrome uses underline
 
 Syntax highlighting:
 - per language syntax highlight
