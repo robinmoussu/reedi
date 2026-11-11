@@ -5,14 +5,11 @@ use std::process::Command;
 use std::process::Output;
 
 use gix::date::Time;
-use jiff::Timestamp;
+use gix::date::time::format;
 use jiff::Zoned;
-use jiff::tz::Offset;
-use jiff::tz::TimeZone;
 use tempfile::TempDir;
 
 use crate::date::Environment;
-use crate::gix_compat::date::RAW_FORMAT;
 use crate::gix_compat::locale::Locale;
 
 /// A new repository, and the environment `git` runs in. The configuration of the user is not
@@ -98,11 +95,7 @@ impl Git {
 
     /// A commit authored at `time`.
     pub fn commit_at(&self, time: Time) {
-        let offset = Offset::from_seconds(time.offset).unwrap();
-        let zoned = Timestamp::from_second(time.seconds)
-            .unwrap()
-            .to_zoned(TimeZone::fixed(offset));
-        self.commit_with_date(&zoned.strftime(RAW_FORMAT).to_string())
+        self.commit_with_date(&time.format(format::RAW).unwrap())
             .unwrap();
     }
 

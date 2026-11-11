@@ -7,7 +7,6 @@ use std::process::Command;
 use gix::date::Time;
 use jiff::Timestamp;
 use jiff::Zoned;
-use jiff::fmt::strtime;
 use jiff::tz::Offset;
 use jiff::tz::TimeZone;
 
@@ -22,9 +21,6 @@ pub enum DisplayedIn {
     /// The timezone of the current date (`-local`).
     LocalTimezone,
 }
-
-/// The `strftime` format of a date as git stores it (`--date=raw`): `1791808327 +0200`.
-pub const RAW_FORMAT: &str = "%s %z";
 
 /// `time` relative to `now`, like `git log --date=relative`: `3 hours ago`, translated with
 /// `locale`.
@@ -165,16 +161,7 @@ pub fn parse(input: &str, now: &Zoned) -> Option<Time> {
         &date,
     ])?;
     let output = git(&["log", "-1", "--format=%ad", "--date=raw"])?;
-    parse_raw(String::from_utf8(output.stdout).ok()?.trim_end())
-}
-
-/// `text`, a date as git stores it (see [`RAW_FORMAT`]).
-fn parse_raw(text: &str) -> Option<Time> {
-    let parsed = strtime::parse(RAW_FORMAT, text).ok()?;
-    Some(Time {
-        seconds: parsed.to_timestamp().ok()?.as_second(),
-        offset: parsed.offset()?.seconds(),
-    })
+    gix::date::parse_header(String::from_utf8(output.stdout).ok()?.trim_end())
 }
 
 /// The timezone of `now`, as a value of `TZ`: its IANA name, or a POSIX timezone with its fixed

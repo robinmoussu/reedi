@@ -5,6 +5,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use gix::date::Time;
+use gix::date::time::format as time_format;
 use jiff::Zoned;
 use jiff::tz::Offset;
 #[cfg(any(test, feature = "test-support"))]
@@ -12,7 +13,6 @@ use jiff::tz::TimeZone;
 
 use crate::gix_compat;
 use crate::gix_compat::date::DisplayedIn;
-use crate::gix_compat::date::RAW_FORMAT;
 use crate::gix_compat::date::to_zoned;
 use crate::gix_compat::locale::Locale;
 
@@ -202,25 +202,28 @@ pub fn parse(input: &str, now: &Zoned) -> Result<Time, DateParseError> {
 pub fn display(time: Time, format: &DateFormat, environment: &Environment) -> String {
     let now = &environment.now;
     let zoned = to_zoned(time, now, format.displayed_in);
+    // The formats of `gix` display a date with its own offset: this one is replaced by the offset
+    // of `zoned`, so that they also display the `-local` formats.
+    let displayed = Time::new(zoned.timestamp().as_second(), zoned.offset().seconds());
     // The names of the weekdays and months of `jiff` are in English, like the ones of git, which
     // never translates them.
     let formatted = |format: &str| zoned.strftime(format).to_string();
     match &format.style {
-        DateStyle::Unix => time.seconds.to_string(),
-        DateStyle::Raw => formatted(RAW_FORMAT),
+        DateStyle::Unix => time.format_or_unix(time_format::UNIX),
+        DateStyle::Raw => displayed.format_or_unix(time_format::RAW),
         DateStyle::Relative => gix_compat::date::relative(time, now, &environment.locale),
         DateStyle::Human => {
             gix_compat::date::human(time, now, format.displayed_in, &environment.locale)
         }
-        DateStyle::Short => formatted("%Y-%m-%d"),
-        DateStyle::Iso => formatted("%Y-%m-%d %H:%M:%S %z"),
+        DateStyle::Short => displayed.format_or_unix(time_format::SHORT),
+        DateStyle::Iso => displayed.format_or_unix(time_format::ISO8601),
         DateStyle::IsoStrict if zoned.offset() == Offset::UTC => formatted("%Y-%m-%dT%H:%M:%SZ"),
-        DateStyle::IsoStrict => formatted("%Y-%m-%dT%H:%M:%S%:z"),
-        DateStyle::Rfc => formatted("%a, %-d %b %Y %H:%M:%S %z"),
+        DateStyle::IsoStrict => displayed.format_or_unix(time_format::ISO8601_STRICT),
+        DateStyle::Rfc => displayed.format_or_unix(time_format::GIT_RFC2822),
         DateStyle::Default if format.displayed_in == DisplayedIn::LocalTimezone => {
             formatted("%a %b %-d %H:%M:%S %Y")
         }
-        DateStyle::Default => formatted("%a %b %-d %H:%M:%S %Y %z"),
+        DateStyle::Default => displayed.format_or_unix(time_format::DEFAULT),
         DateStyle::Strftime(pattern) => {
             environment
                 .locale
