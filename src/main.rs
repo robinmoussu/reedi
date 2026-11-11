@@ -10,10 +10,10 @@ use reedi::date::DateDisplay;
 use reedi::date::DateFormat;
 use reedi::date::Environment;
 use reedi::git;
-use reedi::gix_compat::locale::Locale;
 use reedi::settings::Settings;
 use reedi::theme;
 use reedi::theme::Theme;
+use reedi_gix_compat::locale::Locale;
 
 fn main() -> ExitCode {
     match run() {

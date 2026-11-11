@@ -97,7 +97,7 @@ mod tests {
 
     use super::*;
     use crate::date::DateStyle;
-    use crate::gix_compat::date::DisplayedIn;
+    use reedi_gix_compat::date::DisplayedIn;
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(["reedi"].iter().chain(args))

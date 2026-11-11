@@ -10,7 +10,7 @@ use std::ptr;
 
 use jiff::Zoned;
 
-use crate::gix_compat::date::DisplayedIn;
+use crate::date::DisplayedIn;
 
 /// The text domain of the translations of git.
 const GIT_TEXT_DOMAIN: &CStr = c"git";

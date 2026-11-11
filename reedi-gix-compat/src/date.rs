@@ -4,13 +4,13 @@
 
 use std::process::Command;
 
-use gix::date::Time;
+use gix_date::Time;
 use jiff::Timestamp;
 use jiff::Zoned;
 use jiff::tz::Offset;
 use jiff::tz::TimeZone;
 
-use crate::gix_compat::locale::Locale;
+use crate::locale::Locale;
 
 /// The timezone a date is displayed in, selected by the `-local` suffix of the date formats of
 /// git.
@@ -161,7 +161,7 @@ pub fn parse(input: &str, now: &Zoned) -> Option<Time> {
         &date,
     ])?;
     let output = git(&["log", "-1", "--format=%ad", "--date=raw"])?;
-    gix::date::parse_header(String::from_utf8(output.stdout).ok()?.trim_end())
+    gix_date::parse_header(String::from_utf8(output.stdout).ok()?.trim_end())
 }
 
 /// The timezone of `now`, as a value of `TZ`: its IANA name, or a POSIX timezone with its fixed

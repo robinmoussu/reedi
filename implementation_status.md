@@ -338,7 +338,7 @@ version 0.0.8: internal refactoring
    - [x] test data and test names
    - [x] comments
 
- - [ ] extract gix-compat into a new library, `reedi-gix-compat` (a workspace member at the root of
+ - [x] extract gix-compat into a new library, `reedi-gix-compat` (a workspace member at the root of
    the repository, with the same version as `reedi`, licensed `MIT OR Apache-2.0` like `gix`)
 
  - [ ] use a single `TAB_WIDTH` in the whole codebase

@@ -1,0 +1,12 @@
+[package]
+name = "reedi-gix-compat"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+gix-date = "0.18.0"
+jiff = "0.2.38"
+libc = "0.2.191"
+tempfile = "3.27.0"

@@ -7,10 +7,10 @@ use std::process::Output;
 use gix::date::Time;
 use gix::date::time::format;
 use jiff::Zoned;
+use reedi_gix_compat::locale::Locale;
 use tempfile::TempDir;
 
 use crate::date::Environment;
-use crate::gix_compat::locale::Locale;
 
 /// A new repository, and the environment `git` runs in. The configuration of the user is not
 /// read, so that the tests don't depend on it.

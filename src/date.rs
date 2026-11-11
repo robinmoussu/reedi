@@ -10,11 +10,9 @@ use jiff::Zoned;
 use jiff::tz::Offset;
 #[cfg(any(test, feature = "test-support"))]
 use jiff::tz::TimeZone;
-
-use crate::gix_compat;
-use crate::gix_compat::date::DisplayedIn;
-use crate::gix_compat::date::to_zoned;
-use crate::gix_compat::locale::Locale;
+use reedi_gix_compat::date::DisplayedIn;
+use reedi_gix_compat::date::to_zoned;
+use reedi_gix_compat::locale::Locale;
 
 /// Prefix of the date formats that depend on whether the output is a terminal.
 const AUTO_PREFIX: &str = "auto:";
@@ -195,7 +193,8 @@ fn snapshot_now() -> Zoned {
 /// `input`, parsed like `git commit --date` does. Relative dates (like `yesterday`) and dates
 /// without an offset are resolved with `now` and its timezone.
 pub fn parse(input: &str, now: &Zoned) -> Result<Time, DateParseError> {
-    gix_compat::date::parse(input, now).ok_or_else(|| DateParseError { input: input.to_string() })
+    reedi_gix_compat::date::parse(input, now)
+        .ok_or_else(|| DateParseError { input: input.to_string() })
 }
 
 /// `time`, displayed with `format` like `git log --date=` does.
@@ -211,9 +210,9 @@ pub fn display(time: Time, format: &DateFormat, environment: &Environment) -> St
     match &format.style {
         DateStyle::Unix => time.format_or_unix(time_format::UNIX),
         DateStyle::Raw => displayed.format_or_unix(time_format::RAW),
-        DateStyle::Relative => gix_compat::date::relative(time, now, &environment.locale),
+        DateStyle::Relative => reedi_gix_compat::date::relative(time, now, &environment.locale),
         DateStyle::Human => {
-            gix_compat::date::human(time, now, format.displayed_in, &environment.locale)
+            reedi_gix_compat::date::human(time, now, format.displayed_in, &environment.locale)
         }
         DateStyle::Short => displayed.format_or_unix(time_format::SHORT),
         DateStyle::Iso => displayed.format_or_unix(time_format::ISO8601),

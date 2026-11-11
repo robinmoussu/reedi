@@ -7,7 +7,6 @@ pub mod date;
 pub mod diff;
 pub mod fake;
 pub mod git;
-pub mod gix_compat;
 pub mod invisible;
 pub mod model;
 pub mod pairing;

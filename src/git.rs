@@ -75,8 +75,8 @@ mod tests {
     use super::*;
     use crate::date::DateStyle;
     use crate::date::display;
-    use crate::gix_compat::date::DisplayedIn;
     use crate::test_git::Git;
+    use reedi_gix_compat::date::DisplayedIn;
 
     /// `2026-10-12 14:32:07 +0200`.
     const TIME: Time = Time { seconds: 1_791_808_327, offset: 7200 };
