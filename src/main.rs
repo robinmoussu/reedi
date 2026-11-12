@@ -10,6 +10,7 @@ use reedi::date::DateDisplay;
 use reedi::date::DateFormat;
 use reedi::date::Environment;
 use reedi::git;
+use reedi::log;
 use reedi::settings::Settings;
 use reedi::theme;
 use reedi::theme::Theme;
@@ -27,8 +28,9 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    let commits = log::displayed_commits(&cli, &std::env::current_dir()?)?;
     let (settings, unknown_settings) = settings(&cli)?;
-    reedi::run(&settings, unknown_settings)?;
+    reedi::run(&commits, &settings, unknown_settings)?;
     Ok(())
 }
 

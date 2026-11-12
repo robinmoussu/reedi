@@ -7,10 +7,11 @@ pub mod date;
 pub mod fake;
 pub mod git;
 pub mod invisible;
+pub mod log;
 pub mod model;
 pub mod settings;
-#[cfg(test)]
-mod test_git;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_git;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 pub mod theme;

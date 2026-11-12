@@ -2,3 +2,5 @@
 
 pub mod date;
 pub mod locale;
+pub mod rebase;
+pub mod upstream;

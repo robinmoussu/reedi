@@ -16,7 +16,6 @@ use ratatui::crossterm::terminal::EnterAlternateScreen;
 
 use crate::config::UnknownSetting;
 use crate::date::DateDisplay;
-use crate::fake;
 use crate::model::Commit;
 use crate::settings::Settings;
 use crate::theme::Theme;
@@ -157,7 +156,7 @@ fn jump_unless_already_on(row_index: usize, viewport: &mut Viewport, len: usize,
     }
 }
 
-/// Display the commits with `settings` until `q` or `ctrl+c` is pressed, and the
+/// Display `commits` with `settings` until `q` or `ctrl+c` is pressed, and the
 /// `unknown_settings` of the config file (its path, and at least one setting) in an error modal
 /// over them, if any, until a key is pressed.
 ///
@@ -165,12 +164,12 @@ fn jump_unless_already_on(row_index: usize, viewport: &mut Viewport, len: usize,
 /// Fails if a text area outside of the hunks is too narrow to display a grapheme cluster of its
 /// line.
 pub fn run(
+    commits: &[Commit],
     settings: &Settings,
     unknown_settings: Option<(PathBuf, Vec<UnknownSetting>)>,
 ) -> io::Result<()> {
     let mut error_modal = unknown_settings
         .map(|(path, unknown_settings)| ErrorModal::UnknownSettings { path, unknown_settings });
-    let commits = fake::all();
     let mut rows = Vec::new();
     let mut size = None;
     let mut viewport = Viewport::default();
@@ -182,7 +181,7 @@ pub fn run(
             if size != Some(screen) {
                 if size.map(|size| size.width) != Some(screen.width) {
                     rows = rewrap(
-                        &commits,
+                        commits,
                         &rows,
                         &mut viewport,
                         screen.width,
@@ -197,7 +196,7 @@ pub fn run(
             terminal.draw(|frame| {
                 view::draw(
                     frame,
-                    &commits,
+                    commits,
                     &rows,
                     &mut viewport,
                     Mode::Review,
@@ -302,6 +301,7 @@ mod tests {
     use ratatui::crossterm::event::KeyEventKind;
 
     use super::*;
+    use crate::fake;
     use crate::test_support::header_row_indexes;
     use crate::test_support::rows_of;
     use crate::test_support::short_commits;

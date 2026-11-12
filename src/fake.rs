@@ -1,4 +1,4 @@
-//! Realistic fake data, used until real git data is read. It is read from the files of
+//! Realistic fake data, displayed by the `--fake` option. It is read from the files of
 //! `etc/fake_commits/`, embedded in the binary.
 
 mod loader;

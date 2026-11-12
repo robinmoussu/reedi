@@ -94,7 +94,7 @@ mod tests {
         if let Some(value) = value {
             git.set_config("log.date", value);
         }
-        let repository = gix::open_opts(git.path(), gix::open::Options::isolated()).unwrap();
+        let repository = git.repository();
         (git, repository)
     }
 

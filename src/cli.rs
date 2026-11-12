@@ -18,7 +18,7 @@ use crate::date::DateParseError;
 #[derive(Debug, Parser)]
 #[command(version)]
 pub struct Cli {
-    /// Display the fake commits (the default for now).
+    /// Display the fake commits instead of those of the repository.
     #[arg(long, hide = true)]
     pub fake: bool,
     /// The current date (any format of `git commit --date`), used by the `relative` and `human`

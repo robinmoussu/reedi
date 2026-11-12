@@ -34,6 +34,21 @@ pub enum DiffAs {
     Auto,
 }
 
+impl DiffAs {
+    /// How a file is diffed when its before and after versions are diffed as `before` and
+    /// `after`: like git, binary if either is, otherwise text if either is.
+    pub fn of_versions(before: DiffAs, after: DiffAs) -> DiffAs {
+        let versions = [before, after];
+        if versions.contains(&DiffAs::Binary) {
+            DiffAs::Binary
+        } else if versions.contains(&DiffAs::Text) {
+            DiffAs::Text
+        } else {
+            DiffAs::Auto
+        }
+    }
+}
+
 /// The modifications of a file from `before` to `after` (`None` if the file doesn't exist in that
 /// version), with `context` unchanged lines around the modified lines.
 ///
@@ -156,6 +171,23 @@ mod tests {
     use crate::model::LineKind::Added;
     use crate::model::LineKind::Removed;
     use crate::model::LineKind::Unchanged;
+
+    #[test]
+    fn diff_as_of_versions_is_binary_first_then_text() {
+        let cases = [
+            (DiffAs::Text, DiffAs::Binary, DiffAs::Binary),
+            (DiffAs::Binary, DiffAs::Auto, DiffAs::Binary),
+            (DiffAs::Auto, DiffAs::Text, DiffAs::Text),
+            (DiffAs::Auto, DiffAs::Auto, DiffAs::Auto),
+        ];
+        for (before, after, expected) in cases {
+            assert_eq!(
+                DiffAs::of_versions(before, after),
+                expected,
+                "{before:?} {after:?}"
+            );
+        }
+    }
 
     /// The tests of the context and of the separation of the hunks need 3 lines of context.
     const CONTEXT: usize = 3;

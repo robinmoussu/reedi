@@ -353,7 +353,7 @@ version 0.0.8: internal refactoring
 version 0.0.9: real data
 ------------------------
 
- - [ ] Display the same content as `$git log $base..HEAD -p --reverse`, where `$base` is:
+ - [x] Display the same content as `$git log $base..HEAD -p --reverse`, where `$base` is:
    - during a rebase, the commit the commits are replayed onto (`onto`)
    - otherwise, if HEAD is attached to `$current_branch` and that has its upstream set, the
      upstream (possibly a local branch)
@@ -386,7 +386,7 @@ version 0.0.9: real data
    - the short hash is the shortest unambiguous one, at least `core.abbrev` long
    - the subject and the body are those of `git log --pretty='%s'` and `--pretty='%b'`
    - in the metadata, the bytes that are not valid UTF-8 are replaced by `�`
- - [ ] `fake::all()` is only used by the `--fake` option, whose help doesn't say it's the default
+ - [x] `fake::all()` is only used by the `--fake` option, whose help doesn't say it's the default
    anymore
 
  - [ ] the data model uses the `gix` types instead of its own:

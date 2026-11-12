@@ -39,3 +39,20 @@ Parsing of dates
 - Replaced by: `src/date.rs`, which runs `git commit --date` in a temporary repository (with the
   current date and timezone in `GIT_TEST_DATE_NOW` and `TZ`), the only git command parsing dates
   this way, then reads the date of the commit
+
+The commit a rebase replays the commits onto
+--------------------------------------------
+
+- Used by: the commits displayed during a rebase (`onto..HEAD`)
+- Missing in `gix`: `gix::Repository::state()` tells that a rebase is in progress, but nothing
+  reads its state
+- Replaced by: `src/rebase.rs`, which reads `rebase-merge/onto` or `rebase-apply/onto` in the git
+  directory, like git
+
+Upstream that is a local branch
+-------------------------------
+
+- Used by: the commits displayed when the upstream of the current branch is a local branch
+- Missing in `gix`: `gix::Repository::branch_remote_tracking_ref_name()` looks for a remote named
+  `.` when `branch.<name>.remote = .`, finds none, and returns no upstream
+- Replaced by: `src/upstream.rs`, which returns `branch.<name>.merge` in that case, like git

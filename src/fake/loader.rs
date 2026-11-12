@@ -312,15 +312,8 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
     let files: Vec<FileDiff> = versions_by_id
         .values()
         .map(|versions| {
-            // Like git, the attributes of either version decide, binary first.
-            let declared = [diff_as_of(&versions.before), diff_as_of(&versions.after)];
-            let diff_as = if declared.contains(&DiffAs::Binary) {
-                DiffAs::Binary
-            } else if declared.contains(&DiffAs::Text) {
-                DiffAs::Text
-            } else {
-                DiffAs::Auto
-            };
+            let diff_as =
+                DiffAs::of_versions(diff_as_of(&versions.before), diff_as_of(&versions.after));
             diff::file(
                 /* before */ state(&versions.before, &versions.before_path),
                 /* after */ state(&versions.after, &versions.after_path),
