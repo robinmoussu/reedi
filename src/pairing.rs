@@ -11,11 +11,6 @@ use unicode_width::UnicodeWidthStr;
 use crate::model::DiffLine;
 use crate::model::Hunk;
 use crate::model::LineKind;
-use crate::settings::TAB_WIDTH;
-
-/// Maximum distance (between 0 and 1, see [`distance()`]) between a removed and an added line for
-/// them to be paired.
-const MAX_LINE_DISTANCE: f64 = 0.6;
 
 /// Lines are split into words (matching this regex), and the characters between them.
 static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\w+").expect("the regex is valid"));
@@ -38,7 +33,11 @@ pub struct Pair {
 /// unchanged lines are paired greedily: each removed line is paired with the first following added
 /// line that is similar enough, and the added lines skipped to find it are unpaired. A removed line
 /// with no similar added line is unpaired.
-pub fn pairs(hunk: &Hunk) -> Vec<Pair> {
+///
+/// Two lines are similar enough if their distance is at most `max_distance`: the distance is the
+/// proportion of their text that is modified, between 0 (identical) and 1 (nothing in common), with
+/// each tab counting as `tab_width` spaces.
+pub fn pairs(hunk: &Hunk, max_distance: f64, tab_width: usize) -> Vec<Pair> {
     let lines: Vec<_> = hunk.lines.iter().enumerate().collect();
     lines
         .chunk_by(|(_, a), (_, b)| {
@@ -59,6 +58,8 @@ pub fn pairs(hunk: &Hunk) -> Vec<Pair> {
                 &hunk.lines,
                 &indexes(LineKind::Removed),
                 &indexes(LineKind::Added),
+                max_distance,
+                tab_width,
             );
             unchanged.chain(modified)
         })
@@ -66,13 +67,19 @@ pub fn pairs(hunk: &Hunk) -> Vec<Pair> {
 }
 
 /// The rows displaying the `removed` and `added` lines (indexes in `lines`), see [`pairs()`].
-fn pair_modified(lines: &[DiffLine], removed: &[usize], added: &[usize]) -> Vec<Pair> {
+fn pair_modified(
+    lines: &[DiffLine],
+    removed: &[usize],
+    added: &[usize],
+    max_distance: f64,
+    tab_width: usize,
+) -> Vec<Pair> {
     let mut next = 0;
     let mut pairs: Vec<_> = removed
         .iter()
         .flat_map(|&before| {
             let similar = added[next..].iter().position(|&after| {
-                distance(&lines[before].text, &lines[after].text) <= MAX_LINE_DISTANCE
+                distance(&lines[before].text, &lines[after].text, tab_width) <= max_distance
             });
             let rows: Vec<_> = match similar {
                 Some(skipped) => added[next..next + skipped]
@@ -232,9 +239,9 @@ fn operations(x: &[&str], y: &[&str]) -> Vec<(Operation, usize)> {
 ///
 /// It is the width of the deleted and inserted text, divided by the width of all the text of both
 /// lines (ignoring the whitespace at the edges of each group of tokens). Each tab counts as
-/// [`TAB_WIDTH`] spaces.
-fn distance(before: &str, after: &str) -> f64 {
-    let prepare = |line: &str| line.replace('\t', &" ".repeat(TAB_WIDTH)) + "\n";
+/// `tab_width` spaces.
+fn distance(before: &str, after: &str, tab_width: usize) -> f64 {
+    let prepare = |line: &str| line.replace('\t', &" ".repeat(tab_width)) + "\n";
     let (before, after) = (prepare(before), prepare(after));
     let (x, y) = (tokenize(&before), tokenize(&after));
     let width = |tokens: &[&str]| tokens.concat().trim().width();
@@ -284,6 +291,13 @@ mod tests {
     use crate::model::LineKind::Removed;
     use crate::model::LineKind::Unchanged;
 
+    /// No line of these tests has a tab between non-whitespace characters, so the tab width doesn't
+    /// change their distances.
+    const TAB_WIDTH: usize = 4;
+
+    /// The lines of these tests are similar if at least half of their text is kept.
+    const MAX_DISTANCE: f64 = 0.5;
+
     fn line(kind: LineKind, text: &str) -> DiffLine {
         DiffLine {
             kind,
@@ -301,8 +315,11 @@ mod tests {
     }
 
     /// The pairs, as `(before, after)` tuples.
-    fn pairs_of(lines: &[(LineKind, &str)]) -> Vec<(Option<usize>, Option<usize>)> {
-        pairs(&hunk(lines))
+    fn pairs_of(
+        max_distance: f64,
+        lines: &[(LineKind, &str)],
+    ) -> Vec<(Option<usize>, Option<usize>)> {
+        pairs(&hunk(lines), max_distance, TAB_WIDTH)
             .into_iter()
             .map(|pair| (pair.before, pair.after))
             .collect()
@@ -317,26 +334,30 @@ mod tests {
 
     #[test]
     fn distance_of_identical_lines_is_zero() {
-        assert_eq!(distance("let a = b;", "let a = b;"), 0.0);
+        assert_eq!(distance("let a = b;", "let a = b;", TAB_WIDTH), 0.0);
         // Whitespace doesn't count.
-        assert_eq!(distance("a b", "a  b\t"), 0.0);
+        assert_eq!(distance("a b", "a  b\t", TAB_WIDTH), 0.0);
     }
 
     #[test]
     fn distance_of_lines_with_nothing_in_common_is_one() {
-        assert_eq!(distance("abc", "def"), 1.0);
+        assert_eq!(distance("abc", "def", TAB_WIDTH), 1.0);
     }
 
     #[test]
     fn distance_is_the_proportion_of_modified_text() {
         // `let ` and ` = 1;` are kept (3 + 4 columns, in both lines), `a` is replaced by `b`.
-        assert_eq!(distance("let a = 1;", "let b = 1;"), 2.0 / 16.0);
+        assert_eq!(distance("let a = 1;", "let b = 1;", TAB_WIDTH), 2.0 / 16.0);
     }
 
     #[test]
     fn unchanged_lines_are_paired_with_themselves() {
         assert_eq!(
-            pairs_of(&[(Unchanged, "a"), (Unchanged, "b")]),
+            // Even if no modification is similar enough.
+            pairs_of(
+                /* max_distance */ 0.0,
+                &[(Unchanged, "a"), (Unchanged, "b")]
+            ),
             [(Some(0), Some(0)), (Some(1), Some(1))]
         );
     }
@@ -344,14 +365,17 @@ mod tests {
     #[test]
     fn similar_lines_are_paired() {
         assert_eq!(
-            pairs_of(&[
-                (Unchanged, "fn a() {"),
-                (Removed, "    let x = 1;"),
-                (Removed, "    let y = 2;"),
-                (Added, "    let x = 10;"),
-                (Added, "    let y = 20;"),
-                (Unchanged, "}"),
-            ]),
+            pairs_of(
+                MAX_DISTANCE,
+                &[
+                    (Unchanged, "fn a() {"),
+                    (Removed, "    let x = 1;"),
+                    (Removed, "    let y = 2;"),
+                    (Added, "    let x = 10;"),
+                    (Added, "    let y = 20;"),
+                    (Unchanged, "}"),
+                ]
+            ),
             [
                 (Some(0), Some(0)),
                 (Some(1), Some(3)),
@@ -364,7 +388,7 @@ mod tests {
     #[test]
     fn dissimilar_lines_are_unpaired() {
         assert_eq!(
-            pairs_of(&[(Removed, "abc"), (Added, "def")]),
+            pairs_of(MAX_DISTANCE, &[(Removed, "abc"), (Added, "def")]),
             [(Some(0), None), (None, Some(1))]
         );
     }
@@ -372,12 +396,15 @@ mod tests {
     #[test]
     fn added_lines_skipped_to_find_a_similar_one_are_unpaired() {
         assert_eq!(
-            pairs_of(&[
-                (Removed, "let value = compute(input);"),
-                (Added, "// The input is validated first."),
-                (Added, "let value = compute(&input);"),
-                (Added, "return value;"),
-            ]),
+            pairs_of(
+                MAX_DISTANCE,
+                &[
+                    (Removed, "let value = compute(input);"),
+                    (Added, "// The input is validated first."),
+                    (Added, "let value = compute(&input);"),
+                    (Added, "return value;"),
+                ]
+            ),
             [(None, Some(1)), (Some(0), Some(2)), (None, Some(3))]
         );
     }
@@ -385,12 +412,16 @@ mod tests {
     #[test]
     fn removed_and_added_only_lines_are_unpaired() {
         assert_eq!(
-            pairs_of(&[
-                (Unchanged, "a"),
-                (Removed, "b"),
-                (Unchanged, "c"),
-                (Added, "d")
-            ]),
+            // Even if any two lines are similar enough.
+            pairs_of(
+                /* max_distance */ 1.0,
+                &[
+                    (Unchanged, "a"),
+                    (Removed, "b"),
+                    (Unchanged, "c"),
+                    (Added, "d")
+                ]
+            ),
             [
                 (Some(0), Some(0)),
                 (Some(1), None),

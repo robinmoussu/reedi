@@ -36,6 +36,8 @@ use crate::model::Hunk;
 use crate::model::LineKind;
 use crate::model::LineNumbers;
 use crate::pairing;
+use crate::settings::MAX_PAIRING_DISTANCE;
+use crate::settings::TAB_WIDTH;
 use crate::theme::Theme;
 use crate::viewport::Viewport;
 use crate::wrap;
@@ -603,7 +605,8 @@ impl<'a> Rows<'a> {
     fn hunk(&mut self, hunk: &Hunk, final_cr: FinalCr) -> Result<(), TooNarrow> {
         // Each pair of lines displayed side by side is a line (see `Row::line_index`), and so is
         // `MISSING_NEWLINE`.
-        let len = pairing::pairs(hunk).len() + usize::from(missing_newline_kind(hunk).is_some());
+        let len = pairing::pairs(hunk, MAX_PAIRING_DISTANCE, TAB_WIDTH).len()
+            + usize::from(missing_newline_kind(hunk).is_some());
         match self.hunk_rows(hunk, final_cr) {
             Ok(rows) => {
                 self.rows.extend(rows);
@@ -640,7 +643,7 @@ impl<'a> Rows<'a> {
                 )
             })
         };
-        let mut lines = pairing::pairs(hunk)
+        let mut lines = pairing::pairs(hunk, MAX_PAIRING_DISTANCE, TAB_WIDTH)
             .into_iter()
             .map(|pair| {
                 let left = half(pair.before, |numbers| numbers.before, left_width)?;

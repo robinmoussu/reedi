@@ -17,9 +17,6 @@ use crate::model::FileDiff;
 use crate::model::Hunk;
 use crate::model::LineKind;
 
-/// Number of unchanged lines displayed before and after the modified lines.
-pub const CONTEXT: usize = 3;
-
 /// The path and content of a file, before or after a commit.
 #[derive(Debug, Clone, Copy)]
 pub struct FileState<'a> {
@@ -159,6 +156,9 @@ mod tests {
     use crate::model::LineKind::Added;
     use crate::model::LineKind::Removed;
     use crate::model::LineKind::Unchanged;
+
+    /// The tests of the context and of the separation of the hunks need 3 lines of context.
+    const CONTEXT: usize = 3;
 
     fn state<'a>(path: &'a str, content: &'a str) -> Option<FileState<'a>> {
         Some(FileState {

@@ -1,7 +1,6 @@
 //! Position of the cursor and of the screen in the displayed rows.
 
-/// Minimal number of rows kept between the cursor and the top/bottom of the screen.
-const SCROLLOFF: usize = 5;
+use crate::settings::SCROLLOFF;
 
 /// Minimal number of rows kept between the cursor and the top/bottom of a screen `height` rows
 /// tall, which is smaller on a small screen.

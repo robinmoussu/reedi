@@ -19,6 +19,7 @@ use crate::diff::FileState;
 use crate::model::Commit;
 use crate::model::Decoration;
 use crate::model::FileDiff;
+use crate::settings::CONTEXT;
 
 /// The name of the file of a fake commit holding everything but its files.
 pub const METADATA_FILE: &str = "metadata.toml";
@@ -324,7 +325,7 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
                 /* before */ state(&versions.before, &versions.before_path),
                 /* after */ state(&versions.after, &versions.after_path),
                 diff_as,
-                diff::CONTEXT,
+                CONTEXT,
             )
         })
         .collect();

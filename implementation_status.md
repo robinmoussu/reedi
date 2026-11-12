@@ -343,7 +343,7 @@ version 0.0.8: internal refactoring
 
  - [x] use a single `TAB_WIDTH` in the whole codebase
 
- - [ ] every constant that will eventually become a setting should be defined in `settings.rs`
+ - [x] every constant that will eventually become a setting should be defined in `settings.rs`
 
  - [ ] extract diff machinery into a new library, `reediif` (a workspace member at the root of the
    repository, with the same version as `reedi`, licensed `GPL-3.0-or-later` like `reedi`)
