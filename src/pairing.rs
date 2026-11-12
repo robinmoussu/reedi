@@ -1,5 +1,5 @@
-//! Pairing of the removed and added lines of a hunk, like `delta` (with its default settings)
-//! does: a removed line is displayed next to an added line only if they are similar enough.
+//! Pairing of the removed and added lines of a hunk, similar to what `delta` does: a removed line
+//! is displayed next to an added line only if they are similar enough.
 
 use std::iter;
 use std::sync::LazyLock;
@@ -11,6 +11,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::model::DiffLine;
 use crate::model::Hunk;
 use crate::model::LineKind;
+use crate::settings::TAB_WIDTH;
 
 /// Maximum distance (between 0 and 1, see [`distance()`]) between a removed and an added line for
 /// them to be paired.
@@ -18,9 +19,6 @@ const MAX_LINE_DISTANCE: f64 = 0.6;
 
 /// Lines are split into words (matching this regex), and the characters between them.
 static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\w+").expect("the regex is valid"));
-
-/// Before computing the distance between two lines, each tab is replaced by this many spaces.
-const TAB_WIDTH: usize = 8;
 
 const DELETION_COST: usize = 2;
 const INSERTION_COST: usize = 2;
@@ -233,7 +231,8 @@ fn operations(x: &[&str], y: &[&str]) -> Vec<(Operation, usize)> {
 /// The distance between `before` and `after`, between 0 (identical) and 1 (nothing in common).
 ///
 /// It is the width of the deleted and inserted text, divided by the width of all the text of both
-/// lines (ignoring the whitespace at the edges of each group of tokens).
+/// lines (ignoring the whitespace at the edges of each group of tokens). Each tab counts as
+/// [`TAB_WIDTH`] spaces.
 fn distance(before: &str, after: &str) -> f64 {
     let prepare = |line: &str| line.replace('\t', &" ".repeat(TAB_WIDTH)) + "\n";
     let (before, after) = (prepare(before), prepare(after));

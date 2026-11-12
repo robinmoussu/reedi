@@ -9,8 +9,7 @@ use icu_properties::props::ExtendedPictographic;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// Number of columns between two tab stops.
-const TAB_WIDTH: usize = 4;
+use crate::settings::TAB_WIDTH;
 
 /// Replacement of a tab, followed by spaces up to the next tab stop.
 const TAB: char = '⇥';
