@@ -19,6 +19,14 @@ use ratatui::widgets::BorderType;
 use ratatui::widgets::Clear;
 use ratatui::widgets::Padding;
 use ratatui::widgets::Widget;
+use reediif::model::DiffLine;
+use reediif::model::FileChange;
+use reediif::model::FileContentType;
+use reediif::model::FileDiff;
+use reediif::model::Hunk;
+use reediif::model::LineKind;
+use reediif::model::LineNumbers;
+use reediif::pairing;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
@@ -28,14 +36,6 @@ use crate::invisible::FinalCr;
 use crate::invisible::Kind;
 use crate::model::Commit;
 use crate::model::Decoration;
-use crate::model::DiffLine;
-use crate::model::FileChange;
-use crate::model::FileContentType;
-use crate::model::FileDiff;
-use crate::model::Hunk;
-use crate::model::LineKind;
-use crate::model::LineNumbers;
-use crate::pairing;
 use crate::settings::MAX_PAIRING_DISTANCE;
 use crate::settings::TAB_WIDTH;
 use crate::theme::Theme;
@@ -403,11 +403,22 @@ fn line_style(kind: LineKind, theme: &Theme) -> Style {
 }
 
 /// The kind of the line of `hunk` that is the last one of a version of the file not ending with a
-/// newline, while the other version does (see [`Hunk::shows_missing_newline()`]), if any.
+/// newline, while the other version does (see [`Hunk::has_newline_mismatch()`]), if any.
 fn missing_newline_kind(hunk: &Hunk) -> Option<LineKind> {
     (0..hunk.lines.len())
-        .find(|&index| hunk.shows_missing_newline(index))
+        .find(|&index| hunk.has_newline_mismatch(index))
         .map(|index| hunk.lines[index].kind)
+}
+
+/// Number of digits needed to display all the line numbers of `hunk`.
+fn line_number_width(hunk: &Hunk) -> usize {
+    let largest = hunk
+        .line_numbers()
+        .into_iter()
+        .flat_map(|numbers| numbers.before.into_iter().chain(numbers.after))
+        .max()
+        .unwrap_or(0);
+    largest.to_string().len()
 }
 
 /// The style of the number of a line of `kind`.
@@ -628,7 +639,7 @@ impl<'a> Rows<'a> {
     /// If a version of the file doesn't end with a newline, but the other one does, they are
     /// followed by `MISSING_NEWLINE`, in the half of this version.
     fn hunk_rows(&self, hunk: &Hunk, final_cr: FinalCr) -> Result<Vec<Row>, TooNarrow> {
-        let number_width = hunk.line_number_width();
+        let number_width = line_number_width(hunk);
         let numbers = hunk.line_numbers();
         let (left_width, right_width) = split_in_half::<usize>(self.width);
         let half = |index: Option<usize>, number: fn(&LineNumbers) -> Option<usize>, width| {
@@ -1060,6 +1071,8 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::style::Color;
     use ratatui::style::Modifier;
+    use reediif::test_support::line;
+    use reediif::test_support::unchanged;
 
     use super::*;
     use crate::fake;
@@ -1607,14 +1620,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn line_number_width_fits_last_line() {
+        assert_eq!(
+            line_number_width(&unchanged(/* first_line */ 5, /* len */ 5)),
+            1
+        );
+        assert_eq!(
+            line_number_width(&unchanged(/* first_line */ 5, /* len */ 6)),
+            2
+        );
+    }
+
+    #[test]
+    fn line_number_width_uses_the_largest_version() {
+        let mut hunk = unchanged(/* first_line */ 95, /* len */ 3);
+        hunk.after_first_line = 98;
+        assert_eq!(line_number_width(&hunk), 3);
+        let mut hunk = unchanged(/* first_line */ 98, /* len */ 3);
+        hunk.after_first_line = 95;
+        assert_eq!(line_number_width(&hunk), 3);
+    }
+
     /// A hunk replacing the line `before` by the line `after`, displayed side by side if they are
     /// similar enough.
     fn hunk(before: &str, after: &str) -> Hunk {
-        let line = |kind, text: &str| DiffLine {
-            kind,
-            text: text.to_string(),
-            missing_newline: false,
-        };
         Hunk {
             before_first_line: 1,
             after_first_line: 1,

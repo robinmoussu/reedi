@@ -102,13 +102,13 @@ pub fn ltr_then_rtl_summary() -> Commit {
 
 #[cfg(test)]
 mod tests {
+    use reediif::model::FileChange;
+    use reediif::model::FileContentType;
+    use reediif::model::LineKind;
     use unicode_bidi::BidiClass;
     use unicode_bidi::bidi_class;
 
     use super::*;
-    use crate::model::FileChange;
-    use crate::model::FileContentType;
-    use crate::model::LineKind;
 
     #[test]
     fn folders_are_numbered_from_00_without_gap() {

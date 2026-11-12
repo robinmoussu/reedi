@@ -345,7 +345,7 @@ version 0.0.8: internal refactoring
 
  - [x] every constant that will eventually become a setting should be defined in `settings.rs`
 
- - [ ] extract diff machinery into a new library, `reediif` (a workspace member at the root of the
+ - [x] extract diff machinery into a new library, `reediif` (a workspace member at the root of the
    repository, with the same version as `reedi`, licensed `GPL-3.0-or-later` like `reedi`)
    - `reediif`: diff computation, the pairing and the diff data model
    - `reedi`: settings and display (line number width, number of context lines)

@@ -4,12 +4,10 @@ mod app;
 pub mod cli;
 pub mod config;
 pub mod date;
-pub mod diff;
 pub mod fake;
 pub mod git;
 pub mod invisible;
 pub mod model;
-pub mod pairing;
 pub mod settings;
 #[cfg(test)]
 mod test_git;

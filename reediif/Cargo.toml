@@ -1,0 +1,17 @@
+[package]
+name = "reediif"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "GPL-3.0-or-later"
+
+[dependencies]
+bstr = "1.13.1"
+gix-imara-diff = "0.3.1"
+regex = "1.13.1"
+unicode-segmentation = "1.13.3"
+unicode-width = "0.2.2"
+
+[features]
+# The items that only the tests use, so that the tests of `reedi` can use them too.
+test-support = []

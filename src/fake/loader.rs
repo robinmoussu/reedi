@@ -10,15 +10,15 @@ use gix::bstr::BStr;
 use gix::date::Time;
 use include_dir::Dir;
 use include_dir::include_dir;
+use reediif::diff;
+use reediif::diff::DiffAs;
+use reediif::diff::FileState;
+use reediif::model::FileDiff;
 use serde::Deserialize;
 
 use crate::date::DateParseError;
-use crate::diff;
-use crate::diff::DiffAs;
-use crate::diff::FileState;
 use crate::model::Commit;
 use crate::model::Decoration;
-use crate::model::FileDiff;
 use crate::settings::CONTEXT;
 
 /// The name of the file of a fake commit holding everything but its files.
@@ -370,9 +370,9 @@ pub fn embedded() -> Vec<Folder<'static>> {
 mod tests {
     use super::*;
     use crate::model::Decoration;
-    use crate::model::FileChange;
-    use crate::model::FileContentType;
     use gix::date::Time;
+    use reediif::model::FileChange;
+    use reediif::model::FileContentType;
 
     const HASH: &str = "0123456789abcdef0123456789abcdef01234567";
 

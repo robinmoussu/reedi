@@ -3,12 +3,12 @@
 use std::ops::Range;
 use std::str;
 
-use gix::bstr::BStr;
-use gix::diff::blob::Algorithm;
-use gix::diff::blob::Diff;
-use gix::diff::blob::InternedInput;
-use gix::diff::blob::Token;
-use gix::diff::blob::sources;
+use bstr::BStr;
+use gix_imara_diff::Algorithm;
+use gix_imara_diff::Diff;
+use gix_imara_diff::InternedInput;
+use gix_imara_diff::Token;
+use gix_imara_diff::sources;
 
 use crate::model::DiffLine;
 use crate::model::FileChange;
@@ -116,9 +116,9 @@ fn hunks(before: &str, after: &str, context: usize) -> Vec<Hunk> {
             .map(move |token| line(token, kind))
     };
     let unchanged = |range: Range<u32>| lines(range, LineKind::Unchanged);
-    // What `gix` calls a hunk is a single run of removed and added lines, without context: what git
-    // calls a change (`xdchange_t`). The definition we use for `Hunk`, like the hunks of git,
-    // groups several changes with the unchanged lines around them.
+    // What `gix-imara-diff` calls a hunk is a single run of removed and added lines, without
+    // context: what git calls a change (`xdchange_t`). The definition we use for `Hunk`, like the
+    // hunks of git, groups several changes with the unchanged lines around them.
     let changes: Vec<_> = diff.hunks().collect();
     let before_len = input.before.len() as u32;
     let context = context as u32;

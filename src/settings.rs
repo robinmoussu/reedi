@@ -9,7 +9,7 @@ pub const TAB_WIDTH: usize = 4;
 /// Number of unchanged lines displayed before and after the modified lines.
 pub const CONTEXT: usize = 3;
 
-/// Maximum distance (between 0 and 1, see [`crate::pairing::pairs()`]) between a removed and an
+/// Maximum distance (between 0 and 1, see [`reediif::pairing::pairs()`]) between a removed and an
 /// added line for them to be displayed side by side.
 pub const MAX_PAIRING_DISTANCE: f64 = 0.6;
 

@@ -290,6 +290,7 @@ mod tests {
     use crate::model::LineKind::Added;
     use crate::model::LineKind::Removed;
     use crate::model::LineKind::Unchanged;
+    use crate::test_support::line;
 
     /// No line of these tests has a tab between non-whitespace characters, so the tab width doesn't
     /// change their distances.
@@ -297,14 +298,6 @@ mod tests {
 
     /// The lines of these tests are similar if at least half of their text is kept.
     const MAX_DISTANCE: f64 = 0.5;
-
-    fn line(kind: LineKind, text: &str) -> DiffLine {
-        DiffLine {
-            kind,
-            text: text.to_string(),
-            missing_newline: false,
-        }
-    }
 
     fn hunk(lines: &[(LineKind, &str)]) -> Hunk {
         Hunk {
