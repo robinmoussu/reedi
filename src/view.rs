@@ -1091,6 +1091,8 @@ mod tests {
     use super::*;
     use crate::fake;
     use crate::test_support::backend_without_left_to_right_marks;
+    use crate::test_support::file_at;
+    use crate::test_support::file_at_mut;
     use crate::test_support::header_row_indexes;
     use crate::test_support::revisions_of;
     use crate::test_support::rows_of;
@@ -1625,7 +1627,7 @@ mod tests {
         let commit = fake::scrolloff_rename();
         for theme in &themes() {
             let rows = Rows::new(/* width */ 110, theme, &DateDisplay::for_snapshots())
-                .hunk_rows(&commit.files[0].hunks[1], FinalCr::Hidden)
+                .hunk_rows(&file_at(&commit, "src/config.rs").hunks[1], FinalCr::Hidden)
                 .unwrap();
             let Content::Split { left, right } = &rows[0].content else {
                 panic!("hunk rows are split");
@@ -2044,7 +2046,8 @@ mod tests {
         // The first line of the body.
         assert_eq!(rows[3].line_index, rows[4].line_index);
         let mut commit = fake::scrolloff_rename();
-        commit.files[0].path = "src/a/very/long/path/to/the/config.rs".into();
+        file_at_mut(&mut commit, "src/config.rs").path =
+            "src/a/very/long/path/to/the/config.rs".into();
         let rows = commit_rows(&commit, /* width */ 20, &Theme::monochrome());
         let names: Vec<_> = rows
             .iter()
@@ -2123,7 +2126,7 @@ mod tests {
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
         )
-        .hunk(&commit.files[0].hunks[0], FinalCr::Hidden)
+        .hunk(&file_at(&commit, "src/config.rs").hunks[0], FinalCr::Hidden)
         .unwrap_err();
         assert_eq!(error.width, 0);
     }
@@ -2240,7 +2243,7 @@ mod tests {
     #[test]
     fn rules_and_file_name_are_colored() {
         let commits = [fake::scrolloff_rename()];
-        let path = commits[0].files[0].path.to_string();
+        let path = file_at(&commits[0], "src/config.rs").path.to_string();
         for theme in &themes() {
             let screen_rows = screen_rows(&commits, theme);
             let backend = render_on_a_single_screen(&commits, theme);
@@ -2796,7 +2799,7 @@ mod tests {
             };
             assert_eq!(style_in(body, "⍽"), theme.invisible);
             assert_eq!(style_in(body, "∙"), theme.trailing_whitespace);
-            let makefile = file_rows(&commit.files[2], /* width */ 110, theme);
+            let makefile = file_rows(file_at(&commit, "Makefile"), /* width */ 110, theme);
             let Content::Split { right, .. } = &makefile[7].content else {
                 panic!("hunk rows are split");
             };
@@ -2817,7 +2820,11 @@ mod tests {
     #[test]
     fn tab_stops_are_counted_from_the_beginning_of_the_code() {
         let commit = fake::invisible_characters();
-        let makefile = file_rows(&commit.files[2], /* width */ 110, &Theme::monochrome());
+        let makefile = file_rows(
+            file_at(&commit, "Makefile"),
+            /* width */ 110,
+            &Theme::monochrome(),
+        );
         // `CFLAGS` is 6 columns wide, the next tab stop is at column 8.
         assert_eq!(text_of_row(&makefile[3]).1, "│ 1 │ CFLAGS⇥ = -O2");
     }
@@ -2825,7 +2832,11 @@ mod tests {
     #[test]
     fn carriage_returns_are_hidden_when_line_endings_are_consistent() {
         let commit = fake::invisible_characters();
-        let emoji = file_rows(&commit.files[1], /* width */ 110, &Theme::monochrome());
+        let emoji = file_rows(
+            file_at(&commit, "tests/fixtures/emoji.rs"),
+            /* width */ 110,
+            &Theme::monochrome(),
+        );
         let (left, right) = row_starting_with(&emoji, "│ 7 │");
         assert_eq!(left, "│ 7 │ const JOINED: &str = \"ab\";");
         assert_eq!(right, "│ 7 │ const JOINED: &str = \"a⌁b⌁\";");
@@ -2834,7 +2845,11 @@ mod tests {
     #[test]
     fn carriage_returns_are_shown_when_line_endings_are_inconsistent() {
         let commit = fake::invisible_characters();
-        let script = file_rows(&commit.files[3], /* width */ 110, &Theme::monochrome());
+        let script = file_rows(
+            file_at(&commit, "scripts/build.bat"),
+            /* width */ 110,
+            &Theme::monochrome(),
+        );
         let (left, right) = row_starting_with(&script, "│ 3 │");
         assert_eq!(left, "│ 3 │ exit /b 0␍");
         assert_eq!(right, "│ 3 │ exit /b 0");
@@ -2853,9 +2868,9 @@ mod tests {
     #[test]
     fn invisible_characters_of_the_file_name_are_replaced() {
         let mut commit = fake::invisible_characters();
-        commit.files[0].path = "a\u{a0}b".into();
+        file_at_mut(&mut commit, "tests/fixtures/lookalike.rs").path = "a\u{a0}b".into();
         let rows = commit_rows(&commit, /* width */ 110, &Theme::monochrome());
-        assert_eq!(text_of_row(&rows[5]).0, "a⍽b");
+        assert!(rows.iter().any(|row| text_of_row(row).0 == "a⍽b"));
     }
 
     /// The position of the top left corner of the error modal displayed on `backend`.

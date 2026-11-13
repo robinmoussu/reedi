@@ -109,6 +109,8 @@ mod tests {
     use unicode_bidi::bidi_class;
 
     use super::*;
+    use crate::test_support::file_at;
+    use crate::test_support::single;
 
     #[test]
     fn folders_are_numbered_from_00_without_gap() {
@@ -249,7 +251,8 @@ mod tests {
 
     #[test]
     fn some_lines_are_only_removed_or_only_added() {
-        let release = &file_changes().files[0];
+        let commit = file_changes();
+        let release = file_at(&commit, "src/release.rs");
         let kinds = |hunk: usize| -> Vec<_> {
             release.hunks[hunk]
                 .lines
@@ -264,10 +267,12 @@ mod tests {
 
     #[test]
     fn some_files_have_no_newline_at_their_end() {
-        let files = file_changes().files;
+        let commit = file_changes();
         let missing = |path: &str| -> Vec<_> {
-            let file = files.iter().find(|file| file.path == path).unwrap();
-            let lines = file.hunks.iter().flat_map(|hunk| &hunk.lines);
+            let lines = file_at(&commit, path)
+                .hunks
+                .iter()
+                .flat_map(|hunk| &hunk.lines);
             lines
                 .filter(|line| line.missing_newline)
                 .map(|line| line.kind)
@@ -368,8 +373,7 @@ mod tests {
             rtl_then_ltr_summary(),
             ltr_then_rtl_summary(),
         ] {
-            assert_eq!(commit.files.len(), 1, "{}", commit.subject);
-            let file = &commit.files[0];
+            let file = single(&commit.files);
             assert_eq!(file.hunks.len(), 1, "{}", commit.subject);
             let lines = &file.hunks[0].lines;
             let kinds: Vec<_> = lines.iter().map(|line| line.kind).collect();

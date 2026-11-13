@@ -356,6 +356,8 @@ pub fn embedded() -> Vec<Folder<'static>> {
 mod tests {
     use super::*;
     use crate::model::Decoration;
+    use crate::test_support::file_at;
+    use crate::test_support::single;
     use gix::date::Time;
     use reediif::model::FileChange;
     use reediif::model::FileContentType;
@@ -577,7 +579,10 @@ mod tests {
             ("01_after_a.txt", b"one\r\ntwo"),
         ];
         let commit = load(&metadata(""), files).unwrap();
-        let lines = commit.files[0].hunks.iter().flat_map(|hunk| &hunk.lines);
+        let lines = single(&commit.files)
+            .hunks
+            .iter()
+            .flat_map(|hunk| &hunk.lines);
         assert!(lines.clone().any(|line| line.text.ends_with('\r')));
         assert!(lines.clone().any(|line| line.missing_newline));
     }
@@ -640,14 +645,14 @@ mod tests {
                 FileContentType::Text
             ]
         );
-        assert!(commit.files[0].hunks.is_empty());
+        assert!(file_at(&commit, "a.dat").hunks.is_empty());
     }
 
     #[test]
     fn files_with_a_nul_byte_are_binary_without_gitattributes() {
         let files: &[(&str, &[u8])] = &[("01_after_a.dat", b"a\0b\n")];
         let commit = load(&metadata(""), files).unwrap();
-        assert_eq!(commit.files[0].content, FileContentType::Binary);
+        assert_eq!(single(&commit.files).content, FileContentType::Binary);
     }
 
     #[test]
@@ -655,14 +660,14 @@ mod tests {
         let files: &[(&str, &[u8])] = &[("01_after_a.txt", b"a\0b\n")];
         let extra = "[gitattributes]\n\"01_after_a.txt\" = \"diff\"\n";
         let commit = load(&metadata(extra), files).unwrap();
-        assert_eq!(commit.files[0].content, FileContentType::Text);
+        assert_eq!(single(&commit.files).content, FileContentType::Text);
     }
 
     #[test]
     fn files_that_are_not_utf8_are_reported_as_such() {
         let files: &[(&str, &[u8])] = &[("01_after_a.txt", b"caf\xe9\n")];
         let commit = load(&metadata(""), files).unwrap();
-        assert_eq!(commit.files[0].content, FileContentType::InvalidUtf8);
+        assert_eq!(single(&commit.files).content, FileContentType::InvalidUtf8);
     }
 
     #[test]

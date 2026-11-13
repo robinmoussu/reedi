@@ -3,6 +3,7 @@
 use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
+use reediif::model::FileDiff;
 
 use crate::config::UnknownSetting;
 use crate::date::DateDisplay;
@@ -23,6 +24,32 @@ pub fn short_commits() -> [Commit; 3] {
         fake::rtl_summary(),
         fake::rtl_then_ltr_summary(),
     ]
+}
+
+/// The only item of `items`.
+pub fn single<T>(items: &[T]) -> &T {
+    let [item] = items else {
+        panic!("{} items instead of 1", items.len());
+    };
+    item
+}
+
+/// The file of `commit` at `path`.
+pub fn file_at<'a>(commit: &'a Commit, path: &str) -> &'a FileDiff {
+    commit
+        .files
+        .iter()
+        .find(|file| file.path == path)
+        .unwrap_or_else(|| panic!("{path} is not a file of {}", commit.subject))
+}
+
+/// The file of `commit` at `path`, to modify it.
+pub fn file_at_mut<'a>(commit: &'a mut Commit, path: &str) -> &'a mut FileDiff {
+    commit
+        .files
+        .iter_mut()
+        .find(|file| file.path == path)
+        .unwrap_or_else(|| panic!("{path} is not a file of the commit"))
 }
 
 /// The revisions displaying `commits`.

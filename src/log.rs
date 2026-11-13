@@ -570,6 +570,7 @@ mod tests {
     use crate::test_git::BRANCH;
     use crate::test_git::Git;
     use crate::test_git::RebaseBackend;
+    use crate::test_support::single;
 
     /// A branch in parallel with `BRANCH`.
     const SIDE_BRANCH: &str = "side";
@@ -589,14 +590,6 @@ mod tests {
                 Revision::Commit(commit) => commit,
             })
             .collect()
-    }
-
-    /// The only item of `items`.
-    fn single<T>(items: &[T]) -> &T {
-        let [item] = items else {
-            panic!("{} items instead of 1", items.len());
-        };
-        item
     }
 
     /// The parallel branches have interleaved dates, so that the order of `git log` (by date)
