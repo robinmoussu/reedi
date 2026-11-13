@@ -389,10 +389,7 @@ version 0.0.9: real data
  - [x] `fake::all()` is only used by the `--fake` option, whose help doesn't say it's the default
    anymore
 
- - [ ] the data model uses the `gix` types instead of its own:
-   - the hash of a commit and the length of its short form: `gix::ObjectId` and
-     `gix::hash::Prefix`
-   - the decorations: `gix::refs::Category`
+ - [x] the data model uses `gix::ObjectId` instead of its own type for the hash of a commit
 
 version 0.0.x: commit creation
 ------------------------------

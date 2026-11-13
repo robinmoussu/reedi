@@ -6,6 +6,7 @@ use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt;
 
+use gix::ObjectId;
 use gix::bstr::BStr;
 use gix::date::Time;
 use include_dir::Dir;
@@ -31,9 +32,6 @@ const DATE_FORMAT: &str = "%Y-%m-%d %H:%M:%S %z";
 /// The number of digits of the index starting the names of the folders and files of the fake
 /// commits (`01_`).
 const INDEX_DIGITS_COUNT: usize = 2;
-
-/// The number of hexadecimal characters of a full hash (SHA-1).
-const HASH_LEN: usize = 40;
 
 /// The attributes of `.gitattributes` that make a file binary.
 const BINARY_ATTRIBUTES: [&str; 2] = ["binary", "-diff"];
@@ -289,13 +287,8 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
     let invalid = |reason: String| FakeDataError::InvalidMetadata(reason);
     let text = std::str::from_utf8(metadata.content).map_err(|error| invalid(error.to_string()))?;
     let metadata: Metadata = toml::from_str(text).map_err(|error| invalid(error.to_string()))?;
-    if metadata.hash.len() != HASH_LEN
-        || !metadata.hash.bytes().all(|byte| byte.is_ascii_hexdigit())
-    {
-        return Err(invalid(format!(
-            "the hash must have {HASH_LEN} hexadecimal characters"
-        )));
-    }
+    let hash =
+        ObjectId::from_hex(metadata.hash.as_bytes()).map_err(|error| invalid(error.to_string()))?;
     let date = parse_date(&metadata.date)?;
     if let Some(unknown) = metadata
         .gitattributes
@@ -323,7 +316,7 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
         })
         .collect();
     Ok(Commit {
-        hash: metadata.hash,
+        hash,
         hash_abbrev_len: HASH_ABBREV_LEN,
         subject: metadata.subject,
         author: metadata.author,
@@ -467,8 +460,8 @@ mod tests {
                      tags = [\"v1.0\"]\n\
                      remote_branches = [\"origin/main\"]\n";
         let commit = load(&metadata(extra), &[]).unwrap();
-        assert_eq!(commit.hash, HASH);
-        assert_eq!(commit.hash_abbrev_len, HASH_ABBREV_LEN);
+        assert_eq!(commit.hash.to_string(), HASH);
+        assert_eq!(commit.short_hash().to_string(), &HASH[..HASH_ABBREV_LEN]);
         assert_eq!(commit.author, "Alice Martin");
         assert_eq!(commit.email, "alice.martin@example.org");
         assert_eq!(commit.subject, "config: rename");

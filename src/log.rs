@@ -361,7 +361,7 @@ fn commit(
         files_of(repository, &commit, attributes)?
     };
     Ok(Commit {
-        hash: id.to_string(),
+        hash: id,
         hash_abbrev_len: id
             .attach(repository)
             .shorten()
@@ -570,8 +570,11 @@ mod tests {
     /// A branch in parallel with `BRANCH`.
     const SIDE_BRANCH: &str = "side";
 
-    fn hashes(commits: &[Commit]) -> Vec<&str> {
-        commits.iter().map(|commit| commit.hash.as_str()).collect()
+    fn hashes(commits: &[Commit]) -> Vec<String> {
+        commits
+            .iter()
+            .map(|commit| commit.hash.to_string())
+            .collect()
     }
 
     /// The only item of `items`.
@@ -696,8 +699,8 @@ mod tests {
                 &format!("--format=format:{placeholder}"),
             ])
         };
-        assert_eq!(commit.hash, field("%H"));
-        assert_eq!(commit.short_hash(), field("%h"));
+        assert_eq!(commit.hash.to_string(), field("%H"));
+        assert_eq!(commit.short_hash().to_string(), field("%h"));
         assert_eq!(commit.subject, field("%s"));
         assert_eq!(commit.body, field("%b"));
         assert_eq!(commit.author, field("%an"));

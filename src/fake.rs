@@ -236,15 +236,6 @@ mod tests {
     }
 
     #[test]
-    fn fake_hashes_are_full_hashes() {
-        for commit in &all() {
-            let hash = commit.hash.to_string();
-            assert_eq!(hash.len(), 40, "{hash}");
-            assert!(hash.bytes().all(|byte| byte.is_ascii_hexdigit()), "{hash}");
-        }
-    }
-
-    #[test]
     fn all_kinds_of_file_changes_are_used() {
         let files = &file_changes().files;
         let changes: Vec<_> = files.iter().map(|file| &file.change).collect();

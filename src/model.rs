@@ -1,15 +1,16 @@
 //! Data model of the commits displayed by `reedi`.
 
+use gix::ObjectId;
 use gix::date::Time;
 use reediif::model::FileDiff;
+use std::fmt::Display;
 
 /// A commit and its diff.
 #[derive(Debug, Clone)]
 pub struct Commit {
-    /// Full commit hash.
-    pub hash: String,
-    /// Number of characters of the short form of `hash`: git picks the shortest unambiguous length
-    /// (at least `core.abbrev`), which may differ from one commit to another.
+    pub hash: ObjectId,
+    /// Length of the short form of `hash`: git picks the shortest unambiguous length (at least
+    /// `core.abbrev`), which may differ from one commit to another.
     pub hash_abbrev_len: usize,
     pub subject: String,
     /// Author name (without email).
@@ -26,9 +27,9 @@ pub struct Commit {
 }
 
 impl Commit {
-    /// The short form of `hash`, as displayed: its first `hash_abbrev_len` characters.
-    pub fn short_hash(&self) -> &str {
-        &self.hash[..self.hash_abbrev_len]
+    /// Returns the short form of `hash`, as displayed.
+    pub fn short_hash(&self) -> impl Display + '_ {
+        self.hash.to_hex_with_len(self.hash_abbrev_len)
     }
 }
 
@@ -45,14 +46,17 @@ pub enum Decoration {
 #[cfg(test)]
 mod tests {
     use crate::fake;
+    use gix::ObjectId;
+
+    const HASH: &str = "0123456789abcdef0123456789abcdef01234567";
 
     #[test]
     fn short_hash_has_the_abbreviation_length_of_its_commit() {
         let mut commit = fake::scrolloff_rename();
-        commit.hash = "0123456789abcdef0123456789abcdef01234567".to_string();
+        commit.hash = ObjectId::from_hex(HASH.as_bytes()).unwrap();
         for len in [7, 10, 40] {
             commit.hash_abbrev_len = len;
-            assert_eq!(commit.short_hash(), &commit.hash[..len]);
+            assert_eq!(commit.short_hash().to_string(), &HASH[..len]);
         }
     }
 }

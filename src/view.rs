@@ -355,7 +355,7 @@ fn header_parts(commit: &Commit, theme: &Theme, dates: &DateDisplay) -> Vec<Part
     let date = dates.display(commit.date);
     let space = || Part::markup(" ", Style::new());
     [
-        Part::content(commit.short_hash(), theme.hash),
+        Part::content(&commit.short_hash().to_string(), theme.hash),
         space(),
         Part::content(&commit.subject, Style::new()),
         space(),
