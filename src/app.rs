@@ -132,27 +132,17 @@ fn navigate(
             });
             viewport.jump(row_index, len, height);
         }
-        Action::NextRevision => jump_unless_already_on(
+        Action::NextRevision => viewport.jump_and_scroll_to_top_margin(
             view::next_revision(rows, viewport.cursor, repeat_count),
-            viewport,
             len,
             height,
         ),
-        Action::PreviousRevision => jump_unless_already_on(
+        Action::PreviousRevision => viewport.jump_and_scroll_to_top_margin(
             view::previous_revision(rows, viewport.cursor, repeat_count),
-            viewport,
             len,
             height,
         ),
         Action::Digit(_) | Action::Quit | Action::Suspend => {}
-    }
-}
-
-/// Move the cursor to the row `row_index` like [`Viewport::jump()`], unless it is already on it
-/// (the screen then doesn't scroll).
-fn jump_unless_already_on(row_index: usize, viewport: &mut Viewport, len: usize, height: usize) {
-    if row_index != viewport.cursor {
-        viewport.jump(row_index, len, height);
     }
 }
 
@@ -302,6 +292,8 @@ mod tests {
 
     use super::*;
     use crate::fake;
+    use crate::model::Commit;
+    use crate::settings::SCROLLOFF;
     use crate::test_support::header_row_indexes;
     use crate::test_support::revisions_of;
     use crate::test_support::rows_of;
@@ -696,6 +688,14 @@ mod tests {
     /// commit (the furthest one displays the rows 30 to 69, on a screen of 40 rows).
     fn rows_of_a_long_commit() -> Vec<Row> {
         rows_of(&[fake::file_changes()], /* width */ 110)
+    }
+
+    /// A fake commit displayed on at least `SCROLLOFF` rows followed by a commit displayed on at
+    /// least 70 rows, for the tests where the screen scrolls the header row of the second commit
+    /// to `SCROLLOFF` rows below its top (which needs at least `SCROLLOFF` rows above that header
+    /// row and `HEIGHT` rows from it to the last row).
+    fn short_then_long_commits() -> [Commit; 2] {
+        [fake::ltr_then_rtl_summary(), fake::file_changes()]
     }
 
     /// `viewport` after `action` repeated `count` times on `rows`.
@@ -1155,15 +1155,16 @@ mod tests {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
-        let viewport = navigated(
-            &rows,
-            Action::NextRevision,
-            None,
-            Viewport { cursor: 0, top: 0 },
+        assert_eq!(
+            navigated(
+                &rows,
+                Action::NextRevision,
+                None,
+                Viewport { cursor: 0, top: 0 }
+            )
+            .cursor,
+            headers[1]
         );
-        let mut expected = Viewport::default();
-        expected.jump(headers[1], rows.len(), HEIGHT);
-        assert_eq!(viewport, expected);
         assert_eq!(
             navigated(
                 &rows,
@@ -1221,17 +1222,18 @@ mod tests {
     }
 
     #[test]
-    fn navigate_next_revision_does_nothing_on_the_last_commit() {
-        let commits = short_commits();
+    fn navigate_next_revision_on_the_last_commit_only_scrolls_the_cursor_row_to_the_top_margin() {
+        let commits = short_then_long_commits();
         let rows = rows_of(&commits, /* width */ 110);
-        let last_header_row_index = *header_row_indexes(&commits, /* width */ 110)
-            .last()
-            .unwrap();
-        let before = Viewport {
-            cursor: last_header_row_index + 2,
-            top: last_header_row_index - 5,
-        };
-        assert_eq!(navigated(&rows, Action::NextRevision, None, before), before);
+        let headers = header_row_indexes(&commits, /* width */ 110);
+        let before = Viewport { cursor: headers[1] + 10, top: headers[1] };
+        assert_eq!(
+            navigated(&rows, Action::NextRevision, None, before),
+            Viewport {
+                cursor: headers[1] + 10,
+                top: headers[1] + 10 - SCROLLOFF
+            }
+        );
     }
 
     #[test]
@@ -1319,22 +1321,65 @@ mod tests {
     }
 
     #[test]
-    fn navigate_jumps_between_commits_scroll_to_keep_the_scrolloff() {
+    fn navigate_next_revision_scrolls_its_header_row_to_the_top_margin() {
+        let commits = short_then_long_commits();
+        let rows = rows_of(&commits, /* width */ 110);
+        let headers = header_row_indexes(&commits, /* width */ 110);
+        assert_eq!(
+            navigated(
+                &rows,
+                Action::NextRevision,
+                None,
+                Viewport { cursor: 0, top: 0 }
+            ),
+            Viewport {
+                cursor: headers[1],
+                top: headers[1] - SCROLLOFF
+            }
+        );
+    }
+
+    #[test]
+    fn navigate_previous_revision_scrolls_its_header_row_to_the_top_margin() {
+        let commits = short_then_long_commits();
+        let rows = rows_of(&commits, /* width */ 110);
+        let headers = header_row_indexes(&commits, /* width */ 110);
+        let inside_the_long_commit = Viewport {
+            cursor: headers[1] + 30,
+            top: headers[1] + 20,
+        };
+        assert_eq!(
+            navigated(
+                &rows,
+                Action::PreviousRevision,
+                None,
+                inside_the_long_commit
+            ),
+            Viewport {
+                cursor: headers[1],
+                top: headers[1] - SCROLLOFF
+            }
+        );
+    }
+
+    #[test]
+    fn navigate_next_revision_does_not_display_empty_space_after_the_last_row() {
+        // The last commit is displayed on fewer rows than the screen.
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
-        let viewport = navigated(
-            &rows,
-            Action::NextRevision,
-            None,
-            Viewport { cursor: 0, top: 0 },
+        assert_eq!(
+            navigated(
+                &rows,
+                Action::NextRevision,
+                /* count */ Some(2),
+                Viewport { cursor: 0, top: 0 }
+            ),
+            Viewport {
+                cursor: headers[2],
+                top: rows.len() - HEIGHT
+            }
         );
-        assert!(
-            viewport.top <= viewport.cursor.saturating_sub(5),
-            "{viewport:?}"
-        );
-        assert!(viewport.cursor + 5 < viewport.top + HEIGHT, "{viewport:?}");
-        assert_eq!(viewport.cursor, headers[1]);
     }
 
     #[test]

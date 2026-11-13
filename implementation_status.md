@@ -309,7 +309,8 @@ version 0.0.7: interactivity
      row), `K` goes to the header row of the previous commit and `J` to the header row of the
      following commit: with the cursor on the separator line of the commit 5, `K` goes to the header
      row of the commit 4 and `J` to the one of the commit 6
-   - [x] nothing happens on the last/first commit
+   - [x] on the last/first commit, the cursor doesn't move, but its row is scrolled to the top of
+     the screen, below the scrolloff margin
  - [x] number prefix:
    - [x] repeats `j`/`k`, `up`/`down`, `ctrl+e`/`ctrl+y`, `d`/`u`, `ctrl+d`/`ctrl+u`, `J`/`K`,
      `ctrl+down`/`ctrl+up`

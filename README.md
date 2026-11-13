@@ -184,7 +184,8 @@ Review mode:
 - `tab`/`shift+tab` or `left`/`right` move the cursor to the next/previous editable area (this does
   include `commit_subject`, `author` and `date` that are on the same line)
 - `g`/`G` move the cursor to first/last row
-- `J`/`K` or `ctrl+down`/`ctrl+up` jumps to the next/previous revision
+- `J`/`K` or `ctrl+down`/`ctrl+up` jump to the next/previous revision (and move the cursor row to
+  the top of the screen)
 - `[`/`]` jumps to the next/previous merge conflict
 
 - `ctrl+e`/`ctrl+y` move the screen one line down/up (and move the cursor if it would have gone

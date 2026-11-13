@@ -49,6 +49,17 @@ impl Viewport {
         self.scroll(len, height);
     }
 
+    /// Move the cursor to the row `cursor` (or to the last of `len` rows if it is further), and
+    /// scroll so that it is `scrolloff(height)` rows below the top of the screen, `height` rows
+    /// tall, unless that would display space before the first row or after the last row.
+    pub fn jump_and_scroll_to_top_margin(&mut self, cursor: usize, len: usize, height: usize) {
+        self.cursor = cursor.min(len.saturating_sub(1));
+        self.top = self
+            .cursor
+            .saturating_sub(scrolloff(height))
+            .min(len.saturating_sub(height));
+    }
+
     /// Scroll as little as possible so that the cursor is displayed on the screen, `height` rows
     /// tall, and there is no empty space after the last of `len` rows. Unlike
     /// [`Viewport::scroll()`], the cursor can be inside the scrolloff margin.
@@ -371,6 +382,74 @@ mod tests {
             /* cursor */ 1000, /* len */ 100, /* height */ 20,
         );
         assert_eq!(viewport, Viewport { cursor: 99, top: 80 });
+    }
+
+    #[test]
+    fn jump_and_scroll_to_top_margin_puts_the_cursor_scrolloff_rows_below_the_top_of_the_screen() {
+        let mut viewport = Viewport { cursor: 0, top: 0 };
+        viewport.jump_and_scroll_to_top_margin(
+            /* cursor */ 50, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 50, top: 45 });
+        viewport.jump_and_scroll_to_top_margin(
+            /* cursor */ 10, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 10, top: 5 });
+    }
+
+    #[test]
+    fn jump_and_scroll_to_top_margin_scrolls_even_when_the_cursor_does_not_move() {
+        let mut viewport = Viewport { cursor: 30, top: 20 };
+        viewport.jump_and_scroll_to_top_margin(
+            /* cursor */ 30, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 30, top: 25 });
+    }
+
+    #[test]
+    fn jump_and_scroll_to_top_margin_does_not_display_space_before_the_first_row() {
+        let mut viewport = Viewport { cursor: 50, top: 40 };
+        viewport.jump_and_scroll_to_top_margin(
+            /* cursor */ 2, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 2, top: 0 });
+    }
+
+    #[test]
+    fn jump_and_scroll_to_top_margin_uses_a_smaller_scrolloff_on_a_small_screen() {
+        // The scrolloff is 2 rows on a screen of 5 rows.
+        let mut viewport = Viewport { cursor: 0, top: 0 };
+        viewport.jump_and_scroll_to_top_margin(
+            /* cursor */ 10, /* len */ 100, /* height */ 5,
+        );
+        assert_eq!(viewport, Viewport { cursor: 10, top: 8 });
+    }
+
+    #[test]
+    fn jump_and_scroll_to_top_margin_does_not_display_empty_space_after_the_last_row() {
+        let mut viewport = Viewport { cursor: 0, top: 0 };
+        viewport.jump_and_scroll_to_top_margin(
+            /* cursor */ 90, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 90, top: 80 });
+    }
+
+    #[test]
+    fn jump_and_scroll_to_top_margin_stops_on_the_last_row() {
+        let mut viewport = Viewport { cursor: 0, top: 0 };
+        viewport.jump_and_scroll_to_top_margin(
+            /* cursor */ 1000, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 99, top: 80 });
+    }
+
+    #[test]
+    fn jump_and_scroll_to_top_margin_does_not_scroll_when_everything_fits() {
+        let mut viewport = Viewport { cursor: 0, top: 0 };
+        viewport.jump_and_scroll_to_top_margin(
+            /* cursor */ 5, /* len */ 10, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 5, top: 0 });
     }
 
     #[test]
