@@ -1,9 +1,21 @@
-//! Data model of the commits displayed by `reedi`.
+//! Data model of the revisions displayed by `reedi`.
 
 use gix::ObjectId;
 use gix::date::Time;
 use reediif::model::FileDiff;
 use std::fmt::Display;
+
+/// Something displayed like a commit: a diff and its metadata.
+#[derive(Debug, Clone)]
+pub enum Revision {
+    Commit(Commit),
+}
+
+impl From<Commit> for Revision {
+    fn from(commit: Commit) -> Self {
+        Revision::Commit(commit)
+    }
+}
 
 /// A commit and its diff.
 #[derive(Debug, Clone)]

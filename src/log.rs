@@ -34,6 +34,7 @@ use crate::cli::Cli;
 use crate::fake;
 use crate::model::Commit;
 use crate::model::Decoration;
+use crate::model::Revision;
 use crate::settings::CONTEXT;
 
 /// The attribute deciding whether a file is diffed as text or as binary (`binary` unsets it).
@@ -168,11 +169,11 @@ fn unreadable(error: impl fmt::Display) -> LogError {
     LogError::Unreadable(error.to_string())
 }
 
-/// The commits to display: the fake commits with `--fake`, otherwise the commits of the
+/// The revisions to display: the fake commits with `--fake`, otherwise the commits of the
 /// repository containing `directory` (see the [module documentation](self)).
-pub fn displayed_commits(cli: &Cli, directory: &Path) -> Result<Vec<Commit>, LogError> {
+pub fn displayed_revisions(cli: &Cli, directory: &Path) -> Result<Vec<Revision>, LogError> {
     if cli.fake {
-        return Ok(fake::all());
+        return Ok(fake::all().into_iter().map(Revision::Commit).collect());
     }
     let repository = gix::discover(directory).map_err(|error| {
         if error.is_not_found() {
@@ -181,7 +182,10 @@ pub fn displayed_commits(cli: &Cli, directory: &Path) -> Result<Vec<Commit>, Log
             unreadable(error)
         }
     })?;
-    commits_of(&repository)
+    Ok(commits_of(&repository)?
+        .into_iter()
+        .map(Revision::Commit)
+        .collect())
 }
 
 /// The commits of `repository` (see the [module documentation](self)).
@@ -577,6 +581,16 @@ mod tests {
             .collect()
     }
 
+    /// The commits displayed as `revisions`.
+    fn commits(revisions: Vec<Revision>) -> Vec<Commit> {
+        revisions
+            .into_iter()
+            .map(|revision| match revision {
+                Revision::Commit(commit) => commit,
+            })
+            .collect()
+    }
+
     /// The only item of `items`.
     fn single<T>(items: &[T]) -> &T {
         let [item] = items else {
@@ -919,7 +933,7 @@ mod tests {
     fn fake_option_displays_the_fake_commits() {
         let directory = tempfile::tempdir().unwrap();
         let cli = Cli::parse_from(["reedi", "--fake"]);
-        let commits = displayed_commits(&cli, directory.path()).unwrap();
+        let commits = commits(displayed_revisions(&cli, directory.path()).unwrap());
         assert_eq!(hashes(&commits), hashes(&fake::all()));
     }
 
@@ -928,7 +942,7 @@ mod tests {
         let git = Git::with_upstream();
         git.commit_all(b"Unpushed");
         let cli = Cli::parse_from(["reedi"]);
-        let commits = displayed_commits(&cli, git.path()).unwrap();
+        let commits = commits(displayed_revisions(&cli, git.path()).unwrap());
         assert_eq!(hashes(&commits), git.log_reverse("origin/topic..HEAD"));
     }
 }

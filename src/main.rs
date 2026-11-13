@@ -28,9 +28,9 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    let commits = log::displayed_commits(&cli, &std::env::current_dir()?)?;
+    let revisions = log::displayed_revisions(&cli, &std::env::current_dir()?)?;
     let (settings, unknown_settings) = settings(&cli)?;
-    reedi::run(&commits, &settings, unknown_settings)?;
+    reedi::run(&revisions, &settings, unknown_settings)?;
     Ok(())
 }
 

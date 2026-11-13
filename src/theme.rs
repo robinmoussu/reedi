@@ -37,7 +37,7 @@ pub struct Theme {
     pub removed_line: Style,
     /// The text area of the added lines.
     pub added_line: Style,
-    pub commit_separator: Style,
+    pub revision_separator: Style,
     pub error: Style,
     /// Replacements of the tabs, and of the spaces and U+2800 next to a break, that are not part
     /// of the trailing whitespace.
@@ -81,7 +81,7 @@ impl Theme {
             marker: Style::new().fg(Color::Blue),
             removed_line: Style::new().bg(Color::Rgb(0x3f, 0x00, 0x01)),
             added_line: Style::new().bg(Color::Rgb(0x00, 0x28, 0x00)),
-            commit_separator: Style::new().fg(Color::Red),
+            revision_separator: Style::new().fg(Color::Red),
             error: Style::new().fg(Color::LightRed).bold(),
             dimmed_whitespace: Style::new().fg(Color::DarkGray),
             trailing_whitespace: Style::new().fg(Color::Red).bold(),
@@ -133,7 +133,7 @@ impl Theme {
             marker: Style::new(),
             removed_line: Style::new(),
             added_line: Style::new(),
-            commit_separator: Style::new(),
+            revision_separator: Style::new(),
             error: Style::new().bold(),
             dimmed_whitespace: Style::new(),
             trailing_whitespace: Style::new().bold(),

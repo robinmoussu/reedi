@@ -1,4 +1,4 @@
-//! Rendering of the commits and of the status bar.
+//! Rendering of the revisions and of the status bar.
 
 use std::iter;
 use std::ops::Div;
@@ -36,6 +36,7 @@ use crate::invisible::FinalCr;
 use crate::invisible::Kind;
 use crate::model::Commit;
 use crate::model::Decoration;
+use crate::model::Revision;
 use crate::settings::MAX_PAIRING_DISTANCE;
 use crate::settings::TAB_WIDTH;
 use crate::theme::Theme;
@@ -132,10 +133,10 @@ pub struct Row {
     /// lines and the rules. It doesn't depend on the width of the screen.
     pub line_index: usize,
     pub anchor_offset: AnchorOffset,
-    /// Index, among the displayed commits, of the commit the row belongs to. The separator line
-    /// between two commits is the first line of the next commit (the separator below the last
-    /// commit belongs to it).
-    pub commit_index: usize,
+    /// Index, among the displayed revisions, of the revision the row belongs to. The separator line
+    /// between two revisions is the first line of the next revision (the separator below the last
+    /// revision belongs to it).
+    pub revision_index: usize,
 }
 
 impl Row {
@@ -553,9 +554,9 @@ struct Rows<'a> {
     /// The number of lines added so far (a wrapped line is added as several rows, all with the same
     /// [`Row::line_index`]).
     lines_count: usize,
-    /// Index of the commit being added, given to each row added. It is incremented just before
-    /// adding the separator below a commit, which belongs to the next commit.
-    commit_index: usize,
+    /// Index of the revision being added, given to each row added. It is incremented just before
+    /// adding the separator below a revision, which belongs to the next revision.
+    revision_index: usize,
     width: u16,
     theme: &'a Theme,
     dates: &'a DateDisplay,
@@ -566,7 +567,7 @@ impl<'a> Rows<'a> {
         Self {
             rows: Vec::new(),
             lines_count: 0,
-            commit_index: 0,
+            revision_index: 0,
             width,
             theme,
             dates,
@@ -579,7 +580,7 @@ impl<'a> Rows<'a> {
             content,
             line_index: self.lines_count,
             anchor_offset: AnchorOffset::Whole(0),
-            commit_index: self.commit_index,
+            revision_index: self.revision_index,
         });
         self.lines_count += 1;
     }
@@ -597,13 +598,13 @@ impl<'a> Rows<'a> {
     fn text(&mut self, parts: &[Part]) -> Result<(), TooNarrow> {
         let rows = wrapped(parts, FinalCr::Shown, self.width.into(), self.theme)?;
         let line_index = self.lines_count;
-        let commit_index = self.commit_index;
+        let revision_index = self.revision_index;
         self.rows
             .extend(rows.into_iter().map(|(start, _, spans)| Row {
                 content: Content::Text(Line::from(spans)),
                 line_index,
                 anchor_offset: AnchorOffset::Whole(start),
-                commit_index,
+                revision_index,
             }));
         self.lines_count += 1;
         Ok(())
@@ -691,14 +692,14 @@ impl<'a> Rows<'a> {
                         .take(len)
                 };
                 let line_index = self.lines_count + index;
-                let commit_index = self.commit_index;
+                let revision_index = self.revision_index;
                 padded(left)
                     .zip(padded(right))
                     .map(move |((left_start, left), (right_start, right))| Row {
                         content: Content::Split { left, right },
                         line_index,
                         anchor_offset: AnchorOffset::Split { left: left_start, right: right_start },
-                        commit_index,
+                        revision_index,
                     })
                     .collect::<Vec<_>>()
             })
@@ -722,7 +723,6 @@ impl<'a> Rows<'a> {
         })
     }
 
-    /// Add `commit`, including the separator below it.
     fn commit(&mut self, commit: &Commit) -> Result<(), TooNarrow> {
         self.text(&header_parts(commit, self.theme, self.dates))?;
         if !commit.body.is_empty() {
@@ -736,30 +736,38 @@ impl<'a> Rows<'a> {
         for file in &commit.files {
             self.file(file)?;
         }
+        Ok(())
+    }
+
+    /// Add `revision`, including the separator below it.
+    fn revision(&mut self, revision: &Revision) -> Result<(), TooNarrow> {
+        match revision {
+            Revision::Commit(commit) => self.commit(commit)?,
+        }
         self.blank();
-        self.commit_index += 1;
-        self.rule(self.theme.commit_separator);
+        self.revision_index += 1;
+        self.rule(self.theme.revision_separator);
         Ok(())
     }
 }
 
-/// All the rows displaying `commits` on a screen `width` columns wide.
+/// All the rows displaying `revisions` on a screen `width` columns wide.
 ///
 /// Fails if a text area is too narrow to display a grapheme cluster of its line, unless it is in
 /// a hunk, which is then replaced by an error message.
 pub fn rows(
-    commits: &[Commit],
+    revisions: &[Revision],
     width: u16,
     theme: &Theme,
     dates: &DateDisplay,
 ) -> Result<Vec<Row>, TooNarrow> {
     let mut rows = Rows::new(width, theme, dates);
-    for commit in commits {
-        rows.commit(commit)?;
+    for revision in revisions {
+        rows.revision(revision)?;
     }
-    // The separator below the last commit has no next commit.
+    // The separator below the last revision has no next revision.
     if let Some(last) = rows.rows.last_mut() {
-        last.commit_index = commits.len() - 1;
+        last.revision_index = revisions.len() - 1;
     }
     Ok(rows.rows)
 }
@@ -842,7 +850,7 @@ fn cropped(line: Line<'static>, width: usize) -> Line<'static> {
     )
 }
 
-/// A message displayed over the commits, until a key is pressed.
+/// A message displayed over the revisions, until a key is pressed.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ErrorModal {
     /// The keys of the config file at `path` that are not settings.
@@ -948,33 +956,33 @@ impl Widget for ErrorModalView<'_> {
     }
 }
 
-/// The content of the status bar (after the mode) while the cursor is on the commit `index` of
-/// `commits`, the displayed commits.
+/// The content of the status bar (after the mode) while the cursor is on the revision `index` of
+/// `revisions`, the displayed revisions.
 ///
 /// The summary is displayed as is, but for the left-to-right mark before it, so that its
 /// right-to-left text does not move the rest of the status bar.
-pub fn commit_status(commits: &[Commit], index: usize, theme: &Theme) -> Line<'static> {
-    let commit = &commits[index];
-    Line::from(Span::styled(
-        format!(
+pub fn revision_status(revisions: &[Revision], index: usize, theme: &Theme) -> Line<'static> {
+    let text = match &revisions[index] {
+        Revision::Commit(commit) => format!(
             "commit {}/{}: {} {LEFT_TO_RIGHT_MARK}{}",
             index + 1,
-            commits.len(),
+            revisions.len(),
             commit.short_hash(),
             commit.subject
         ),
-        theme.status_bar_content,
-    ))
+    };
+    Line::from(Span::styled(text, theme.status_bar_content))
 }
 
-/// Index, among the displayed commits, of the commit displayed by the row `row_index` of `rows`.
+/// Index, among the displayed revisions, of the revision displayed by the row `row_index` of
+/// `rows`.
 ///
-/// The separator line between two commits is the first line of the next commit (the separator
-/// below the last commit belongs to it).
-pub fn commit_index(rows: &[Row], row_index: usize) -> usize {
+/// The separator line between two revisions is the first line of the next revision (the
+/// separator below the last revision belongs to it).
+pub fn revision_index(rows: &[Row], row_index: usize) -> usize {
     rows.get(row_index)
         .or(rows.last())
-        .map_or(0, |row| row.commit_index)
+        .map_or(0, |row| row.revision_index)
 }
 
 /// The content of the status bar (after the mode) while the number `count` is pending: the next
@@ -986,59 +994,65 @@ pub fn pending_count_status(count: usize, theme: &Theme) -> Line<'static> {
     ))
 }
 
-/// Row of the header (its first row) of the commit `commit` of `rows`, the rows of the displayed
-/// commits. It is below the separator line of the commit, if any.
-pub fn header_row(rows: &[Row], commit: usize) -> Option<usize> {
-    let first_row_index = rows.iter().position(|row| row.commit_index == commit)?;
-    if commit == 0 {
+/// Row of the header (its first row) of the revision `revision_index` of `rows`, the rows of the
+/// displayed revisions. It is below the separator line of the revision, if any.
+pub fn header_row(rows: &[Row], revision_index: usize) -> Option<usize> {
+    let first_row_index = rows
+        .iter()
+        .position(|row| row.revision_index == revision_index)?;
+    if revision_index == 0 {
         Some(first_row_index)
     } else {
-        // The first row of the other commits is the separator line above their header.
+        // The first row of the other revisions is the separator line above their header.
         Some(first_row_index + 1)
     }
 }
 
-/// Row of the header of the commit `count` commits after the one displayed by the row `row_index`
-/// of `rows`, or of the last commit if there are not enough of them. It is `row_index` if it
-/// belongs to the last commit.
+/// Row of the header of the revision `count` revisions after the one displayed by the row
+/// `row_index` of `rows`, or of the last revision if there are not enough of them. It is
+/// `row_index` if it belongs to the last revision.
 ///
-/// The separator line between two commits is the first line of the next commit: it belongs to
-/// the commit below it.
-pub fn next_commit(rows: &[Row], row_index: usize, count: usize) -> usize {
-    let last_commit_index = rows.last().map_or(0, |row| row.commit_index);
-    let commit = commit_index(rows, row_index);
-    if commit >= last_commit_index {
+/// The separator line between two revisions is the first line of the next revision: it belongs
+/// to the revision below it.
+pub fn next_revision(rows: &[Row], row_index: usize, count: usize) -> usize {
+    let last_revision_index = rows.last().map_or(0, |row| row.revision_index);
+    let revision = revision_index(rows, row_index);
+    if revision >= last_revision_index {
         return row_index;
     }
-    header_row(rows, commit.saturating_add(count).min(last_commit_index)).unwrap_or(row_index)
+    header_row(
+        rows,
+        revision.saturating_add(count).min(last_revision_index),
+    )
+    .unwrap_or(row_index)
 }
 
-/// Row of the header of the commit `count` commits before the one displayed by the row
-/// `row_index` of `rows`, where the commit displayed by `row_index` itself counts as the first one
-/// if `row_index` is below its header. It is the header of the first commit if there are not
-/// enough of them, and `row_index` if it is on or above the header of the first commit.
-pub fn previous_commit(rows: &[Row], row_index: usize, count: usize) -> usize {
-    let commit = commit_index(rows, row_index);
-    let Some(header_row_index) = header_row(rows, commit) else {
+/// Row of the header of the revision `count` revisions before the one displayed by the row
+/// `row_index` of `rows`, where the revision displayed by `row_index` itself counts as the first
+/// one if `row_index` is below its header. It is the header of the first revision if there are
+/// not enough of them, and `row_index` if it is on or above the header of the first revision.
+pub fn previous_revision(rows: &[Row], row_index: usize, count: usize) -> usize {
+    let revision = revision_index(rows, row_index);
+    let Some(header_row_index) = header_row(rows, revision) else {
         return row_index;
     };
-    let commits_back_count = if row_index > header_row_index {
+    let revisions_back_count = if row_index > header_row_index {
         count.saturating_sub(1)
     } else {
         count
     };
-    header_row(rows, commit.saturating_sub(commits_back_count)).unwrap_or(row_index)
+    header_row(rows, revision.saturating_sub(revisions_back_count)).unwrap_or(row_index)
 }
 
-/// Draw `rows` (displaying `commits`), with the status bar on the last line of the screen, and
-/// `error_modal` over them. The status bar displays the commit the cursor is on, or the number
+/// Draw `rows` (displaying `revisions`), with the status bar on the last line of the screen, and
+/// `error_modal` over them. The status bar displays the revision the cursor is on, or the number
 /// `pending_count` while there is one.
 ///
 /// `viewport` is first scrolled, if needed, to display the cursor on the screen.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
-    commits: &[Commit],
+    revisions: &[Revision],
     rows: &[Row],
     viewport: &mut Viewport,
     mode: Mode,
@@ -1054,10 +1068,10 @@ pub fn draw(
     frame.render_widget(RowsView { rows, viewport, theme }, content);
     let content = if let Some(count) = pending_count {
         pending_count_status(count, theme)
-    } else if commits.is_empty() {
+    } else if revisions.is_empty() {
         Line::default()
     } else {
-        commit_status(commits, commit_index(rows, viewport.cursor), theme)
+        revision_status(revisions, revision_index(rows, viewport.cursor), theme)
     };
     frame.render_widget(StatusBar { mode, content, theme }, status_bar);
     if let Some(error_modal) = error_modal {
@@ -1078,6 +1092,7 @@ mod tests {
     use crate::fake;
     use crate::test_support::backend_without_left_to_right_marks;
     use crate::test_support::header_row_indexes;
+    use crate::test_support::revisions_of;
     use crate::test_support::rows_of;
     use crate::test_support::short_commits;
     use crate::test_support::unknown_settings_error_modal;
@@ -1087,7 +1102,7 @@ mod tests {
     fn commit_rows(commit: &Commit, width: u16, theme: &Theme) -> Vec<Row> {
         let dates = DateDisplay::for_snapshots();
         let mut rows = Rows::new(width, theme, &dates);
-        rows.commit(commit).unwrap();
+        rows.revision(&Revision::Commit(commit.clone())).unwrap();
         rows.rows
     }
 
@@ -1105,7 +1120,7 @@ mod tests {
             content,
             line_index: 0,
             anchor_offset: AnchorOffset::Whole(0),
-            commit_index: 0,
+            revision_index: 0,
         }
     }
 
@@ -1224,14 +1239,15 @@ mod tests {
         error_modal: Option<&ErrorModal>,
         theme: &Theme,
     ) -> (Buffer, Viewport) {
-        let rows = rows(commits, width, theme, &DateDisplay::for_snapshots()).unwrap();
+        let revisions = revisions_of(commits);
+        let rows = rows(&revisions, width, theme, &DateDisplay::for_snapshots()).unwrap();
         let mut viewport = viewport;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
             .draw(|frame| {
                 draw(
                     frame,
-                    commits,
+                    &revisions,
                     &rows,
                     &mut viewport,
                     Mode::Review,
@@ -1248,7 +1264,7 @@ mod tests {
     /// row.
     fn render_on_a_single_screen(commits: &[Commit], theme: &Theme) -> TestBackend {
         let height = rows(
-            commits,
+            &revisions_of(commits),
             /* width */ 110,
             theme,
             &DateDisplay::for_snapshots(),
@@ -1301,7 +1317,7 @@ mod tests {
     #[test]
     fn lines_are_numbered_consecutively() {
         let rows = rows(
-            &short_commits(),
+            &revisions_of(&short_commits()),
             /* width */ 110,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -1517,7 +1533,7 @@ mod tests {
     }
 
     #[test]
-    fn last_file_and_commit_separator_are_separated_by_a_blank_row() {
+    fn last_file_and_revision_separator_are_separated_by_a_blank_row() {
         // In the monochrome theme, the commit separator and the rule below a file name have the
         // same style.
         let theme = Theme::dark();
@@ -1532,7 +1548,7 @@ mod tests {
         let separator = rows.len() as u16 - 1;
         assert_eq!(
             backend.buffer()[(0, separator)].fg,
-            theme.commit_separator.fg.unwrap()
+            theme.revision_separator.fg.unwrap()
         );
     }
 
@@ -2117,7 +2133,7 @@ mod tests {
         let mut commit = fake::scrolloff_rename();
         commit.author = "日本".to_string();
         let error = rows(
-            &[commit],
+            &[Revision::Commit(commit)],
             /* width */ 1,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -2126,7 +2142,7 @@ mod tests {
         assert_eq!(error, TooNarrow { width: 1, cluster: "日".to_string() });
         assert!(
             rows(
-                &[fake::scrolloff_rename()],
+                &[Revision::Commit(fake::scrolloff_rename())],
                 /* width */ 0,
                 &Theme::monochrome(),
                 &DateDisplay::for_snapshots()
@@ -2172,16 +2188,16 @@ mod tests {
     #[test]
     fn find_returns_the_row_displaying_the_first_character_of_a_row() {
         // Lines are wrapped in all the areas, both at 60 and at 110 columns.
-        let commits = [fake::line_wrapping()];
+        let revisions = [Revision::Commit(fake::line_wrapping())];
         let wide = rows(
-            &commits,
+            &revisions,
             /* width */ 110,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
         )
         .unwrap();
         let narrow = rows(
-            &commits,
+            &revisions,
             /* width */ 60,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -2243,7 +2259,7 @@ mod tests {
             assert_eq!(buffer[(last_column, separator)].symbol(), "─");
             assert_eq!(
                 buffer[(last_column, separator)].fg,
-                theme.commit_separator.fg.unwrap()
+                theme.revision_separator.fg.unwrap()
             );
         }
     }
@@ -2293,7 +2309,7 @@ mod tests {
 
     /// What the status bar displays by default when the cursor is on the commit `index` of
     /// `commits`.
-    fn expected_commit_status(commits: &[Commit], index: usize) -> String {
+    fn expected_revision_status(commits: &[Commit], index: usize) -> String {
         let commit = &commits[index];
         format!(
             "commit {}/{}: {} {}",
@@ -2312,7 +2328,7 @@ mod tests {
             .into_iter()
             .enumerate()
             .for_each(|(commit, header_row_index)| {
-                assert_eq!(commit_index(&rows, header_row_index), commit);
+                assert_eq!(revision_index(&rows, header_row_index), commit);
             });
     }
 
@@ -2328,17 +2344,17 @@ mod tests {
             .enumerate()
             .for_each(|(previous_commit_index, header_row_index)| {
                 assert_eq!(
-                    commit_index(&rows, header_row_index - 1),
+                    revision_index(&rows, header_row_index - 1),
                     previous_commit_index + 1,
                     "separator"
                 );
                 assert_eq!(
-                    commit_index(&rows, header_row_index - 2),
+                    revision_index(&rows, header_row_index - 2),
                     previous_commit_index,
                     "blank row"
                 );
                 assert_eq!(
-                    commit_index(&rows, *header_row_index),
+                    revision_index(&rows, *header_row_index),
                     previous_commit_index + 1,
                     "header"
                 );
@@ -2350,8 +2366,8 @@ mod tests {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let last_commit_index = commits.len() - 1;
-        assert_eq!(commit_index(&rows, rows.len() - 1), last_commit_index);
-        assert_eq!(commit_index(&rows, rows.len() - 2), last_commit_index);
+        assert_eq!(revision_index(&rows, rows.len() - 1), last_commit_index);
+        assert_eq!(revision_index(&rows, rows.len() - 2), last_commit_index);
     }
 
     #[test]
@@ -2371,7 +2387,7 @@ mod tests {
                         next_header_row_index - 1
                     });
                 for row_index in *header_row_index..end_row_index {
-                    assert_eq!(commit_index(&rows, row_index), commit, "{row_index}");
+                    assert_eq!(revision_index(&rows, row_index), commit, "{row_index}");
                 }
             });
     }
@@ -2397,7 +2413,7 @@ mod tests {
                         );
                         // Nothing but blanks follows the summary, which may end with a space.
                         let expected =
-                            format!(" Review  {}", expected_commit_status(&commits, commit));
+                            format!(" Review  {}", expected_revision_status(&commits, commit));
                         let status_bar = status_bar(&backend);
                         let after = status_bar.strip_prefix(&expected).expect(&status_bar);
                         assert!(after.chars().all(|c| c == ' '), "{status_bar:?}");
@@ -2427,7 +2443,7 @@ mod tests {
             .trim_end(),
             format!(
                 " Review  {}",
-                expected_commit_status(&commits, /* index */ 0)
+                expected_revision_status(&commits, /* index */ 0)
             )
         );
         let viewport = Viewport { cursor: headers[1] - 1, top: headers[0] };
@@ -2442,7 +2458,7 @@ mod tests {
             .trim_end(),
             format!(
                 " Review  {}",
-                expected_commit_status(&commits, /* index */ 1)
+                expected_revision_status(&commits, /* index */ 1)
             )
         );
     }
@@ -2623,7 +2639,7 @@ mod tests {
         let commits = [fake::file_changes()];
         let full = format!(
             " Review  {}",
-            expected_commit_status(&commits, /* index */ 0)
+            expected_revision_status(&commits, /* index */ 0)
         );
         for width in [40, 60, 90] {
             let backend = render(
@@ -2647,7 +2663,7 @@ mod tests {
         let commits = [short_commit()];
         let full = format!(
             " Review  {}",
-            expected_commit_status(&commits, /* index */ 0)
+            expected_revision_status(&commits, /* index */ 0)
         );
         let width = full.chars().count() as u16;
         let backend = render(
@@ -3000,7 +3016,7 @@ mod tests {
     }
 
     #[test]
-    fn next_commit_goes_to_the_header_of_the_next_commit() {
+    fn next_revision_goes_to_the_header_of_the_next_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
@@ -3008,7 +3024,7 @@ mod tests {
             // On the header, then on the second row of the commit, then on its blank last row.
             for row_index in [pair[0], pair[0] + 1, pair[1] - 2] {
                 assert_eq!(
-                    next_commit(&rows, row_index, /* count */ 1),
+                    next_revision(&rows, row_index, /* count */ 1),
                     pair[1],
                     "{commit} {row_index}"
                 );
@@ -3017,47 +3033,47 @@ mod tests {
     }
 
     #[test]
-    fn next_commit_from_the_separator_goes_to_the_commit_below_the_one_it_belongs_to() {
+    fn next_revision_from_the_separator_goes_to_the_commit_below_the_one_it_belongs_to() {
         // The separator above the 2nd commit belongs to it: `J` goes to the 3rd commit.
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
         assert_eq!(
-            next_commit(&rows, headers[1] - 1, /* count */ 1),
+            next_revision(&rows, headers[1] - 1, /* count */ 1),
             headers[2]
         );
     }
 
     #[test]
-    fn next_commit_repeats_and_stops_on_the_last_commit() {
+    fn next_revision_repeats_and_stops_on_the_last_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
         let last_commit_index = headers.len() - 1;
         assert_eq!(
-            next_commit(&rows, /* row_index */ 0, /* count */ 2),
+            next_revision(&rows, /* row_index */ 0, /* count */ 2),
             headers[2]
         );
         assert_eq!(
-            next_commit(&rows, headers[0] + 3, /* count */ 2),
+            next_revision(&rows, headers[0] + 3, /* count */ 2),
             headers[2]
         );
         assert_eq!(
-            next_commit(&rows, /* row_index */ 0, last_commit_index + 1),
+            next_revision(&rows, /* row_index */ 0, last_commit_index + 1),
             headers[last_commit_index]
         );
         assert_eq!(
-            next_commit(&rows, /* row_index */ 0, last_commit_index + 10),
+            next_revision(&rows, /* row_index */ 0, last_commit_index + 10),
             headers[last_commit_index]
         );
         assert_eq!(
-            next_commit(&rows, /* row_index */ 0, usize::MAX),
+            next_revision(&rows, /* row_index */ 0, usize::MAX),
             headers[last_commit_index]
         );
     }
 
     #[test]
-    fn next_commit_does_nothing_on_the_last_commit() {
+    fn next_revision_does_nothing_on_the_last_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let last_header_row_index = header_row_indexes(&commits, /* width */ 110).pop().unwrap();
@@ -3069,26 +3085,26 @@ mod tests {
             rows.len() - 1,
         ] {
             assert_eq!(
-                next_commit(&rows, row_index, /* count */ 1),
+                next_revision(&rows, row_index, /* count */ 1),
                 row_index,
                 "{row_index}"
             );
         }
         assert_eq!(
-            next_commit(&rows, last_header_row_index, /* count */ 5),
+            next_revision(&rows, last_header_row_index, /* count */ 5),
             last_header_row_index
         );
     }
 
     #[test]
-    fn previous_commit_on_a_row_of_a_commit_goes_to_its_header() {
+    fn previous_revision_on_a_row_of_a_commit_goes_to_its_header() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
         headers.windows(2).enumerate().for_each(|(commit, pair)| {
             for row_index in [pair[0] + 1, pair[0] + 3, pair[1] - 2] {
                 assert_eq!(
-                    previous_commit(&rows, row_index, /* count */ 1),
+                    previous_revision(&rows, row_index, /* count */ 1),
                     pair[0],
                     "{commit} {row_index}"
                 );
@@ -3097,75 +3113,87 @@ mod tests {
     }
 
     #[test]
-    fn previous_commit_on_a_header_goes_to_the_previous_header() {
+    fn previous_revision_on_a_header_goes_to_the_previous_header() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
         headers
             .windows(2)
-            .for_each(|pair| assert_eq!(previous_commit(&rows, pair[1], /* count */ 1), pair[0]));
+            .for_each(|pair| assert_eq!(previous_revision(&rows, pair[1], /* count */ 1), pair[0]));
     }
 
     #[test]
-    fn previous_commit_from_the_separator_goes_to_the_header_of_the_commit_above() {
+    fn previous_revision_from_the_separator_goes_to_the_header_of_the_commit_above() {
         // The separator above the 3rd commit belongs to it, and is above its header: `K` goes to
         // the 2nd commit.
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
         assert_eq!(
-            previous_commit(&rows, headers[2] - 1, /* count */ 1),
+            previous_revision(&rows, headers[2] - 1, /* count */ 1),
             headers[1]
         );
     }
 
     #[test]
-    fn previous_commit_on_the_separator_below_the_last_commit_goes_to_its_header() {
+    fn previous_revision_on_the_separator_below_the_last_commit_goes_to_its_header() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let last_header_row_index = header_row_indexes(&commits, /* width */ 110).pop().unwrap();
         assert_eq!(
-            previous_commit(&rows, rows.len() - 1, /* count */ 1),
+            previous_revision(&rows, rows.len() - 1, /* count */ 1),
             last_header_row_index
         );
     }
 
     #[test]
-    fn previous_commit_repeats_and_stops_on_the_first_commit() {
+    fn previous_revision_repeats_and_stops_on_the_first_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
         // The first one goes to the header of the commit, the next ones to the previous commits.
         assert_eq!(
-            previous_commit(&rows, headers[2] + 3, /* count */ 2),
+            previous_revision(&rows, headers[2] + 3, /* count */ 2),
             headers[1]
         );
         assert_eq!(
-            previous_commit(&rows, headers[2], /* count */ 2),
+            previous_revision(&rows, headers[2], /* count */ 2),
             headers[0]
         );
         assert_eq!(
-            previous_commit(&rows, headers[2] + 3, /* count */ 4),
+            previous_revision(&rows, headers[2] + 3, /* count */ 4),
             headers[0]
         );
         assert_eq!(
-            previous_commit(&rows, headers[2] + 3, /* count */ 100),
+            previous_revision(&rows, headers[2] + 3, /* count */ 100),
             headers[0]
         );
         assert_eq!(
-            previous_commit(&rows, headers[2] + 3, usize::MAX),
+            previous_revision(&rows, headers[2] + 3, usize::MAX),
             headers[0]
         );
     }
 
     #[test]
-    fn previous_commit_does_nothing_on_the_header_of_the_first_commit() {
+    fn previous_revision_does_nothing_on_the_header_of_the_first_commit() {
         let rows = rows_of(&short_commits(), /* width */ 110);
-        assert_eq!(previous_commit(&rows, /* row_index */ 0, /* count */ 1), 0);
-        assert_eq!(previous_commit(&rows, /* row_index */ 0, /* count */ 5), 0);
+        assert_eq!(
+            previous_revision(&rows, /* row_index */ 0, /* count */ 1),
+            0
+        );
+        assert_eq!(
+            previous_revision(&rows, /* row_index */ 0, /* count */ 5),
+            0
+        );
         // On the second row of the first commit, it goes to the header.
-        assert_eq!(previous_commit(&rows, /* row_index */ 1, /* count */ 1), 0);
-        assert_eq!(previous_commit(&rows, /* row_index */ 3, /* count */ 5), 0);
+        assert_eq!(
+            previous_revision(&rows, /* row_index */ 1, /* count */ 1),
+            0
+        );
+        assert_eq!(
+            previous_revision(&rows, /* row_index */ 3, /* count */ 5),
+            0
+        );
     }
 
     #[test]
@@ -3230,7 +3258,7 @@ mod tests {
         );
         let status_bar = status_bar(&backend);
         assert!(
-            status_bar.contains(&expected_commit_status(&commits, /* index */ 0)),
+            status_bar.contains(&expected_revision_status(&commits, /* index */ 0)),
             "{status_bar}"
         );
         assert!(!status_bar.contains("repeated"), "{status_bar}");

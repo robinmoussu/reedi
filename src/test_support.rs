@@ -8,6 +8,7 @@ use crate::config::UnknownSetting;
 use crate::date::DateDisplay;
 use crate::fake;
 use crate::model::Commit;
+use crate::model::Revision;
 use crate::theme::Theme;
 use crate::view;
 use crate::view::ErrorModal;
@@ -24,10 +25,15 @@ pub fn short_commits() -> [Commit; 3] {
     ]
 }
 
+/// The revisions displaying `commits`.
+pub fn revisions_of(commits: &[Commit]) -> Vec<Revision> {
+    commits.iter().cloned().map(Revision::Commit).collect()
+}
+
 /// All the rows of `commits`, on a screen `width` columns wide.
 pub fn rows_of(commits: &[Commit], width: u16) -> Vec<Row> {
     view::rows(
-        commits,
+        &revisions_of(commits),
         width,
         &Theme::monochrome(),
         &DateDisplay::for_snapshots(),

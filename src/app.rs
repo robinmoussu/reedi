@@ -16,7 +16,7 @@ use ratatui::crossterm::terminal::EnterAlternateScreen;
 
 use crate::config::UnknownSetting;
 use crate::date::DateDisplay;
-use crate::model::Commit;
+use crate::model::Revision;
 use crate::settings::Settings;
 use crate::theme::Theme;
 use crate::view;
@@ -44,9 +44,9 @@ enum Action {
     /// `G`.
     Last,
     /// `J` or `ctrl+down`.
-    NextCommit,
+    NextRevision,
     /// `K` or `ctrl+up`.
-    PreviousCommit,
+    PreviousRevision,
     /// A digit of the number repeating the next command.
     Digit(u8),
     Quit,
@@ -132,14 +132,14 @@ fn navigate(
             });
             viewport.jump(row_index, len, height);
         }
-        Action::NextCommit => jump_unless_already_on(
-            view::next_commit(rows, viewport.cursor, repeat_count),
+        Action::NextRevision => jump_unless_already_on(
+            view::next_revision(rows, viewport.cursor, repeat_count),
             viewport,
             len,
             height,
         ),
-        Action::PreviousCommit => jump_unless_already_on(
-            view::previous_commit(rows, viewport.cursor, repeat_count),
+        Action::PreviousRevision => jump_unless_already_on(
+            view::previous_revision(rows, viewport.cursor, repeat_count),
             viewport,
             len,
             height,
@@ -156,7 +156,7 @@ fn jump_unless_already_on(row_index: usize, viewport: &mut Viewport, len: usize,
     }
 }
 
-/// Display `commits` with `settings` until `q` or `ctrl+c` is pressed, and the
+/// Display `revisions` with `settings` until `q` or `ctrl+c` is pressed, and the
 /// `unknown_settings` of the config file (its path, and at least one setting) in an error modal
 /// over them, if any, until a key is pressed.
 ///
@@ -164,7 +164,7 @@ fn jump_unless_already_on(row_index: usize, viewport: &mut Viewport, len: usize,
 /// Fails if a text area outside of the hunks is too narrow to display a grapheme cluster of its
 /// line.
 pub fn run(
-    commits: &[Commit],
+    revisions: &[Revision],
     settings: &Settings,
     unknown_settings: Option<(PathBuf, Vec<UnknownSetting>)>,
 ) -> io::Result<()> {
@@ -181,7 +181,7 @@ pub fn run(
             if size != Some(screen) {
                 if size.map(|size| size.width) != Some(screen.width) {
                     rows = rewrap(
-                        commits,
+                        revisions,
                         &rows,
                         &mut viewport,
                         screen.width,
@@ -196,7 +196,7 @@ pub fn run(
             terminal.draw(|frame| {
                 view::draw(
                     frame,
-                    commits,
+                    revisions,
                     &rows,
                     &mut viewport,
                     Mode::Review,
@@ -222,19 +222,19 @@ pub fn run(
     })
 }
 
-/// The rows displaying `commits` on a screen `width` columns wide, replacing `rows`.
+/// The rows displaying `revisions` on a screen `width` columns wide, replacing `rows`.
 ///
 /// The cursor goes, at the same screen position, on the row displaying the character that was the
 /// first of its row (see [`Row::anchor()`]).
 fn rewrap(
-    commits: &[Commit],
+    revisions: &[Revision],
     rows: &[Row],
     viewport: &mut Viewport,
     width: u16,
     theme: &Theme,
     dates: &DateDisplay,
 ) -> Result<Vec<Row>, TooNarrow> {
-    let new_rows = view::rows(commits, width, theme, dates)?;
+    let new_rows = view::rows(revisions, width, theme, dates)?;
     if let Some(row) = rows.get(viewport.cursor) {
         viewport.move_cursor(view::find(&new_rows, row.anchor()));
     }
@@ -270,9 +270,9 @@ fn action(event: &Event) -> Option<Action> {
         (KeyCode::Char('g'), KeyModifiers::NONE) => Some(Action::First),
         (KeyCode::Char('G'), KeyModifiers::NONE | KeyModifiers::SHIFT) => Some(Action::Last),
         (KeyCode::Char('J'), KeyModifiers::NONE | KeyModifiers::SHIFT)
-        | (KeyCode::Down, KeyModifiers::CONTROL) => Some(Action::NextCommit),
+        | (KeyCode::Down, KeyModifiers::CONTROL) => Some(Action::NextRevision),
         (KeyCode::Char('K'), KeyModifiers::NONE | KeyModifiers::SHIFT)
-        | (KeyCode::Up, KeyModifiers::CONTROL) => Some(Action::PreviousCommit),
+        | (KeyCode::Up, KeyModifiers::CONTROL) => Some(Action::PreviousRevision),
         (KeyCode::Char(c @ '0'..='9'), KeyModifiers::NONE) => Some(Action::Digit(c as u8 - b'0')),
         (KeyCode::Char('q'), KeyModifiers::NONE) => Some(Action::Quit),
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(Action::Quit),
@@ -303,6 +303,7 @@ mod tests {
     use super::*;
     use crate::fake;
     use crate::test_support::header_row_indexes;
+    use crate::test_support::revisions_of;
     use crate::test_support::rows_of;
     use crate::test_support::short_commits;
     use crate::view::AnchorOffset;
@@ -391,7 +392,7 @@ mod tests {
         let mut viewport = Viewport::default();
         let rows = rewrap(
             // Its content does not matter.
-            &[fake::ltr_then_rtl_summary()],
+            &[Revision::Commit(fake::ltr_then_rtl_summary())],
             &[],
             &mut viewport,
             /* width */ 110,
@@ -415,7 +416,7 @@ mod tests {
             .unwrap();
         let mut viewport = Viewport { cursor, top: cursor - 3 };
         let wide = rewrap(
-            &commits,
+            &revisions_of(&commits),
             &narrow,
             &mut viewport,
             /* width */ 110,
@@ -436,7 +437,7 @@ mod tests {
         assert!(
             rewrap(
                 // Its content does not matter.
-                &[fake::ltr_then_rtl_summary()],
+                &[Revision::Commit(fake::ltr_then_rtl_summary())],
                 &[],
                 &mut viewport,
                 /* width */ 0,
@@ -511,12 +512,12 @@ mod tests {
     fn shift_j_and_ctrl_down_go_to_the_next_commit() {
         assert_eq!(
             action(&press(KeyCode::Char('J'), KeyModifiers::SHIFT)),
-            Some(Action::NextCommit)
+            Some(Action::NextRevision)
         );
-        assert_eq!(action(&key(KeyCode::Char('J'))), Some(Action::NextCommit));
+        assert_eq!(action(&key(KeyCode::Char('J'))), Some(Action::NextRevision));
         assert_eq!(
             action(&press(KeyCode::Down, KeyModifiers::CONTROL)),
-            Some(Action::NextCommit)
+            Some(Action::NextRevision)
         );
     }
 
@@ -524,15 +525,15 @@ mod tests {
     fn shift_k_and_ctrl_up_go_to_the_previous_commit() {
         assert_eq!(
             action(&press(KeyCode::Char('K'), KeyModifiers::SHIFT)),
-            Some(Action::PreviousCommit)
+            Some(Action::PreviousRevision)
         );
         assert_eq!(
             action(&key(KeyCode::Char('K'))),
-            Some(Action::PreviousCommit)
+            Some(Action::PreviousRevision)
         );
         assert_eq!(
             action(&press(KeyCode::Up, KeyModifiers::CONTROL)),
-            Some(Action::PreviousCommit)
+            Some(Action::PreviousRevision)
         );
     }
 
@@ -653,15 +654,15 @@ mod tests {
             (ctrl('u'), Action::HalfPageUp),
             (key(KeyCode::Char('g')), Action::First),
             (shift('G'), Action::Last),
-            (shift('J'), Action::NextCommit),
-            (shift('K'), Action::PreviousCommit),
+            (shift('J'), Action::NextRevision),
+            (shift('K'), Action::PreviousRevision),
             (
                 press(KeyCode::Down, KeyModifiers::CONTROL),
-                Action::NextCommit,
+                Action::NextRevision,
             ),
             (
                 press(KeyCode::Up, KeyModifiers::CONTROL),
-                Action::PreviousCommit,
+                Action::PreviousRevision,
             ),
         ] {
             let mut count = Count::default();
@@ -1149,13 +1150,13 @@ mod tests {
     }
 
     #[test]
-    fn navigate_next_commit_goes_to_the_header_of_the_next_commit() {
+    fn navigate_next_revision_goes_to_the_header_of_the_next_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
         let viewport = navigated(
             &rows,
-            Action::NextCommit,
+            Action::NextRevision,
             None,
             Viewport { cursor: 0, top: 0 },
         );
@@ -1165,7 +1166,7 @@ mod tests {
         assert_eq!(
             navigated(
                 &rows,
-                Action::NextCommit,
+                Action::NextRevision,
                 None,
                 Viewport { cursor: headers[1] + 3, top: 0 }
             )
@@ -1175,14 +1176,14 @@ mod tests {
     }
 
     #[test]
-    fn navigate_next_commit_from_a_separator_goes_to_the_commit_below_its_own() {
+    fn navigate_next_revision_from_a_separator_goes_to_the_commit_below_its_own() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
         assert_eq!(
             navigated(
                 &rows,
-                Action::NextCommit,
+                Action::NextRevision,
                 None,
                 Viewport { cursor: headers[1] - 1, top: 0 }
             )
@@ -1192,14 +1193,14 @@ mod tests {
     }
 
     #[test]
-    fn navigate_next_commit_is_repeated_and_stops_on_the_last_commit() {
+    fn navigate_next_revision_is_repeated_and_stops_on_the_last_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
         assert_eq!(
             navigated(
                 &rows,
-                Action::NextCommit,
+                Action::NextRevision,
                 /* count */ Some(2),
                 Viewport { cursor: 0, top: 0 }
             )
@@ -1209,7 +1210,7 @@ mod tests {
         assert_eq!(
             navigated(
                 &rows,
-                Action::NextCommit,
+                Action::NextRevision,
                 Some(usize::MAX),
                 Viewport { cursor: 0, top: 0 }
             )
@@ -1219,7 +1220,7 @@ mod tests {
     }
 
     #[test]
-    fn navigate_next_commit_does_nothing_on_the_last_commit() {
+    fn navigate_next_revision_does_nothing_on_the_last_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let last_header_row_index = *header_row_indexes(&commits, /* width */ 110)
@@ -1229,32 +1230,32 @@ mod tests {
             cursor: last_header_row_index + 2,
             top: last_header_row_index - 5,
         };
-        assert_eq!(navigated(&rows, Action::NextCommit, None, before), before);
+        assert_eq!(navigated(&rows, Action::NextRevision, None, before), before);
     }
 
     #[test]
-    fn navigate_previous_commit_goes_to_the_header_then_to_the_previous_commit() {
+    fn navigate_previous_revision_goes_to_the_header_then_to_the_previous_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
         let middle = Viewport { cursor: headers[2] + 3, top: headers[2] };
-        let middle = navigated(&rows, Action::PreviousCommit, None, middle);
+        let middle = navigated(&rows, Action::PreviousRevision, None, middle);
         assert_eq!(middle.cursor, headers[2]);
         assert_eq!(
-            navigated(&rows, Action::PreviousCommit, None, middle).cursor,
+            navigated(&rows, Action::PreviousRevision, None, middle).cursor,
             headers[1]
         );
     }
 
     #[test]
-    fn navigate_previous_commit_from_a_separator_goes_to_the_commit_above_its_own() {
+    fn navigate_previous_revision_from_a_separator_goes_to_the_commit_above_its_own() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
         assert_eq!(
             navigated(
                 &rows,
-                Action::PreviousCommit,
+                Action::PreviousRevision,
                 None,
                 Viewport { cursor: headers[2] - 1, top: 0 }
             )
@@ -1264,7 +1265,7 @@ mod tests {
     }
 
     #[test]
-    fn navigate_previous_commit_is_repeated_and_stops_on_the_first_commit() {
+    fn navigate_previous_revision_is_repeated_and_stops_on_the_first_commit() {
         let commits = short_commits();
         let rows = rows_of(&commits, /* width */ 110);
         let headers = header_row_indexes(&commits, /* width */ 110);
@@ -1273,7 +1274,7 @@ mod tests {
         assert_eq!(
             navigated(
                 &rows,
-                Action::PreviousCommit,
+                Action::PreviousRevision,
                 /* count */ Some(2),
                 start
             )
@@ -1281,17 +1282,17 @@ mod tests {
             headers[1]
         );
         assert_eq!(
-            navigated(&rows, Action::PreviousCommit, Some(usize::MAX), start).cursor,
+            navigated(&rows, Action::PreviousRevision, Some(usize::MAX), start).cursor,
             0
         );
     }
 
     #[test]
-    fn navigate_previous_commit_does_nothing_on_the_header_of_the_first_commit() {
+    fn navigate_previous_revision_does_nothing_on_the_header_of_the_first_commit() {
         let rows = rows_of(&short_commits(), /* width */ 110);
         let before = Viewport { cursor: 0, top: 0 };
         assert_eq!(
-            navigated(&rows, Action::PreviousCommit, None, before),
+            navigated(&rows, Action::PreviousRevision, None, before),
             before
         );
     }
@@ -1303,7 +1304,7 @@ mod tests {
         let headers = header_row_indexes(&commits, /* width */ 110);
         let viewport = navigated(
             &rows,
-            Action::NextCommit,
+            Action::NextRevision,
             None,
             Viewport { cursor: 0, top: 0 },
         );
@@ -1329,7 +1330,7 @@ mod tests {
         for action in [
             Action::Down,
             Action::Last,
-            Action::NextCommit,
+            Action::NextRevision,
             Action::HalfPageDown,
         ] {
             let mut viewport = Viewport::default();
