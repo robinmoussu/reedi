@@ -391,10 +391,56 @@ version 0.0.9: real data
 
  - [x] the data model uses `gix::ObjectId` instead of its own type for the hash of a commit
 
-version 0.0.x: commit creation
-------------------------------
+version 0.0.10: reviewing commit creation
+-----------------------------------------
 
-- [ ] If the working directory is dirty, show the index + changes in the working directory instead
+- [ ] If the working directory is dirty, show the index, then the working directory, instead of the
+  unpushed commits
+  Details:
+  - the working directory is dirty if a tracked file differs between HEAD and the index, or between
+    the index and the working directory. Untracked files are neither counted nor displayed.
+    Mode-only changes and submodule changes are not counted.
+  - it is checked before `$base`: a dirty working directory is displayed even if there is no
+    `$base`. On a branch without commits, the index is compared to an empty tree.
+  - both are always displayed, even if one of them has no changes
+  - the diffs are those of `git diff --cached` (index) and `git diff` (working directory), with the
+    same rules as the commits (renames, binary files, symlinks), and the files are converted like
+    `git diff` does (`core.autocrlf`, `text`/`eol` attributes, clean filters)
+  - header: `index for $branch $subject` (`index $subject` if HEAD is detached, during a rebase
+    `$branch` is the rebased branch) and `working directory`. `index for $branch`, `index` and
+    `working directory` use the color of the hash. No other metadata is displayed.
+  - `$subject` and the body of the index are the prepared commit message: the first existing file
+    among `.git/MERGE_MSG`, `.git/SQUASH_MSG`, `.git/rebase-merge/message` and `commit.template`,
+    without its comment lines (`core.commentChar`). Without one, the header has no subject.
+  - status bar: `index for $branch: $subject` (`index: $subject` if HEAD is detached, without
+    `: $subject` if there is no prepared message) and `working directory`. If there are unresolved
+    conflicts: `working directory ($x conflicts left)`, with the parenthesis and its content in the
+    error style, where `$x` is the number of `<<<<<<<` markers in the unmerged files (`1 conflict
+    left` if there is only one). A marker that is already in HEAD is not a conflict.
+  - unmerged files: in the index, the file name followed by ` (unmerged path)` (like binary
+    files). In the working directory, the file on disk compared to its version in HEAD (ours).
+  - a revision (but merge commits) without files displays `no changes` (dimmed) instead of the
+    diff
+  - data model: `Commit` gets its parents (`parent_ids`), to tell merge commits apart. The new
+    types `Index` (branch, subject, body, files) and `WorkingDirectory` (files) only have their
+    relevant fields.
+  - fake data: the hidden option `--fake-dirty-directory` (conflicts with `--fake`) displays
+    `etc/fake_commits/index` and `etc/fake_commits/working_directory`, ignored by `--fake`. Their
+    files are like those of the other folders (`before`: HEAD/index, `after`: index/working
+    directory), but the files of the index are sorted by path. `index/metadata.toml` has `branch`
+    (missing: HEAD is detached), `subject` and `body` (optional). `working_directory` has no
+    `metadata.toml`: its unmerged files are those whose `after` adds a `<<<<<<<` marker (one of
+    its files has a marker in both versions, which is not a conflict). They are unmerged in the
+    index, and their `before` is the version in HEAD. `--fake-now` and `--fake-timezone` work with
+    both options.
+  - the `metadata.toml` of the fake commits has `parents` (a list of hashes): the parent of each
+    fake commit is the previous one, the parent of the first one is not a fake commit
+
+version 0.0.x: make it possible to change the before/after screen ratio
+-----------------------------------------------------------------------
+
+- [ ] Click-dragging the separation line should change the before/after screen ratio (50/50) at
+  startup
 
 version 0.0.x: line-diff, word-diff and syntax highlighting
 -----------------------------------------------------------
@@ -451,8 +497,18 @@ version 0.0.x: line-diff, word-diff and syntax highlighting
  - [ ] the `monochrome` theme has no syntax colors
  - [ ] add test for max time budget per file
 
+version 0.0.x: merge and merge-conflict
+---------------------------------------
+
+Goal:
+ - support octopus merges when displaying merge commit
+ - display ancestors of a merge conflict
+
 version 0.0.x: editable areas interactivity
 -------------------------------------------
+
+TODO: decide if the index, if it doesn’t have a commit message yet, should get a placeholder, so
+that it can be prepared.
 
  - [ ] Review mode
    - [ ] `left`/`right`
@@ -508,10 +564,28 @@ version 0.0.x: editing (multiple commits)
      - [ ] diffs of future commits are updated
      - [ ] merge conflicts are properly displayed
 
+version 0.0.x: display more commits
+-----------------------------------
+
+ - [ ] if they are hidden (like during "commit creation") make it possible to show the
+   not-yet-pushed commits
+ - [ ] if they are hidden (the default outside of "commit creation") make it possible to show the
+   index and the working directory (even if there is no diff)
+ - [ ] during rebase, make it possible to show/hide future cherry-picks (after the index + working
+   directory)
+ - [ ] make it possible to show/hide author/mail/date in the metadata of the index. When it’s not the
+   current author and "now" (like it can be during rebase) this is shown by default
+ - [ ] `--fake`/`--fake-dirty-directory` uses the dataset of the other option to show unpushed
+   commits/working directory changes
+
+version 0.0.x: move mode
+------------------------
+
+ - [ ] implement move mode and the associated shortcuts
+
 version 0.0.x: real data details
 --------------------------------
 
- - [ ] mode-only changes and submodule changes are displayed
  - [ ] decorations honour `log.decorate` and `log.excludeDecoration`
  - [ ] notes (`refs/notes/commits`) are displayed, like `git log`
  - [ ] merge commits display the changes that are in neither parent, like
@@ -519,13 +593,24 @@ version 0.0.x: real data details
  - [ ] commit metadata is converted to UTF-8 using its `encoding` header, like git
  - [ ] the `�` that replace the bytes of the metadata that are not valid UTF-8 use the `error`
    style (not the `�` of the commit)
+ - [ ] display mode-only changes and submodule changes (and they count as making the working
+   directory dirty)
 
+version 0.0.x: prepare for upstreaming
+--------------------------------------
 
-Possible improvements:
+ - [ ] Validate that reedi_gix_compat is compliant with the git license and not a mere translation,
+   since the licenses are incompatible.
+
+ - [ ] Review the API of reediif
+
+ - [ ] Review the coherence of the READMEs, ensure that it’s concise enough, and not full of
+   implementation details
+
+# Possible improvements:
+
  - use a tree-sitter diff algorithm (like mergiraf), with line-based fallback (too slow, or no
    grammar file)
  - make the diff algo configurable?
+ - add indicator to non-linear history
 
- TODO:
- - Validate that reedi_gix_compat is compliant with the git license and not a mere translation
-   before upstreaming, since the licenses are incompatible.

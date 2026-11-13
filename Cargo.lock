@@ -2465,7 +2465,7 @@ dependencies = [
 
 [[package]]
 name = "reedi"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "clap",
  "gix",
@@ -2490,7 +2490,7 @@ dependencies = [
 
 [[package]]
 name = "reedi-gix-compat"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "gix",
  "gix-date",
@@ -2502,7 +2502,7 @@ dependencies = [
 
 [[package]]
 name = "reediif"
-version = "0.0.9"
+version = "0.0.10"
 dependencies = [
  "bstr",
  "gix-imara-diff",

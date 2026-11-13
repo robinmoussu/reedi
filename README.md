@@ -5,8 +5,9 @@ reedi
 
 > Current implementation status is described in `implementation_status.md`
 
-- It is a TUI tool to review unpushed commits.
-- Commits are displayed (with their diff) in the order of `git log --reverse` (oldest first).
+- It is a TUI tool to review unpushed revisions (diffs + their metadata). A revision is either a
+  commit or the index / the working directory.
+- Revisions are displayed in the order of `git log --reverse` (oldest first).
 - The general interface is the same as `delta`, but commit messages, author, date and hunks are
   editable.
 - All hunks have syntax and diff-aware coloration (including word-level diff)
@@ -31,13 +32,13 @@ reedi
 
 
 Performance:
-- should target for 10 commits with 1000 lines diff (insertion + deletions) each as reported by `git
-  log --stat`:
+- should target for 10 revisions with 1000 lines diff (insertion + deletions) each as reported by
+  `git log --stat`:
   - 500 MB max memory usage
   - 3-5 second max to open, ideally <1s
 - line-diff (move excluded, so only removed/added) doesn’t have timeout, but is expected to be fast
   and is computed first
-- move detection + word diff have a common timeout of 1s max per commit
+- move detection + word diff have a common timeout of 1s max per revision
   - if move detection hit timeout, removed/added is used as fallback
   - if word-diff hit timeout, the whole line will use the same result as the line-diff
 - a full-file syntax highlight limit of 500ms per file before fallback (per hunk syntax color,
@@ -107,25 +108,31 @@ Areas
 - A status bar displays the current mode and each mode has an accent color for the background of the
   name of the current mode (`Review`: blue, `Edit`: light green, `Search`: honey, `Comment`: dark
   green, `Command`: mango, `Selection`: purple, `Move`: dark red)
-- After the mode, the status bar displays in gray
-    - default: `commit $x/$y: $short_hash $summary` (`x`: index of the commit the cursor is on, `y`:
-    number of commits displayed)
+- After the mode, the status bar displays in gray:
     - while a number is pending: `The next command will be repeated <n> times`
+    - commits: `commit $x/$y: $short_hash $summary` (`x`: index of the commit the cursor is on, `y`:
+    number of commits displayed)
+    - index and working directory: `index for $branch: $summary` and `working directory` (see
+    "Commit creation")
 - In light mode, the background of the status bar (but the mode) is light gray
 
 Commit creation
 ===============
 
-If the current working directory has uncommited changes (either if there are changes in the index or
-the working directory), then instead of displaying unpushed commit, `reedi` will display the index,
-then the working directory.
+If the current working directory has uncommitted changes (either if there are changes in the index
+or the working directory), then instead of displaying unpushed commits, `reedi` will display the
+index, then the working directory (both are always displayed).
 
-In each section:
-- The sha-1 is replaced by "index" and "working directory" (same color)
-- If there is a pre-written commit message, it’s displayed in the index section
-- Other metadatas are not displayed
-- Diff are displayed normally (like `diff --cached` for the index and `diff` for the working
-directory)
+In the index and working directory revisions:
+- The hash is replaced by `index for $branch` (`index` if HEAD is detached) and `working directory`
+  (same color)
+- If there is a prepared commit message (like the one of a merge, or of `git cherry-pick
+  --no-commit`), it’s displayed in the index
+- Other metadata are not displayed
+- Diffs are displayed normally (like `diff --cached` for the index and `diff` for the working
+  directory). A revision without changes displays `no changes`.
+- Unmerged files are displayed in the working directory, and the status bar displays the number of
+  conflicts left
 
 Expected implementation
 =======================
@@ -177,7 +184,7 @@ Review mode:
 - `tab`/`shift+tab` or `left`/`right` move the cursor to the next/previous editable area (this does
   include `commit_subject`, `author` and `date` that are on the same line)
 - `g`/`G` move the cursor to first/last row
-- `J`/`K` or `ctrl+down`/`ctrl+up` jumps to the next/previous commit
+- `J`/`K` or `ctrl+down`/`ctrl+up` jumps to the next/previous revision
 - `[`/`]` jumps to the next/previous merge conflict
 
 - `ctrl+e`/`ctrl+y` move the screen one line down/up (and move the cursor if it would have gone
@@ -287,7 +294,7 @@ Edit mode (embedded editor):
   is displayed on the character it is on
 - Copy interacts with the system clipboard. In non-vim mode, `ctrl+c` copy
 - Each editable area has a separate undo tree
-- This undo tree is associated with the patch id of the associated commit, and thus re-loaded
+- This undo tree is associated with the patch id of the associated revision, and thus re-loaded
   automatically between sessions
 - `ctrl+escape` (or `alt+escape`, or `escape,escape` for old terminals) exit edit mode (reset to
   review mode)
@@ -312,7 +319,7 @@ Merge conflicts:
 
 Move mode:
 
-- `k`/`j` and `up`/`down` move the current span to the previous/next commit
+- `k`/`j` and `up`/`down` move the current span to the previous/next revision
 - in move mode, all files/hunks are hidden, except for the current span and its surrounding context
 
 Terminal protocol:
@@ -445,7 +452,7 @@ Settings
   - monochrome: black and white only
 - matching pair similarity:
   - within a file: 0.6
-  - within a commit: 0.5
+  - within a revision: 0.5
 - embedded bidi support for RTL language on terminal that do not support it: auto (default), enable
   or disabled (using `unicode-bidi` + terminal detection for auto (and config suggestion for proper
   RTL support if auto is used and RTL languages are used))
@@ -474,7 +481,7 @@ Moved lines:
   word-level diff)
 - Is a best effort, it is always possible that if a line is moved (with or without modifications
   inside the line itself), that the old line will be shown as removed and the new as added
-- Moved lines are tracked across files within a single commit
+- Moved lines are tracked across files within a single revision
 - Inside a file, if the 4 lines "abcd" become "acbd":
   - either b or c will be the moved line and the other unmodified
   - if the inside of b is modified, and not c, then c will always be seen as unmodified and
@@ -556,7 +563,7 @@ Colorscheme
 -----------
 
 - The colorscheme for syntax highlighting follows the current git colorscheme used by delta.
-- The line between commits is red (TODO: make it configurable, ideally re-use something from git
+- The line between revisions is red (TODO: make it configurable, ideally re-use something from git
   colorscheme that would make sense)
 - `$hash`, `$author`, `$date`, `$tags` and `$branches` use git coloration
 - `$file` and the line just below share the same color (blue)
