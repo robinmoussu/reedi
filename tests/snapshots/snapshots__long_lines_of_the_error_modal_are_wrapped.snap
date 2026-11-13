@@ -1,9 +1,9 @@
 ---
 source: tests/snapshots.rs
-expression: "screen(fake::file_changes(), 40, 12, viewport, Some(&error_modal))"
+expression: "screen(commit_behind_the_error_modal(), 40, 12, viewport, &error_modal)"
 ---
-"5e2b9d4 release: install with a shell   "
-"script instead of the Makefile, and     "
+"3f9a2c1 config: rename scroll_off to    "
+"scrolloff Alice Martin 12/10/2026 (HEAD "
 "┏ Unknown key in config file: /home/ali┓"
 "┃                                      ┃"
 "┃ line 3: `scrolloff = 3`              ┃"
@@ -11,5 +11,5 @@ expression: "screen(fake::file_changes(), 40, 12, viewport, Some(&error_modal))"
 "┃  "j", up = "k" }`                    ┃"
 "┃                                      ┃"
 "┗━━━━━━━ Press any key to close ━━━━━━━┛"
-"                                        "
-"src/release.rs                          "
+"src/config.rs                           "
+"────────────────────────────────────────"
