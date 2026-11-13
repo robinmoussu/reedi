@@ -251,7 +251,8 @@ Second commit with only the restructuring of fake data:
      - `gitattributes` (using the full name for each file, so before/after can be
        differentiated)
    - [x] all files in the before/after versions, named `$id_$version_$path`, where:
-     - `$id`: index of the pair (the order in which they are displayed, starting from `01`)
+     - `$id`: index of the pair, starting from `01` (the files are displayed sorted by path, like
+       git)
      - `$version`: "before" or "after" (a "before" file without "after" is a deletion, the reverse
        is an addition, multiple "before"/"after" with the same `id` should fail tests)
      - `$path`: path of the file in the fake commit (use `__` for path separation)

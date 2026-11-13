@@ -302,7 +302,7 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
         file.and_then(|file| metadata.gitattributes.get(file.name))
             .map_or(DiffAs::Auto, |attributes| diff_as(attributes))
     };
-    let files: Vec<FileDiff> = versions_by_id
+    let mut files: Vec<FileDiff> = versions_by_id
         .values()
         .map(|versions| {
             let diff_as =
@@ -315,6 +315,7 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
             )
         })
         .collect();
+    files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(Commit {
         hash,
         hash_abbrev_len: HASH_ABBREV_LEN,
@@ -542,8 +543,9 @@ mod tests {
         assert_eq!(commit(&files).unwrap_err(), FakeDataError::MissingMetadata);
     }
 
+    /// The order of the ids differs from the order of the paths.
     #[test]
-    fn files_are_paired_and_displayed_in_the_order_of_their_id() {
+    fn files_are_paired_by_id_and_sorted_by_path_like_git() {
         let files: &[(&str, &[u8])] = &[
             ("04_after_new.rs", b"fn main() {}\n"),
             ("02_after_added.txt", b"added\n"),
@@ -558,16 +560,17 @@ mod tests {
             .iter()
             .map(|file| (file.path.to_string(), file.change.clone()))
             .collect();
+        // A renamed file is sorted by its new path, like in `git log -p`.
         assert_eq!(
             files,
             [
-                ("src/a.rs".to_string(), FileChange::Modified),
                 ("added.txt".to_string(), FileChange::Added),
                 ("deleted.txt".to_string(), FileChange::Deleted),
                 (
                     "new.rs".to_string(),
                     FileChange::Renamed { from: "old.rs".into() }
                 ),
+                ("src/a.rs".to_string(), FileChange::Modified),
             ]
         );
     }
