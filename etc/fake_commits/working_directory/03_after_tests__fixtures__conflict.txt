@@ -1,0 +1,6 @@
+A file with a conflict, searched by the tests.
+<<<<<<< ours
+The search finds the first match.
+=======
+The search highlights every match.
+>>>>>>> theirs

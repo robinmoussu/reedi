@@ -1,4 +1,5 @@
-//! `reedi` is a review editor: a TUI to review (and edit) unpushed commits.
+//! `reedi` is a review editor: a TUI to review (and edit) unpushed commits, or uncommitted
+//! changes.
 
 mod app;
 pub mod cli;

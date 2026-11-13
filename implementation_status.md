@@ -258,6 +258,7 @@ Second commit with only the restructuring of fake data:
      - `$path`: path of the file in the fake commit (use `__` for path separation)
  - [x] `etc/fake_commits/**` is covered by a single glob in `.gitattributes` (`-text -whitespace`)
    and `.editorconfig`, so that git and editors never modify the bytes of the fake data
+   (`conflict-marker-size=100`, so that `git diff --check` ignores its conflict markers)
 
 version 0.0.7: interactivity
 ----------------------------
@@ -395,7 +396,7 @@ version 0.0.9: real data
 version 0.0.10: reviewing commit creation
 -----------------------------------------
 
-- [ ] If the working directory is dirty, show the index, then the working directory, instead of the
+- [x] If the working directory is dirty, show the index, then the working directory, instead of the
   unpushed commits
   Details:
   - the working directory is dirty if a tracked file differs between HEAD and the index, or between
@@ -428,12 +429,11 @@ version 0.0.10: reviewing commit creation
   - fake data: the hidden option `--fake-dirty-directory` (conflicts with `--fake`) displays
     `etc/fake_commits/index` and `etc/fake_commits/working_directory`, ignored by `--fake`. Their
     files are like those of the other folders (`before`: HEAD/index, `after`: index/working
-    directory), but the files of the index are sorted by path. `index/metadata.toml` has `branch`
-    (missing: HEAD is detached), `subject` and `body` (optional). `working_directory` has no
-    `metadata.toml`: its unmerged files are those whose `after` adds a `<<<<<<<` marker (one of
-    its files has a marker in both versions, which is not a conflict). They are unmerged in the
-    index, and their `before` is the version in HEAD. `--fake-now` and `--fake-timezone` work with
-    both options.
+    directory). `index/metadata.toml` has `branch` (missing: HEAD is detached), `subject` and
+    `body` (optional). `working_directory` has no `metadata.toml`: its unmerged files are those
+    whose `after` adds a `<<<<<<<` marker (one of its files has a marker in both versions, which
+    is not a conflict). They are unmerged in the index, and their `before` is the version in HEAD.
+    `--fake-now` and `--fake-timezone` work with both options.
   - the `metadata.toml` of the fake commits has `parents` (a list of hashes): the parent of each
     fake commit is the previous one, the parent of the first one is not a fake commit
 

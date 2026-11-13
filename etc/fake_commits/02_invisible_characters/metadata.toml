@@ -1,6 +1,7 @@
 # A commit with all kinds of invisible characters, in all the areas: subject, author, body, code
 # with consistent and inconsistent line endings.
 hash = "c7e05b9d2a4f6081c3e5b7d9f0a2c4e6b8d1f357"
+parents = ["b0d4e2a3c91f5d7a8e260b4c9d1f3a5e7b82c046"]
 author = "Zoé\u00A0Durand"
 email = "zoe.durand@example.org"
 date = "2026-10-05 17:03:51 +0200"

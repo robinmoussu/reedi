@@ -31,7 +31,7 @@ const COMMIT_MESSAGE_FILE: &str = ".git/TEST_COMMIT_MESSAGE";
 const RAW_COMMIT_FILE: &str = ".git/TEST_RAW_COMMIT";
 /// The file whose content differs on the 2 sides of the rebase of
 /// [`Git::start_rebase_stopped_by_conflict()`].
-const CONFLICTING_FILE: &str = "conflict.txt";
+pub const CONFLICTING_FILE: &str = "conflict.txt";
 
 /// `program`, run in `directory` without the configuration of the user (so that the tests don't
 /// depend on it), and without looking for a repository above `directory`.
@@ -186,6 +186,26 @@ impl Git {
         let path = self.path().join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, content).unwrap();
+    }
+
+    /// `git add $path`.
+    pub fn stage(&self, path: &str) {
+        self.stdout_of(&["add", "--", path]);
+    }
+
+    /// An empty commit in the submodule at `path` (relative to the working tree), created if it
+    /// doesn't exist (it is a submodule once committed in this repository).
+    pub fn commit_in_submodule(&self, path: &str) {
+        self.stdout_of(&["init", "--quiet", path]);
+        self.stdout_of(&[
+            "-C",
+            path,
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "--no-gpg-sign",
+            "--message=In the submodule",
+        ]);
     }
 
     /// `git switch --create $branch $start` (from HEAD if `start` is `None`).

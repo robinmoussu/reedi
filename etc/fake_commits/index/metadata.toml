@@ -1,0 +1,7 @@
+# The index during a cherry-pick stopped by a conflict: its prepared message is the one of the
+# cherry-picked commit (`.git/MERGE_MSG`, without its comment lines).
+branch = "main"
+subject = "search: highlight all the matches"
+body = """
+The matches outside of the screen are highlighted too, so that they
+are visible after scrolling."""

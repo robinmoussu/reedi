@@ -1,15 +1,21 @@
-//! The commits displayed by `reedi`: those `git log $base..HEAD -p --reverse` displays, where
+//! The revisions displayed by `reedi`: the index and the working directory if the working
+//! directory is dirty, otherwise the commits `git log $base..HEAD -p --reverse` displays, where
 //! `$base` is described by [`Base`].
 
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
+use std::fs;
+use std::io;
+use std::io::Read;
 use std::path::Path;
 
 use gix::ObjectId;
 use gix::attrs::StateRef;
 use gix::bstr::BStr;
+use gix::bstr::BString;
 use gix::bstr::ByteSlice;
+use gix::filter::plumbing::pipeline::convert::ToGitOutcome;
 use gix::hash::Prefix;
 use gix::head;
 use gix::object::tree::diff::ChangeDetached;
@@ -21,8 +27,16 @@ use gix::refs::FullName;
 use gix::refs::PartialNameRef;
 use gix::remote::Direction;
 use gix::revision::walk::Sorting;
+use gix::status::Submodule;
+use gix::status::UntrackedFiles;
+use gix::status::index_worktree;
+use gix::status::plumbing::index_as_worktree::Change;
+use gix::status::plumbing::index_as_worktree::EntryStatus;
+use gix::status::tree_index::TrackRenames;
+use gix::submodule::config::Ignore;
 use gix::traverse::commit::simple::CommitTimeOrder;
 use gix::worktree::stack::state::attributes::Source;
+use reedi_gix_compat::message;
 use reedi_gix_compat::rebase;
 use reedi_gix_compat::upstream;
 use reediif::diff;
@@ -34,8 +48,16 @@ use crate::cli::Cli;
 use crate::fake;
 use crate::model::Commit;
 use crate::model::Decoration;
+use crate::model::Index;
 use crate::model::Revision;
+use crate::model::WorkingDirectory;
 use crate::settings::CONTEXT;
+
+/// The files that may hold the message prepared for the next commit, relative to the git
+/// directory, in the order they are looked for: the message of a merge (also written by a
+/// cherry-pick or a rebase stopped by a conflict), of a squash, and of the commit a rebase
+/// replays.
+const NEXT_COMMIT_MESSAGE_FILES: [&str; 3] = ["MERGE_MSG", "SQUASH_MSG", "rebase-merge/message"];
 
 /// The attribute deciding whether a file is diffed as text or as binary (`binary` unsets it).
 const DIFF_ATTRIBUTE: &str = "diff";
@@ -175,6 +197,13 @@ pub fn displayed_revisions(cli: &Cli, directory: &Path) -> Result<Vec<Revision>,
     if cli.fake {
         return Ok(fake::all().into_iter().map(Revision::Commit).collect());
     }
+    if cli.fake_dirty_directory {
+        let (index, working_directory) = fake::dirty_directory();
+        return Ok(vec![
+            Revision::Index(index),
+            Revision::WorkingDirectory(working_directory),
+        ]);
+    }
     let repository = gix::discover(directory).map_err(|error| {
         if error.is_not_found() {
             LogError::NotARepository
@@ -182,10 +211,328 @@ pub fn displayed_revisions(cli: &Cli, directory: &Path) -> Result<Vec<Revision>,
             unreadable(error)
         }
     })?;
+    if let Some((index, working_directory)) = uncommitted_changes_of(&repository)? {
+        return Ok(vec![
+            Revision::Index(index),
+            Revision::WorkingDirectory(working_directory),
+        ]);
+    }
     Ok(commits_of(&repository)?
         .into_iter()
         .map(Revision::Commit)
         .collect())
+}
+
+/// The index and the working directory of `repository`, if the working directory is dirty (a
+/// tracked file differs between HEAD and the index, or between the index and the working
+/// directory).
+fn uncommitted_changes_of(
+    repository: &gix::Repository,
+) -> Result<Option<(Index, WorkingDirectory)>, LogError> {
+    // On a branch without commits, the tree of HEAD is the empty tree.
+    let head_tree = repository
+        .head_tree_id_or_empty()
+        .map_err(unreadable)?
+        .object()
+        .map_err(unreadable)?
+        .into_tree();
+    let index = repository.index_or_empty().map_err(unreadable)?;
+    let mut attributes = DiffAttributes::new(repository)?;
+    let index_files = staged_files(repository, &head_tree, &index, &mut attributes)?;
+    let working_directory_files = unstaged_files(repository, &head_tree, &index, &mut attributes)?;
+    if index_files.is_empty() && working_directory_files.is_empty() {
+        return Ok(None);
+    }
+    let branch = match rebase::rebased_branch(repository.git_dir()).map_err(unreadable)? {
+        Some(branch) => Some(branch),
+        None if rebase::onto(repository.git_dir())
+            .map_err(unreadable)?
+            .is_some() =>
+        {
+            None
+        }
+        None => branch_of(&repository.head().map_err(unreadable)?.kind).cloned(),
+    };
+    let message = next_commit_message(repository)?;
+    let (subject, body) = message.map_or_else(Default::default, |message| {
+        subject_and_body(MessageRef::from_bytes(&message))
+    });
+    let index = Index {
+        branch,
+        subject,
+        body,
+        files: index_files,
+    };
+    let working_directory = WorkingDirectory { files: working_directory_files };
+    Ok(Some((index, working_directory)))
+}
+
+/// The content of `path`, or `None` if it doesn't exist.
+fn read_if_exists(path: &Path) -> Result<Option<Vec<u8>>, LogError> {
+    match fs::read(path) {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(unreadable(error)),
+    }
+}
+
+/// The message prepared for the next commit of `repository`, without its comment lines: the first
+/// existing file of `NEXT_COMMIT_MESSAGE_FILES`, then the file of `commit.template`. `None` if there
+/// is none.
+fn next_commit_message(repository: &gix::Repository) -> Result<Option<BString>, LogError> {
+    let prepared = NEXT_COMMIT_MESSAGE_FILES
+        .iter()
+        .map(|file| read_if_exists(&repository.git_dir().join(file)))
+        .find_map(Result::transpose)
+        .transpose()?;
+    let message = match prepared {
+        Some(message) => Some(message),
+        None => {
+            let template = repository
+                .config_snapshot()
+                .trusted_path("commit.template")
+                .map_err(unreadable)?;
+            match template {
+                Some(template) => read_if_exists(&template)?,
+                None => None,
+            }
+        }
+    };
+    Ok(message.map(|message| message::stripped(repository, message.as_bstr())))
+}
+
+/// The diff of each file whose version in `index` differs from the one in `head_tree`, like `git
+/// diff --cached`, sorted by path.
+fn staged_files(
+    repository: &gix::Repository,
+    head_tree: &gix::Tree,
+    index: &gix::index::State,
+    attributes: &mut DiffAttributes,
+) -> Result<Vec<FileDiff>, LogError> {
+    // Like `git diff`, renames are detected according to `diff.renames`, and by default.
+    let (rewrites, is_configured) = gix::diff::new_rewrites(
+        repository.config_snapshot().plumbing(),
+        /* lenient */ true,
+    )
+    .map_err(unreadable)?;
+    let renames = match (rewrites, is_configured) {
+        (Some(rewrites), _) => TrackRenames::Given(rewrites),
+        (None, false) => TrackRenames::Given(Default::default()),
+        (None, true) => TrackRenames::Disabled,
+    };
+    let mut changes = Vec::new();
+    repository
+        .tree_index_status(&head_tree.id, index, None, renames, |change, _, _| {
+            changes.push(change.into_owned());
+            Ok(std::ops::ControlFlow::Continue(()))
+        })
+        .map_err(unreadable)?;
+    let mut files = changes
+        .iter()
+        .filter_map(|change| staged_file_diff(repository, change, attributes).transpose())
+        .collect::<Result<Vec<_>, _>>()?;
+    // The unmerged entries are not compared, they have one entry per side of the conflict.
+    let mut unmerged_paths: Vec<_> = index
+        .entries()
+        .iter()
+        .filter(|entry| entry.stage() != gix::index::entry::Stage::Unconflicted)
+        .map(|entry| entry.path(index))
+        .collect();
+    unmerged_paths.dedup();
+    files.extend(unmerged_paths.into_iter().map(diff::unmerged));
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(files)
+}
+
+/// The version of a file in an index, as a version of a file in a tree.
+fn tree_file<'a>(
+    path: &'a BStr,
+    mode: gix::index::entry::Mode,
+    id: &gix::oid,
+) -> Option<TreeFile<'a>> {
+    Some((path, mode.to_tree_entry_mode()?, id.to_owned()))
+}
+
+/// The diff of the file modified by `change` (from the tree of HEAD to the index), `None` if it
+/// is not displayed (submodules, and changes of the mode only).
+fn staged_file_diff(
+    repository: &gix::Repository,
+    change: &gix::diff::index::Change,
+    attributes: &mut DiffAttributes,
+) -> Result<Option<FileDiff>, LogError> {
+    use gix::diff::index::ChangeRef;
+    let (before, after) = match change {
+        ChangeRef::Addition { location, entry_mode, id, .. } => {
+            (None, tree_file(location, *entry_mode, id))
+        }
+        ChangeRef::Deletion { location, entry_mode, id, .. } => {
+            (tree_file(location, *entry_mode, id), None)
+        }
+        ChangeRef::Modification {
+            location,
+            previous_entry_mode,
+            previous_id,
+            entry_mode,
+            id,
+            ..
+        } => {
+            if previous_id == id {
+                return Ok(None);
+            }
+            (
+                tree_file(location, *previous_entry_mode, previous_id),
+                tree_file(location, *entry_mode, id),
+            )
+        }
+        ChangeRef::Rewrite {
+            source_location,
+            source_entry_mode,
+            source_id,
+            location,
+            entry_mode,
+            id,
+            copy,
+            ..
+        } => {
+            let after = tree_file(location, *entry_mode, id);
+            if *copy {
+                (None, after)
+            } else {
+                (
+                    tree_file(source_location, *source_entry_mode, source_id),
+                    after,
+                )
+            }
+        }
+    };
+    blobs_diff(repository, before, after, attributes)
+}
+
+/// The diff of each file whose version in the working directory differs from the one in `index`,
+/// like `git diff`, sorted by path. Untracked files are ignored, and an unmerged file is compared
+/// to its version in `head_tree`.
+fn unstaged_files(
+    repository: &gix::Repository,
+    head_tree: &gix::Tree,
+    index: &gix::index::State,
+    attributes: &mut DiffAttributes,
+) -> Result<Vec<FileDiff>, LogError> {
+    let (mut pipeline, _) = repository.filter_pipeline(None).map_err(unreadable)?;
+    let items = repository
+        .status(gix::progress::Discard)
+        .map_err(unreadable)?
+        .untracked_files(UntrackedFiles::None)
+        .index_worktree_submodules(Submodule::Given { ignore: Ignore::All, check_dirty: false })
+        .index_worktree_rewrites(None)
+        .into_index_worktree_iter(Vec::new())
+        .map_err(unreadable)?;
+    let mut files = items
+        .map(|item| {
+            let item = item.map_err(unreadable)?;
+            unstaged_file_diff(
+                repository,
+                head_tree,
+                index,
+                &mut pipeline,
+                &item,
+                attributes,
+            )
+        })
+        .filter_map(Result::transpose)
+        .collect::<Result<Vec<_>, _>>()?;
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(files)
+}
+
+/// The diff of the file of `item` (a difference between the index and the working directory),
+/// `None` if it is not displayed (submodules, and changes of the mode only).
+fn unstaged_file_diff(
+    repository: &gix::Repository,
+    head_tree: &gix::Tree,
+    index: &gix::index::State,
+    pipeline: &mut gix::filter::Pipeline,
+    item: &index_worktree::Item,
+    attributes: &mut DiffAttributes,
+) -> Result<Option<FileDiff>, LogError> {
+    let index_worktree::Item::Modification { entry, rela_path, status, .. } = item else {
+        return Ok(None);
+    };
+    let path = rela_path.as_bstr();
+    let in_index = || tree_file(path, entry.mode, &entry.id);
+    let (before, after_exists) = match status {
+        EntryStatus::Conflict { .. } => {
+            let in_head = head_tree
+                .lookup_entry_by_path(gix::path::from_bstr(path).map_err(unreadable)?)
+                .map_err(unreadable)?
+                .map(|in_head| (path, in_head.mode(), in_head.object_id()));
+            (in_head, true)
+        }
+        EntryStatus::IntentToAdd => (None, true),
+        EntryStatus::Change(Change::Removed) => (in_index(), false),
+        EntryStatus::Change(
+            Change::Type { .. } | Change::Modification { content_change: Some(_), .. },
+        ) => (in_index(), true),
+        EntryStatus::Change(Change::Modification { content_change: None, .. })
+        | EntryStatus::Change(Change::SubmoduleModification(_))
+        | EntryStatus::NeedsUpdate(_) => return Ok(None),
+    };
+    if before.is_some_and(|(_, mode, _)| !mode.is_blob_or_symlink()) {
+        return Ok(None);
+    }
+    let before = before
+        .map(|file| blob_version(repository, file))
+        .transpose()?;
+    let after = if after_exists {
+        worktree_version(repository, pipeline, index, path)?
+    } else {
+        None
+    };
+    diff_of(before, after, attributes).map(Some)
+}
+
+/// The version in the working directory of the file at `path`, converted like `git diff` does
+/// (`core.autocrlf`, `text` and `eol` attributes, clean filters), `None` if it doesn't exist.
+fn worktree_version(
+    repository: &gix::Repository,
+    pipeline: &mut gix::filter::Pipeline,
+    index: &gix::index::State,
+    path: &BStr,
+) -> Result<Option<Version>, LogError> {
+    let relative_path = gix::path::from_bstr(path).map_err(unreadable)?;
+    let workdir = repository
+        .workdir()
+        .ok_or_else(|| unreadable("the repository has no working directory"))?;
+    let absolute_path = workdir.join(&relative_path);
+    let metadata = match fs::symlink_metadata(&absolute_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(unreadable(error)),
+    };
+    // Like git, a symbolic link is diffed as its target.
+    let content = if metadata.is_symlink() {
+        let target = fs::read_link(&absolute_path).map_err(unreadable)?;
+        gix::path::into_bstr(target)
+            .map_err(unreadable)?
+            .into_owned()
+            .into()
+    } else {
+        let file = fs::File::open(&absolute_path).map_err(unreadable)?;
+        let mut content = Vec::new();
+        match pipeline
+            .convert_to_git(file, &relative_path, index)
+            .map_err(unreadable)?
+        {
+            ToGitOutcome::Unchanged(mut reader) => reader.read_to_end(&mut content),
+            ToGitOutcome::Process(mut reader) => reader.read_to_end(&mut content),
+            ToGitOutcome::Buffer(buffer) => {
+                content.extend_from_slice(buffer);
+                Ok(buffer.len())
+            }
+        }
+        .map_err(unreadable)?;
+        content
+    };
+    Ok(Some(Version { path: path.to_owned(), content }))
 }
 
 /// The commits of `repository` (see the [module documentation](self)).
@@ -347,6 +694,18 @@ fn without_leading_blank_lines(text: &BStr) -> &BStr {
     text[blank_len..].as_bstr()
 }
 
+/// The subject of `message`, as `git log --format=%s` displays it, and its body, as `%b` displays
+/// it.
+fn subject_and_body(message: MessageRef) -> (String, String) {
+    let subject = message.summary().to_str_lossy().into_owned();
+    let body = message.body.map_or_else(String::new, |body| {
+        without_leading_blank_lines(body)
+            .to_str_lossy()
+            .into_owned()
+    });
+    (subject, body)
+}
+
 /// The commit `id` of `repository`, decorated with `decorations`.
 fn commit(
     repository: &gix::Repository,
@@ -357,7 +716,9 @@ fn commit(
     let commit = repository.find_commit(id).map_err(unreadable)?;
     let author = commit.author().map_err(unreadable)?;
     let message = MessageRef::from_bytes(commit.message_raw().map_err(unreadable)?);
-    let is_merge = commit.parent_ids().nth(1).is_some();
+    let (subject, body) = subject_and_body(message);
+    let parent_ids: Vec<_> = commit.parent_ids().map(|id| id.detach()).collect();
+    let is_merge = parent_ids.len() > 1;
     // Like `git log -p`, merge commits have no diff.
     let files = if is_merge {
         Vec::new()
@@ -371,16 +732,13 @@ fn commit(
             .shorten()
             .map_err(unreadable)?
             .hex_len(),
-        subject: message.summary().to_str_lossy().into_owned(),
+        subject,
         author: author.name.to_str_lossy().into_owned(),
         email: author.email.to_str_lossy().into_owned(),
         date: author.time().map_err(unreadable)?,
         decorations,
-        body: message.body.map_or_else(String::new, |body| {
-            without_leading_blank_lines(body)
-                .to_str_lossy()
-                .into_owned()
-        }),
+        body,
+        parent_ids,
         files,
     })
 }
@@ -470,6 +828,17 @@ fn file_diff(
             }
         }
     };
+    blobs_diff(repository, before, after, attributes)
+}
+
+/// The diff of a file from `before` to `after` (`None` if it doesn't exist in that version), read
+/// from the objects of `repository`, `None` if it is not displayed (trees and submodules).
+fn blobs_diff(
+    repository: &gix::Repository,
+    before: Option<TreeFile>,
+    after: Option<TreeFile>,
+    attributes: &mut DiffAttributes,
+) -> Result<Option<FileDiff>, LogError> {
     if [before, after]
         .iter()
         .flatten()
@@ -477,35 +846,59 @@ fn file_diff(
     {
         return Ok(None);
     }
-    let content_of = |file: Option<TreeFile>| {
-        file.map(|(_, _, id)| {
-            repository
-                .find_blob(id)
-                .map(|mut blob| blob.take_data())
-                .map_err(unreadable)
-        })
-        .transpose()
-    };
-    let (before_content, after_content) = (content_of(before)?, content_of(after)?);
-    let diff_as_of = |attributes: &mut DiffAttributes, file: Option<TreeFile>| {
-        file.map_or(Ok(DiffAs::Auto), |(path, _, _)| attributes.diff_as(path))
-    };
-    let diff_as = DiffAs::of_versions(
-        diff_as_of(attributes, before)?,
-        diff_as_of(attributes, after)?,
-    );
-    Ok(Some(diff::file(
-        state(before, &before_content),
-        state(after, &after_content),
-        diff_as,
-        CONTEXT,
-    )))
+    let version_of =
+        |file: Option<TreeFile>| file.map(|file| blob_version(repository, file)).transpose();
+    diff_of(version_of(before)?, version_of(after)?, attributes).map(Some)
 }
 
-/// The version `file` of a file, whose content is `content`, if the version exists.
-fn state<'a>(file: Option<TreeFile<'a>>, content: &'a Option<Vec<u8>>) -> Option<FileState<'a>> {
-    file.zip(content.as_deref())
-        .map(|((path, _, _), content)| FileState { path, content })
+/// A version of a file: its path and its content.
+struct Version {
+    path: BString,
+    content: Vec<u8>,
+}
+
+impl Version {
+    fn state(&self) -> FileState<'_> {
+        FileState {
+            path: self.path.as_bstr(),
+            content: &self.content,
+        }
+    }
+}
+
+/// The version `file` of a file, read from the objects of `repository`.
+fn blob_version(
+    repository: &gix::Repository,
+    (path, _, id): TreeFile,
+) -> Result<Version, LogError> {
+    let content = repository
+        .find_blob(id)
+        .map(|mut blob| blob.take_data())
+        .map_err(unreadable)?;
+    Ok(Version { path: path.to_owned(), content })
+}
+
+/// The diff of a file from `before` to `after` (`None` if it doesn't exist in that version).
+fn diff_of(
+    before: Option<Version>,
+    after: Option<Version>,
+    attributes: &mut DiffAttributes,
+) -> Result<FileDiff, LogError> {
+    let diff_as_of = |attributes: &mut DiffAttributes, version: &Option<Version>| {
+        version.as_ref().map_or(Ok(DiffAs::Auto), |version| {
+            attributes.diff_as(version.path.as_bstr())
+        })
+    };
+    let diff_as = DiffAs::of_versions(
+        diff_as_of(attributes, &before)?,
+        diff_as_of(attributes, &after)?,
+    );
+    Ok(diff::file(
+        before.as_ref().map(Version::state),
+        after.as_ref().map(Version::state),
+        diff_as,
+        CONTEXT,
+    ))
 }
 
 /// The attributes of the files of a repository that decide how they are diffed, read from its
@@ -568,9 +961,11 @@ mod tests {
     use crate::model::Decoration;
     use crate::settings::CONTEXT;
     use crate::test_git::BRANCH;
+    use crate::test_git::CONFLICTING_FILE;
     use crate::test_git::Git;
     use crate::test_git::RebaseBackend;
     use crate::test_support::single;
+    use reediif::diff::unmerged;
 
     /// A branch in parallel with `BRANCH`.
     const SIDE_BRANCH: &str = "side";
@@ -588,6 +983,7 @@ mod tests {
             .into_iter()
             .map(|revision| match revision {
                 Revision::Commit(commit) => commit,
+                other => panic!("{other:?} is not a commit"),
             })
             .collect()
     }
@@ -812,16 +1208,7 @@ mod tests {
         link(&git, "after");
         git.write("nul.bin", b"NUL\0byte\n");
         git.write("latin1.txt", b"Caf\xe9\n");
-        git.stdout_of(&["init", "--quiet", "submodule"]);
-        git.stdout_of(&[
-            "-C",
-            "submodule",
-            "commit",
-            "--quiet",
-            "--allow-empty",
-            "--no-gpg-sign",
-            "--message=In the submodule",
-        ]);
+        git.commit_in_submodule("submodule");
         git.commit_all(b"After");
 
         let commits = commits_of(&git.repository()).unwrap();
@@ -930,6 +1317,21 @@ mod tests {
         assert_eq!(hashes(&commits), hashes(&fake::all()));
     }
 
+    /// The directory is not a repository, so reading it would fail.
+    #[test]
+    fn fake_dirty_directory_option_displays_the_fake_index_and_working_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let cli = Cli::parse_from(["reedi", "--fake-dirty-directory"]);
+        let revisions = displayed_revisions(&cli, directory.path()).unwrap();
+        assert!(
+            matches!(
+                revisions[..],
+                [Revision::Index(_), Revision::WorkingDirectory(_)]
+            ),
+            "{revisions:?}"
+        );
+    }
+
     #[test]
     fn without_fake_option_the_commits_of_the_repository_are_displayed() {
         let git = Git::with_upstream();
@@ -937,5 +1339,380 @@ mod tests {
         let cli = Cli::parse_from(["reedi"]);
         let commits = commits(displayed_revisions(&cli, git.path()).unwrap());
         assert_eq!(hashes(&commits), git.log_reverse("origin/topic..HEAD"));
+    }
+
+    /// The commit parents are those of `git log --format=%P`, in the same order.
+    #[test]
+    fn parents_are_those_of_git_log() {
+        let git = Git::with_upstream();
+        git.commit_all(b"First on topic");
+        git.switch_to_new_branch(SIDE_BRANCH, Some("HEAD~1"));
+        git.commit_all(b"First on side");
+        git.switch_to(BRANCH);
+        git.stdout_of(&[
+            "merge",
+            "--quiet",
+            "--no-edit",
+            "--no-ff",
+            "--no-gpg-sign",
+            SIDE_BRANCH,
+        ]);
+        let commits = commits_of(&git.repository()).unwrap();
+        let parents: Vec<Vec<String>> = commits
+            .iter()
+            .map(|commit| commit.parent_ids.iter().map(ObjectId::to_string).collect())
+            .collect();
+        let expected: Vec<Vec<String>> = commits
+            .iter()
+            .map(|commit| {
+                git.stdout_of(&["log", "-1", "--format=%P", &commit.hash.to_string()])
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect()
+            })
+            .collect();
+        assert_eq!(parents, expected);
+        // The merge commit.
+        assert_eq!(parents.last().unwrap().len(), 2);
+    }
+
+    /// The content of `a.txt` in HEAD, in the index and in the working directory of the tests of
+    /// the uncommitted changes.
+    const HEAD_CONTENT: &[u8] = b"head\n";
+    const INDEX_CONTENT: &[u8] = b"index\n";
+    const WORKING_DIRECTORY_CONTENT: &[u8] = b"working directory\n";
+
+    /// A repository whose upstream is at HEAD, where `a.txt` is `HEAD_CONTENT`.
+    fn with_committed_file() -> Git {
+        let git = Git::on_branch();
+        git.write("a.txt", HEAD_CONTENT);
+        git.commit_all(b"Base");
+        git.set_upstream_at_head();
+        git
+    }
+
+    /// The index and the working directory of `git`, whose working directory must be dirty.
+    fn uncommitted_changes(git: &Git) -> (Index, WorkingDirectory) {
+        uncommitted_changes_of(&git.repository())
+            .unwrap()
+            .expect("the working directory is dirty")
+    }
+
+    #[test]
+    fn staged_changes_are_in_the_index_and_unstaged_ones_in_the_working_directory() {
+        let git = with_committed_file();
+        git.write("a.txt", INDEX_CONTENT);
+        git.stage("a.txt");
+        git.write("a.txt", WORKING_DIRECTORY_CONTENT);
+        let (index, working_directory) = uncommitted_changes(&git);
+        let staged = file_diff(state("a.txt", HEAD_CONTENT), state("a.txt", INDEX_CONTENT));
+        let unstaged = file_diff(
+            state("a.txt", INDEX_CONTENT),
+            state("a.txt", WORKING_DIRECTORY_CONTENT),
+        );
+        assert_eq!(comparable_files(&index.files), comparable_files(&[staged]));
+        assert_eq!(
+            comparable_files(&working_directory.files),
+            comparable_files(&[unstaged])
+        );
+    }
+
+    #[test]
+    fn staged_changes_alone_make_the_working_directory_dirty() {
+        let git = with_committed_file();
+        git.write("a.txt", INDEX_CONTENT);
+        git.stage("a.txt");
+        let (index, working_directory) = uncommitted_changes(&git);
+        assert_eq!(index.files.len(), 1);
+        assert!(working_directory.files.is_empty());
+    }
+
+    #[test]
+    fn unstaged_changes_alone_make_the_working_directory_dirty() {
+        let git = with_committed_file();
+        git.write("a.txt", WORKING_DIRECTORY_CONTENT);
+        let (index, working_directory) = uncommitted_changes(&git);
+        assert!(index.files.is_empty());
+        assert_eq!(working_directory.files.len(), 1);
+    }
+
+    #[test]
+    fn clean_working_directory_has_no_uncommitted_changes() {
+        let git = with_committed_file();
+        assert!(uncommitted_changes_of(&git.repository()).unwrap().is_none());
+    }
+
+    #[test]
+    fn untracked_files_do_not_make_the_working_directory_dirty() {
+        let git = with_committed_file();
+        git.write("untracked.txt", b"Untracked.\n");
+        assert!(uncommitted_changes_of(&git.repository()).unwrap().is_none());
+    }
+
+    #[test]
+    fn untracked_files_are_not_displayed() {
+        let git = with_committed_file();
+        git.write("a.txt", WORKING_DIRECTORY_CONTENT);
+        git.write("untracked.txt", b"Untracked.\n");
+        let (_, working_directory) = uncommitted_changes(&git);
+        let paths: Vec<_> = working_directory
+            .files
+            .iter()
+            .map(|file| &file.path)
+            .collect();
+        assert_eq!(paths, ["a.txt"]);
+    }
+
+    /// The mode changes both in the index and in the working directory.
+    #[test]
+    fn mode_only_changes_do_not_make_the_working_directory_dirty() {
+        let git = with_committed_file();
+        git.stdout_of(&["update-index", "--chmod=+x", "a.txt"]);
+        fs::set_permissions(git.path().join("a.txt"), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(uncommitted_changes_of(&git.repository()).unwrap().is_none());
+    }
+
+    #[test]
+    fn submodule_changes_do_not_make_the_working_directory_dirty() {
+        let git = with_committed_file();
+        git.commit_in_submodule("submodule");
+        git.commit_all(b"Submodule");
+        // Unstaged, then staged.
+        git.commit_in_submodule("submodule");
+        assert!(uncommitted_changes_of(&git.repository()).unwrap().is_none());
+        git.stage("submodule");
+        assert!(uncommitted_changes_of(&git.repository()).unwrap().is_none());
+    }
+
+    /// The repository has a commit that is not on the upstream.
+    #[test]
+    fn dirty_working_directory_displays_the_index_then_the_working_directory_instead_of_the_commits()
+     {
+        let git = with_committed_file();
+        git.commit_all(b"Unpushed");
+        git.write("a.txt", WORKING_DIRECTORY_CONTENT);
+        let cli = Cli::parse_from(["reedi"]);
+        let revisions = displayed_revisions(&cli, git.path()).unwrap();
+        assert!(
+            matches!(
+                revisions[..],
+                [Revision::Index(_), Revision::WorkingDirectory(_)]
+            ),
+            "{revisions:?}"
+        );
+    }
+
+    /// The repository has neither upstream nor remote.
+    #[test]
+    fn dirty_working_directory_is_displayed_without_base() {
+        let git = Git::on_branch();
+        git.write("a.txt", HEAD_CONTENT);
+        git.commit_all(b"Base");
+        git.write("a.txt", WORKING_DIRECTORY_CONTENT);
+        let cli = Cli::parse_from(["reedi"]);
+        assert_eq!(displayed_revisions(&cli, git.path()).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn on_a_branch_without_commits_the_index_is_compared_to_an_empty_tree() {
+        let git = Git::on_branch();
+        git.write("a.txt", INDEX_CONTENT);
+        git.stage("a.txt");
+        let (index, _) = uncommitted_changes(&git);
+        assert_eq!(
+            comparable_files(&index.files),
+            comparable_files(&[file_diff(None, state("a.txt", INDEX_CONTENT))])
+        );
+    }
+
+    /// `refs/heads/$branch`.
+    fn local_branch(branch: &str) -> Option<FullName> {
+        Some(Category::LocalBranch.to_full_name(branch).unwrap())
+    }
+
+    #[test]
+    fn index_is_for_the_branch_head_is_attached_to() {
+        let git = with_committed_file();
+        git.write("a.txt", WORKING_DIRECTORY_CONTENT);
+        assert_eq!(uncommitted_changes(&git).0.branch, local_branch(BRANCH));
+    }
+
+    #[test]
+    fn index_of_a_detached_head_has_no_branch() {
+        let git = with_committed_file();
+        git.detach_head();
+        git.write("a.txt", WORKING_DIRECTORY_CONTENT);
+        assert_eq!(uncommitted_changes(&git).0.branch, None);
+    }
+
+    #[test]
+    fn during_a_rebase_the_index_is_for_the_rebased_branch() {
+        for backend in [RebaseBackend::Merge, RebaseBackend::Apply] {
+            let git = Git::with_upstream();
+            git.start_rebase_stopped_by_conflict(backend, /* replayed_commits_count */ 1);
+            let (index, _) = uncommitted_changes(&git);
+            assert_eq!(index.branch, local_branch(BRANCH), "{backend:?}");
+        }
+    }
+
+    #[test]
+    fn unmerged_files_are_unmerged_paths_in_the_index() {
+        let git = Git::with_upstream();
+        git.start_rebase_stopped_by_conflict(
+            RebaseBackend::Merge,
+            /* replayed_commits_count */ 0,
+        );
+        let (index, _) = uncommitted_changes(&git);
+        assert_eq!(
+            comparable_files(&index.files),
+            comparable_files(&[unmerged(CONFLICTING_FILE)])
+        );
+    }
+
+    /// The file on disk has a single conflict, whose markers are added to the version of HEAD.
+    #[test]
+    fn unmerged_files_are_compared_to_head_in_the_working_directory() {
+        let git = Git::with_upstream();
+        git.start_rebase_stopped_by_conflict(
+            RebaseBackend::Merge,
+            /* replayed_commits_count */ 0,
+        );
+        let head = git.stdout_of(&["show", &format!("HEAD:{CONFLICTING_FILE}")]);
+        let disk = fs::read(git.path().join(CONFLICTING_FILE)).unwrap();
+        let (index, working_directory) = uncommitted_changes(&git);
+        let expected = file_diff(
+            state(CONFLICTING_FILE, head.as_bytes()),
+            state(CONFLICTING_FILE, &disk),
+        );
+        assert_eq!(
+            comparable_files(&working_directory.files),
+            comparable_files(&[expected])
+        );
+        assert_eq!(working_directory.conflicts_count(&index), 1);
+    }
+
+    /// The path of the file of `commit.template`, relative to the working tree.
+    const TEMPLATE_FILE: &str = ".git/custom_template";
+
+    /// A conflicting rebase with the merge backend writes `MERGE_MSG` and
+    /// `.git/rebase-merge/message`. Each source is removed in turn, to find the next one.
+    #[test]
+    fn next_commit_message_is_the_first_existing_of_merge_squash_rebase_and_template_messages() {
+        let git = Git::with_upstream();
+        git.start_rebase_stopped_by_conflict(
+            RebaseBackend::Merge,
+            /* replayed_commits_count */ 0,
+        );
+        git.write(".git/MERGE_MSG", b"Merge\n");
+        git.write(".git/SQUASH_MSG", b"Squash\n");
+        git.write(".git/rebase-merge/message", b"Rebase\n");
+        git.write(TEMPLATE_FILE, b"Template\n");
+        let template = git.path().join(TEMPLATE_FILE);
+        git.set_config("commit.template", template.to_str().unwrap());
+        let subject = || uncommitted_changes(&git).0.subject;
+        assert_eq!(subject(), "Merge");
+        fs::remove_file(git.path().join(".git/MERGE_MSG")).unwrap();
+        assert_eq!(subject(), "Squash");
+        fs::remove_file(git.path().join(".git/SQUASH_MSG")).unwrap();
+        assert_eq!(subject(), "Rebase");
+        fs::remove_file(git.path().join(".git/rebase-merge/message")).unwrap();
+        assert_eq!(subject(), "Template");
+    }
+
+    #[test]
+    fn comment_lines_of_the_next_commit_message_are_removed() {
+        let git = with_committed_file();
+        git.write("a.txt", WORKING_DIRECTORY_CONTENT);
+        git.write(
+            ".git/MERGE_MSG",
+            b"# Comment.\nSubject\n\nBody.\n# Conflicts:\n#\ta.txt\n",
+        );
+        let (index, _) = uncommitted_changes(&git);
+        assert_eq!(index.subject, "Subject");
+        assert_eq!(index.body, "Body.\n");
+    }
+
+    #[test]
+    fn comment_character_is_read_from_the_configuration() {
+        let git = with_committed_file();
+        git.write("a.txt", WORKING_DIRECTORY_CONTENT);
+        git.set_config("core.commentChar", ";");
+        git.write(
+            ".git/MERGE_MSG",
+            b"Subject\n\n; Comment.\n# Not a comment.\n",
+        );
+        let (index, _) = uncommitted_changes(&git);
+        assert_eq!(index.subject, "Subject");
+        assert_eq!(index.body, "# Not a comment.\n");
+    }
+
+    #[test]
+    fn without_next_commit_message_the_index_has_no_subject_nor_body() {
+        let git = with_committed_file();
+        git.write("a.txt", WORKING_DIRECTORY_CONTENT);
+        let (index, _) = uncommitted_changes(&git);
+        assert_eq!(index.subject, "");
+        assert_eq!(index.body, "");
+    }
+
+    #[test]
+    fn staged_renames_are_detected() {
+        let git = with_committed_file();
+        git.stdout_of(&["mv", "a.txt", "b.txt"]);
+        let (index, _) = uncommitted_changes(&git);
+        let expected = file_diff(state("a.txt", HEAD_CONTENT), state("b.txt", HEAD_CONTENT));
+        assert_eq!(
+            comparable_files(&index.files),
+            comparable_files(&[expected])
+        );
+    }
+
+    /// Like `git diff`, which displays them as added.
+    #[test]
+    fn intent_to_add_files_are_added_in_the_working_directory_only() {
+        let git = with_committed_file();
+        git.write("b.txt", WORKING_DIRECTORY_CONTENT);
+        git.stdout_of(&["add", "--intent-to-add", "b.txt"]);
+        let (index, working_directory) = uncommitted_changes(&git);
+        assert!(index.files.is_empty());
+        assert_eq!(
+            comparable_files(&working_directory.files),
+            comparable_files(&[file_diff(None, state("b.txt", WORKING_DIRECTORY_CONTENT))])
+        );
+    }
+
+    /// With `core.autocrlf`, the line endings of the file on disk are converted to those of the
+    /// index, so that only the added line differs.
+    #[test]
+    fn files_of_the_working_directory_are_converted_like_git_diff() {
+        let git = with_committed_file();
+        git.set_config("core.autocrlf", "true");
+        git.write("a.txt", b"head\r\nadded\r\n");
+        let (_, working_directory) = uncommitted_changes(&git);
+        let expected = file_diff(
+            state("a.txt", HEAD_CONTENT),
+            state("a.txt", b"head\nadded\n"),
+        );
+        assert_eq!(
+            comparable_files(&working_directory.files),
+            comparable_files(&[expected])
+        );
+    }
+
+    /// The content of the file is text, so only its attributes make it binary.
+    #[test]
+    fn attributes_make_files_of_the_index_and_of_the_working_directory_binary() {
+        let git = Git::on_branch();
+        git.write(".gitattributes", b"a.txt binary\n");
+        git.write("a.txt", HEAD_CONTENT);
+        git.commit_all(b"Base");
+        git.set_upstream_at_head();
+        git.write("a.txt", INDEX_CONTENT);
+        git.stage("a.txt");
+        git.write("a.txt", WORKING_DIRECTORY_CONTENT);
+        let (index, working_directory) = uncommitted_changes(&git);
+        for files in [&index.files, &working_directory.files] {
+            assert_eq!(single(files).content, FileContentType::Binary);
+        }
     }
 }

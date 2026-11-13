@@ -1,9 +1,11 @@
-//! Realistic fake data, displayed by the `--fake` option. It is read from the files of
-//! `etc/fake_commits/`, embedded in the binary.
+//! Realistic fake data, displayed by the `--fake` and `--fake-dirty-directory` options. It is read
+//! from the files of `etc/fake_commits/`, embedded in the binary.
 
 mod loader;
 
 use crate::model::Commit;
+use crate::model::Index;
+use crate::model::WorkingDirectory;
 
 /// The descriptions of the folders of the fake commits that can be read by name.
 #[cfg(any(test, feature = "test-support"))]
@@ -26,7 +28,20 @@ const LTR_THEN_RTL_SUMMARY: &str = "ltr_then_rtl_summary";
 /// All the fake commits, in topological order (oldest first): the folders of
 /// `etc/fake_commits/`, from the highest index to `00`.
 pub fn all() -> Vec<Commit> {
-    loader::embedded().iter().rev().map(commit_of).collect()
+    loader::commit_folders()
+        .iter()
+        .rev()
+        .map(commit_of)
+        .collect()
+}
+
+/// The fake index and working directory: the folders `etc/fake_commits/index` and
+/// `etc/fake_commits/working_directory`.
+pub fn dirty_directory() -> (Index, WorkingDirectory) {
+    let index = loader::folder(loader::INDEX_FOLDER);
+    let working_directory = loader::folder(loader::WORKING_DIRECTORY_FOLDER);
+    loader::index_and_working_directory(&index.files, &working_directory.files)
+        .unwrap_or_else(|error| panic!("{} and {}: {error}", index.name, working_directory.name))
 }
 
 fn commit_of(folder: &loader::Folder) -> Commit {
@@ -114,7 +129,7 @@ mod tests {
 
     #[test]
     fn folders_are_numbered_from_00_without_gap() {
-        let indexes: Vec<_> = loader::embedded()
+        let indexes: Vec<_> = loader::commit_folders()
             .iter()
             .map(|folder| loader::parse_folder_name(folder.name).unwrap().0)
             .collect();
@@ -124,7 +139,7 @@ mod tests {
 
     #[test]
     fn all_loads_every_folder() {
-        assert_eq!(all().len(), loader::embedded().len());
+        assert_eq!(all().len(), loader::commit_folders().len());
     }
 
     #[test]
@@ -146,7 +161,7 @@ mod tests {
 
     #[test]
     fn fake_descriptions_are_different() {
-        let descriptions: Vec<_> = loader::embedded()
+        let descriptions: Vec<_> = loader::commit_folders()
             .iter()
             .map(|folder| loader::parse_folder_name(folder.name).unwrap().1)
             .collect();
@@ -159,6 +174,44 @@ mod tests {
         let hashes: Vec<_> = all().into_iter().map(|commit| commit.hash).collect();
         let unique: std::collections::HashSet<_> = hashes.iter().collect();
         assert_eq!(unique.len(), hashes.len());
+    }
+
+    #[test]
+    fn parent_of_each_fake_commit_is_the_previous_one() {
+        let commits = all();
+        for pair in commits.windows(2) {
+            assert_eq!(pair[1].parent_ids, [pair[0].hash], "{}", pair[1].subject);
+        }
+    }
+
+    #[test]
+    fn parent_of_the_first_fake_commit_is_not_a_fake_commit() {
+        let commits = all();
+        let hashes: Vec<_> = commits.iter().map(|commit| commit.hash).collect();
+        let [parent] = commits[0].parent_ids[..] else {
+            panic!("{:?} instead of a single parent", commits[0].parent_ids);
+        };
+        assert!(!hashes.contains(&parent));
+    }
+
+    #[test]
+    fn fake_dirty_directory_has_conflicts() {
+        let (index, working_directory) = dirty_directory();
+        assert!(working_directory.conflicts_count(&index) > 0);
+    }
+
+    /// The marker is in an unchanged line, so it is in HEAD.
+    #[test]
+    fn fake_working_directory_has_a_conflict_marker_already_in_head() {
+        let (_, working_directory) = dirty_directory();
+        let mut lines = working_directory
+            .files
+            .iter()
+            .flat_map(|file| &file.hunks)
+            .flat_map(|hunk| &hunk.lines);
+        assert!(
+            lines.any(|line| line.kind == LineKind::Unchanged && line.text.starts_with("<<<<<<<"))
+        );
     }
 
     fn repository_file(path: &str) -> String {

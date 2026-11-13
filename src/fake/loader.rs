@@ -1,5 +1,5 @@
-//! Loads the fake commits from the plain text files of `etc/fake_commits/`, embedded in the
-//! binary.
+//! Loads the fake commits, index and working directory from the plain text files of
+//! `etc/fake_commits/`, embedded in the binary.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -9,21 +9,32 @@ use std::fmt;
 use gix::ObjectId;
 use gix::bstr::BStr;
 use gix::date::Time;
+use gix::refs::Category;
 use include_dir::Dir;
 use include_dir::include_dir;
 use reediif::diff;
 use reediif::diff::DiffAs;
 use reediif::diff::FileState;
 use reediif::model::FileDiff;
+use reediif::model::LineKind;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
 use crate::date::DateParseError;
+use crate::model::CONFLICT_MARKER;
 use crate::model::Commit;
 use crate::model::Decoration;
+use crate::model::Index;
+use crate::model::WorkingDirectory;
 use crate::settings::CONTEXT;
 
 /// The name of the file of a fake commit holding everything but its files.
 pub const METADATA_FILE: &str = "metadata.toml";
+
+/// The folder of the fake index.
+pub const INDEX_FOLDER: &str = "index";
+/// The folder of the fake working directory.
+pub const WORKING_DIRECTORY_FOLDER: &str = "working_directory";
 
 /// The format of the date of a commit, like `git log --date=iso`. Unlike the formats accepted by
 /// `git commit --date`, it is always absolute, like the dates stored by git.
@@ -38,8 +49,9 @@ const BINARY_ATTRIBUTES: [&str; 2] = ["binary", "-diff"];
 /// The attribute of `.gitattributes` that makes a file text, even if it contains a NUL byte.
 const TEXT_ATTRIBUTE: &str = "diff";
 
-/// The fake commits, one folder each.
-static FAKE_COMMITS: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/etc/fake_commits");
+/// The fake data: a folder per fake commit, and the folders of the index and of the working
+/// directory.
+static FAKE_DATA: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/etc/fake_commits");
 
 /// The number of characters of the short hash of all the fake commits.
 pub const HASH_ABBREV_LEN: usize = 7;
@@ -98,6 +110,8 @@ pub enum FakeDataError {
     MissingId(usize),
     /// A key of the `gitattributes` table of the metadata is not the name of a file.
     UnknownGitattributesFile(String),
+    /// The folder of the working directory has a metadata file.
+    UnexpectedMetadata,
 }
 
 impl fmt::Display for FakeDataError {
@@ -118,6 +132,7 @@ impl fmt::Display for FakeDataError {
             FakeDataError::UnknownGitattributesFile(name) => {
                 write!(f, "gitattributes of a file that does not exist: {name}")
             }
+            FakeDataError::UnexpectedMetadata => write!(f, "unexpected {METADATA_FILE}"),
         }
     }
 }
@@ -129,6 +144,8 @@ impl Error for FakeDataError {}
 #[serde(deny_unknown_fields)]
 struct Metadata {
     hash: String,
+    /// The hashes of the parents, in order.
+    parents: Vec<String>,
     author: String,
     email: String,
     date: String,
@@ -139,6 +156,17 @@ struct Metadata {
     /// The attributes (like in a `.gitattributes` file) of the files, by file name.
     #[serde(default)]
     gitattributes: BTreeMap<String, String>,
+}
+
+/// The content of the `metadata.toml` of the index.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IndexMetadata {
+    /// The branch HEAD is attached to (`main`), missing if HEAD is detached.
+    branch: Option<String>,
+    subject: String,
+    #[serde(default)]
+    body: String,
 }
 
 /// The refs pointing to the commit.
@@ -260,12 +288,30 @@ fn state<'a>(file: &Option<RawFile<'a>>, path: &'a str) -> Option<FileState<'a>>
     })
 }
 
-/// The commit made of `files`, the content of its folder.
-pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
+/// The metadata of the folder made of `files`.
+fn metadata<T: DeserializeOwned>(files: &[RawFile]) -> Result<T, FakeDataError> {
     let metadata = files
         .iter()
         .find(|file| file.name == METADATA_FILE)
         .ok_or(FakeDataError::MissingMetadata)?;
+    let invalid = |reason: String| FakeDataError::InvalidMetadata(reason);
+    let text = std::str::from_utf8(metadata.content).map_err(|error| invalid(error.to_string()))?;
+    toml::from_str(text).map_err(|error| invalid(error.to_string()))
+}
+
+/// The commit hash `hash`, in hexadecimal.
+fn object_id(hash: &str) -> Result<ObjectId, FakeDataError> {
+    ObjectId::from_hex(hash.as_bytes())
+        .map_err(|error| FakeDataError::InvalidMetadata(error.to_string()))
+}
+
+/// The diffs of the files of the folder made of `files` (but its metadata), paired by id and
+/// sorted by path like git, diffed according to `gitattributes` (the attributes of the files, by
+/// file name).
+fn file_diffs(
+    files: &[RawFile],
+    gitattributes: &BTreeMap<String, String>,
+) -> Result<Vec<FileDiff>, FakeDataError> {
     let mut versions_by_id: BTreeMap<usize, Versions> = BTreeMap::new();
     for file in files.iter().filter(|file| file.name != METADATA_FILE) {
         let name = parse_file_name(file.name)?;
@@ -283,15 +329,7 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
     if let Some(missing) = (1..=last_id).find(|id| !versions_by_id.contains_key(id)) {
         return Err(FakeDataError::MissingId(missing));
     }
-
-    let invalid = |reason: String| FakeDataError::InvalidMetadata(reason);
-    let text = std::str::from_utf8(metadata.content).map_err(|error| invalid(error.to_string()))?;
-    let metadata: Metadata = toml::from_str(text).map_err(|error| invalid(error.to_string()))?;
-    let hash =
-        ObjectId::from_hex(metadata.hash.as_bytes()).map_err(|error| invalid(error.to_string()))?;
-    let date = parse_date(&metadata.date)?;
-    if let Some(unknown) = metadata
-        .gitattributes
+    if let Some(unknown) = gitattributes
         .keys()
         .find(|name| !files.iter().any(|file| file.name == name.as_str()))
     {
@@ -299,7 +337,7 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
     }
 
     let diff_as_of = |file: &Option<RawFile>| {
-        file.and_then(|file| metadata.gitattributes.get(file.name))
+        file.and_then(|file| gitattributes.get(file.name))
             .map_or(DiffAs::Auto, |attributes| diff_as(attributes))
     };
     let mut files: Vec<FileDiff> = versions_by_id
@@ -316,6 +354,19 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
         })
         .collect();
     files.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(files)
+}
+
+/// The commit made of `files`, the content of its folder.
+pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
+    let metadata: Metadata = metadata(files)?;
+    let hash = object_id(&metadata.hash)?;
+    let parent_ids = metadata
+        .parents
+        .iter()
+        .map(|parent| object_id(parent))
+        .collect::<Result<_, _>>()?;
+    let date = parse_date(&metadata.date)?;
     Ok(Commit {
         hash,
         hash_abbrev_len: HASH_ABBREV_LEN,
@@ -325,18 +376,89 @@ pub fn commit(files: &[RawFile]) -> Result<Commit, FakeDataError> {
         date,
         decorations: metadata.decorations.into_model(),
         body: metadata.body,
-        files,
+        parent_ids,
+        files: file_diffs(files, &metadata.gitattributes)?,
     })
 }
 
-/// The folders of the fake commits embedded in the binary, sorted by name (so by index).
+/// Whether `file` adds a conflict marker: its after version has a `<<<<<<<` line that its before
+/// version doesn't have.
+fn adds_a_conflict_marker(file: &FileDiff) -> bool {
+    file.hunks
+        .iter()
+        .flat_map(|hunk| &hunk.lines)
+        .any(|line| line.kind == LineKind::Added && line.text.starts_with(CONFLICT_MARKER))
+}
+
+/// The index and the working directory made of `index_files` and `working_directory_files`, the
+/// content of their folders.
+///
+/// The files of the working directory that add a conflict marker are unmerged in the index.
+pub fn index_and_working_directory(
+    index_files: &[RawFile],
+    working_directory_files: &[RawFile],
+) -> Result<(Index, WorkingDirectory), FakeDataError> {
+    let metadata: IndexMetadata = metadata(index_files)?;
+    if working_directory_files
+        .iter()
+        .any(|file| file.name == METADATA_FILE)
+    {
+        return Err(FakeDataError::UnexpectedMetadata);
+    }
+    let branch = metadata
+        .branch
+        .map(|branch| {
+            Category::LocalBranch
+                .to_full_name(branch.as_str())
+                .map_err(|error| FakeDataError::InvalidMetadata(error.to_string()))
+        })
+        .transpose()?;
+    let working_directory = WorkingDirectory {
+        files: file_diffs(working_directory_files, &BTreeMap::new())?,
+    };
+    let mut files = file_diffs(index_files, &BTreeMap::new())?;
+    files.extend(
+        working_directory
+            .files
+            .iter()
+            .filter(|file| adds_a_conflict_marker(file))
+            .map(|file| diff::unmerged(file.path.clone())),
+    );
+    files.sort_by(|left, right| left.path.cmp(&right.path));
+    let index = Index {
+        branch,
+        subject: metadata.subject,
+        body: metadata.body,
+        files,
+    };
+    Ok((index, working_directory))
+}
+
+/// The folders of the fake commits (`$index_$description`) embedded in the binary, sorted by name
+/// (so by index).
+pub fn commit_folders() -> Vec<Folder<'static>> {
+    embedded()
+        .into_iter()
+        .filter(|folder| split_index(folder.name).is_some())
+        .collect()
+}
+
+/// The folder `name` embedded in the binary.
+pub fn folder(name: &str) -> Folder<'static> {
+    embedded()
+        .into_iter()
+        .find(|folder| folder.name == name)
+        .unwrap_or_else(|| panic!("no folder {name} in the fake data"))
+}
+
+/// The folders of the fake data embedded in the binary, sorted by name.
 pub fn embedded() -> Vec<Folder<'static>> {
     let name = |path: &'static std::path::Path| {
         path.file_name()
             .and_then(OsStr::to_str)
             .expect("the names of the fake data are valid UTF-8")
     };
-    let mut folders: Vec<_> = FAKE_COMMITS
+    let mut folders: Vec<_> = FAKE_DATA
         .dirs()
         .map(|dir| Folder {
             name: name(dir.path()),
@@ -364,6 +486,7 @@ mod tests {
     use reediif::model::FileContentType;
 
     const HASH: &str = "0123456789abcdef0123456789abcdef01234567";
+    const PARENT_HASH: &str = "89abcdef0123456789abcdef0123456789abcdef";
 
     /// The date of `metadata()`, which the tests of the dates replace.
     const DEFAULT_DATE: &str = "2026-10-12 14:32:07 +0200";
@@ -373,6 +496,7 @@ mod tests {
         format!(
             "# A comment about this fake commit.\n\
              hash = \"{HASH}\"\n\
+             parents = [\"{PARENT_HASH}\"]\n\
              author = \"Alice Martin\"\n\
              email = \"alice.martin@example.org\"\n\
              date = \"{DEFAULT_DATE}\"\n\
@@ -470,6 +594,10 @@ mod tests {
         assert_eq!(commit.subject, "config: rename");
         assert_eq!(commit.body, "Line 1.\nLine 2.");
         assert_eq!(commit.date, Time::new(1_791_808_327, 7200));
+        assert_eq!(
+            commit.parent_ids,
+            [ObjectId::from_hex(PARENT_HASH.as_bytes()).unwrap()]
+        );
         // In the order of `git log --decorate`.
         assert_eq!(
             commit.decorations,
@@ -680,6 +808,121 @@ mod tests {
         assert_eq!(
             load(&metadata(extra), files).unwrap_err(),
             FakeDataError::UnknownGitattributesFile("01_after_b.txt".to_string())
+        );
+    }
+
+    /// The metadata of an index on `main`.
+    const INDEX_METADATA: RawFile = RawFile {
+        name: METADATA_FILE,
+        content: b"branch = \"main\"\nsubject = \"Subject\"\nbody = \"Body.\"\n",
+    };
+
+    #[test]
+    fn index_metadata_is_the_branch_and_the_next_commit_message() {
+        let (index, _) = index_and_working_directory(&[INDEX_METADATA], &[]).unwrap();
+        assert_eq!(
+            index.branch,
+            Some(gix::refs::FullName::try_from("refs/heads/main").unwrap())
+        );
+        assert_eq!(index.subject, "Subject");
+        assert_eq!(index.body, "Body.");
+    }
+
+    #[test]
+    fn index_without_branch_is_detached_and_its_body_is_optional() {
+        let metadata = RawFile {
+            name: METADATA_FILE,
+            content: b"subject = \"Subject\"\n",
+        };
+        let (index, _) = index_and_working_directory(&[metadata], &[]).unwrap();
+        assert_eq!(index.branch, None);
+        assert_eq!(index.body, "");
+    }
+
+    /// The `before` version of a file of the working directory where `b.txt` is unmerged: its
+    /// version in HEAD.
+    const UNMERGED_BEFORE: RawFile = RawFile {
+        name: "01_before_b.txt",
+        content: b"head\n",
+    };
+    /// The `after` version of the same file, which adds a conflict.
+    const UNMERGED_AFTER: RawFile = RawFile {
+        name: "01_after_b.txt",
+        content: b"<<<<<<< HEAD\nhead\n=======\nother\n>>>>>>> other\n",
+    };
+
+    /// A file adds a conflict marker if its `after` version has a `<<<<<<<` line that its
+    /// `before` version doesn't have: `c.txt` has the same marker in both versions, so it is not
+    /// unmerged. `a.txt` and `z.txt` are around `b.txt` in the order of the paths.
+    #[test]
+    fn conflict_markers_added_in_the_working_directory_make_their_file_unmerged_in_the_index() {
+        let index_files = [
+            INDEX_METADATA,
+            RawFile { name: "01_after_a.txt", content: b"a\n" },
+            RawFile { name: "02_after_z.txt", content: b"z\n" },
+        ];
+        let working_directory_files = [
+            UNMERGED_BEFORE,
+            UNMERGED_AFTER,
+            RawFile {
+                name: "02_before_c.txt",
+                content: b"<<<<<<< kept\nbefore\n",
+            },
+            RawFile {
+                name: "02_after_c.txt",
+                content: b"<<<<<<< kept\nafter\n",
+            },
+        ];
+        let (index, _) =
+            index_and_working_directory(&index_files, &working_directory_files).unwrap();
+        let files: Vec<_> = index
+            .files
+            .iter()
+            .map(|file| (file.path.to_string(), file.content))
+            .collect();
+        assert_eq!(
+            files,
+            [
+                ("a.txt".to_string(), FileContentType::Text),
+                ("b.txt".to_string(), FileContentType::Unmerged),
+                ("z.txt".to_string(), FileContentType::Text),
+            ]
+        );
+    }
+
+    /// Unlike in the index, where they have no diff.
+    #[test]
+    fn unmerged_files_are_diffed_in_the_working_directory() {
+        let (_, working_directory) =
+            index_and_working_directory(&[INDEX_METADATA], &[UNMERGED_BEFORE, UNMERGED_AFTER])
+                .unwrap();
+        let expected = diff::file(
+            /* before */ state(&Some(UNMERGED_BEFORE), "b.txt"),
+            /* after */ state(&Some(UNMERGED_AFTER), "b.txt"),
+            DiffAs::Auto,
+            CONTEXT,
+        );
+        let [file] = &working_directory.files[..] else {
+            panic!("{} files instead of 1", working_directory.files.len());
+        };
+        assert_eq!(file.content, FileContentType::Text);
+        assert_eq!(file.hunks, expected.hunks);
+    }
+
+    #[test]
+    fn working_directory_with_metadata_is_an_error() {
+        let metadata = RawFile { name: METADATA_FILE, content: b"" };
+        assert_eq!(
+            index_and_working_directory(&[INDEX_METADATA], &[metadata]).unwrap_err(),
+            FakeDataError::UnexpectedMetadata
+        );
+    }
+
+    #[test]
+    fn index_without_metadata_is_an_error() {
+        assert_eq!(
+            index_and_working_directory(&[], &[]).unwrap_err(),
+            FakeDataError::MissingMetadata
         );
     }
 }

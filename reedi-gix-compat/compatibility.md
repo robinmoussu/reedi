@@ -49,6 +49,23 @@ The commit a rebase replays the commits onto
 - Replaced by: `src/rebase.rs`, which reads `rebase-merge/onto` or `rebase-apply/onto` in the git
   directory, like git
 
+The branch a rebase rebases
+---------------------------
+
+- Used by: the branch of the next commit during a rebase
+- Missing in `gix`: HEAD is detached during a rebase, and nothing reads the state of the rebase
+- Replaced by: `src/rebase.rs`, which reads `rebase-merge/head-name` or `rebase-apply/head-name`
+  in the git directory, like git
+
+Cleanup of commit messages
+--------------------------
+
+- Used by: reading a commit message prepared by git
+- Missing in `gix`: nothing reads `core.commentChar`, nor cleans up a message like `git commit`
+  does by default (`git stripspace --strip-comments`)
+- Replaced by: `src/message.rs`, which removes the comment lines, the trailing whitespace and the
+  extra blank lines, like git
+
 Upstream that is a local branch
 -------------------------------
 

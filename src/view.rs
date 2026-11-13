@@ -36,7 +36,9 @@ use crate::invisible::FinalCr;
 use crate::invisible::Kind;
 use crate::model::Commit;
 use crate::model::Decoration;
+use crate::model::Index;
 use crate::model::Revision;
+use crate::model::WorkingDirectory;
 use crate::settings::MAX_PAIRING_DISTANCE;
 use crate::settings::TAB_WIDTH;
 use crate::theme::Theme;
@@ -52,6 +54,9 @@ const WRAP_MARKER: &str = "↵";
 /// Displayed below the last rows of a hunk, in the half of the version of the file that doesn't
 /// end with a newline, if the other version does.
 const MISSING_NEWLINE: &str = "\\ No newline at end of file";
+
+/// Displayed in place of the diff of a revision that has no files.
+const NO_CHANGES: &str = "no changes";
 
 /// Displayed in place of a hunk whose lines cannot be wrapped.
 const HUNK_TOO_NARROW: &str = "This hunk cannot be displayed: the terminal is too narrow.";
@@ -544,6 +549,7 @@ fn file_parts(file: &FileDiff, theme: &Theme) -> Vec<Part> {
         FileContentType::Text => None,
         FileContentType::Binary => Some(Part::markup(" (binary file)", theme.file)),
         FileContentType::InvalidUtf8 => Some(Part::markup(" (invalid utf-8 content)", theme.error)),
+        FileContentType::Unmerged => Some(Part::markup(" (unmerged path)", theme.file)),
     };
     name.into_iter().chain(suffix).collect()
 }
@@ -723,26 +729,65 @@ impl<'a> Rows<'a> {
         })
     }
 
+    /// Add the lines of `body` (a commit message without its subject), below a blank line.
+    fn body(&mut self, body: &str) -> Result<(), TooNarrow> {
+        if body.is_empty() {
+            return Ok(());
+        }
+        self.blank();
+        // Unlike `str::lines()`, a carriage return ending a line is kept, to be displayed.
+        body.split_terminator('\n')
+            .try_for_each(|line| self.text(&[Part::content(line, Style::new())]))
+    }
+
+    /// Add the diff of each of `files`, or `NO_CHANGES` if there are none.
+    fn diff(&mut self, files: &[FileDiff]) -> Result<(), TooNarrow> {
+        if files.is_empty() {
+            self.blank();
+            self.text(&[Part::markup(NO_CHANGES, self.theme.placeholder)])?;
+        }
+        files.iter().try_for_each(|file| self.file(file))
+    }
+
     fn commit(&mut self, commit: &Commit) -> Result<(), TooNarrow> {
         self.text(&header_parts(commit, self.theme, self.dates))?;
-        if !commit.body.is_empty() {
-            self.blank();
-            // Unlike `str::lines()`, a carriage return ending a line is kept, to be displayed.
-            commit
-                .body
-                .split_terminator('\n')
-                .try_for_each(|line| self.text(&[Part::content(line, Style::new())]))?;
+        self.body(&commit.body)?;
+        // Like `git log -p`, merge commits have no diff.
+        if commit.is_merge() {
+            return Ok(());
         }
-        for file in &commit.files {
-            self.file(file)?;
+        self.diff(&commit.files)
+    }
+
+    /// `index for $branch $subject`
+    fn index(&mut self, index: &Index) -> Result<(), TooNarrow> {
+        let mut header = vec![Part::markup("index", self.theme.hash)];
+        if let Some(branch) = index.short_branch() {
+            header.push(Part::markup(" for ", self.theme.hash));
+            header.push(Part::content(&branch, self.theme.hash));
         }
-        Ok(())
+        if !index.subject.is_empty() {
+            header.push(Part::markup(" ", Style::new()));
+            header.push(Part::content(&index.subject, Style::new()));
+        }
+        self.text(&header)?;
+        self.body(&index.body)?;
+        self.diff(&index.files)
+    }
+
+    fn working_directory(&mut self, working_directory: &WorkingDirectory) -> Result<(), TooNarrow> {
+        self.text(&[Part::markup("working directory", self.theme.hash)])?;
+        self.diff(&working_directory.files)
     }
 
     /// Add `revision`, including the separator below it.
     fn revision(&mut self, revision: &Revision) -> Result<(), TooNarrow> {
         match revision {
             Revision::Commit(commit) => self.commit(commit)?,
+            Revision::Index(index) => self.index(index)?,
+            Revision::WorkingDirectory(working_directory) => {
+                self.working_directory(working_directory)?
+            }
         }
         self.blank();
         self.revision_index += 1;
@@ -970,6 +1015,37 @@ pub fn revision_status(revisions: &[Revision], index: usize, theme: &Theme) -> L
             commit.short_hash(),
             commit.subject
         ),
+        Revision::Index(index) => {
+            let mut text = match index.short_branch() {
+                Some(branch) => format!("index for {branch}"),
+                None => "index".to_string(),
+            };
+            if !index.subject.is_empty() {
+                text += &format!(": {LEFT_TO_RIGHT_MARK}{}", index.subject);
+            }
+            text
+        }
+        Revision::WorkingDirectory(working_directory) => {
+            let conflicts_count = revisions
+                .iter()
+                .find_map(|revision| match revision {
+                    Revision::Index(index) => Some(working_directory.conflicts_count(index)),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            let status = Span::styled("working directory", theme.status_bar_content);
+            return match conflicts_count {
+                0 => Line::from(status),
+                count => {
+                    let conflicts = if count == 1 { "conflict" } else { "conflicts" };
+                    Line::from(vec![
+                        status,
+                        Span::styled(" ", theme.status_bar_content),
+                        Span::styled(format!("({count} {conflicts} left)"), theme.error),
+                    ])
+                }
+            };
+        }
     };
     Line::from(Span::styled(text, theme.status_bar_content))
 }
@@ -1081,11 +1157,15 @@ pub fn draw(
 
 #[cfg(test)]
 mod tests {
+    use gix::ObjectId;
+    use gix::refs::FullName;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::style::Color;
     use ratatui::style::Modifier;
+    use reediif::diff::unmerged;
     use reediif::test_support::line;
+    use reediif::test_support::modified;
     use reediif::test_support::unchanged;
 
     use super::*;
@@ -1101,11 +1181,16 @@ mod tests {
     use crate::test_support::without_left_to_right_marks;
     use crate::theme::Theme;
 
-    fn commit_rows(commit: &Commit, width: u16, theme: &Theme) -> Vec<Row> {
+    /// The rows of `revision`, including the separator below it.
+    fn revision_rows(revision: &Revision, width: u16, theme: &Theme) -> Vec<Row> {
         let dates = DateDisplay::for_snapshots();
         let mut rows = Rows::new(width, theme, &dates);
-        rows.revision(&Revision::Commit(commit.clone())).unwrap();
+        rows.revision(revision).unwrap();
         rows.rows
+    }
+
+    fn commit_rows(commit: &Commit, width: u16, theme: &Theme) -> Vec<Row> {
+        revision_rows(&Revision::Commit(commit.clone()), width, theme)
     }
 
     /// The rows of `file`, starting with the blank row above the file name.
@@ -1169,6 +1254,25 @@ mod tests {
             .find(|span| span.content == content)
             .unwrap()
             .style
+    }
+
+    /// The style of each character of the first occurrence of `content` in `line`, whatever the
+    /// spans `content` is split into.
+    fn styles_of(line: &Line, content: &str) -> Vec<Style> {
+        let characters: Vec<_> = line
+            .spans
+            .iter()
+            .flat_map(|span| span.content.chars().map(|c| (c, span.style)))
+            .collect();
+        let len = content.chars().count();
+        let start = characters
+            .windows(len)
+            .position(|window| window.iter().map(|(c, _)| *c).eq(content.chars()))
+            .unwrap_or_else(|| panic!("{content:?} is not in {:?}", text(line)));
+        characters[start..start + len]
+            .iter()
+            .map(|(_, style)| *style)
+            .collect()
     }
 
     /// The themes with colors.
@@ -1426,6 +1530,154 @@ mod tests {
             .map(|part| part.text)
             .collect();
         assert_eq!(text, " (feature, HEAD)");
+    }
+
+    /// The branch of the index in the tests of the index.
+    const MAIN_BRANCH: &str = "refs/heads/main";
+
+    /// The index of the next commit on `branch` (`None` if HEAD is detached), whose message is
+    /// `subject` and `body`, without files.
+    fn index(branch: Option<&str>, subject: &str, body: &str) -> Index {
+        Index {
+            branch: branch.map(|branch| FullName::try_from(branch).unwrap()),
+            subject: subject.to_string(),
+            body: body.to_string(),
+            files: Vec::new(),
+        }
+    }
+
+    /// The text of each row of `revision`, on a screen 110 columns wide.
+    fn revision_texts(revision: &Revision) -> Vec<String> {
+        revision_rows(revision, /* width */ 110, &Theme::monochrome())
+            .iter()
+            .map(|row| text_of_row(row).0)
+            .collect()
+    }
+
+    /// The first row of `revision`, which is not split.
+    fn header_line(revision: &Revision, theme: &Theme) -> Line<'static> {
+        let rows = revision_rows(revision, /* width */ 110, theme);
+        let Content::Text(header) = &rows[0].content else {
+            panic!("the header is not a text row");
+        };
+        header.clone()
+    }
+
+    #[test]
+    fn index_header_is_for_the_branch_then_the_subject_in_the_color_of_the_hash() {
+        let revision = Revision::Index(index(Some(MAIN_BRANCH), "Subject", ""));
+        for theme in &themes() {
+            let header = header_line(&revision, theme);
+            assert_eq!(text(&header), "index for main Subject");
+            assert!(
+                styles_of(&header, "index for main")
+                    .iter()
+                    .all(|style| *style == theme.hash)
+            );
+        }
+    }
+
+    #[test]
+    fn index_header_of_a_detached_head_has_no_branch() {
+        let revision = Revision::Index(index(/* branch */ None, "Subject", ""));
+        assert_eq!(revision_texts(&revision)[0], "index Subject");
+    }
+
+    #[test]
+    fn index_header_without_next_commit_message_has_no_subject() {
+        let revision = Revision::Index(index(Some(MAIN_BRANCH), "", ""));
+        assert_eq!(revision_texts(&revision)[0], "index for main");
+    }
+
+    #[test]
+    fn index_body_is_displayed_below_the_header_like_a_commit_body() {
+        let revision = Revision::Index(index(Some(MAIN_BRANCH), "Subject", "Line 1.\nLine 2.\n"));
+        assert_eq!(
+            revision_texts(&revision)[..4],
+            ["index for main Subject", "", "Line 1.", "Line 2."]
+        );
+    }
+
+    #[test]
+    fn working_directory_header_is_in_the_color_of_the_hash() {
+        let revision = Revision::WorkingDirectory(WorkingDirectory { files: Vec::new() });
+        for theme in &themes() {
+            let header = header_line(&revision, theme);
+            assert_eq!(text(&header), "working directory");
+            assert!(
+                styles_of(&header, "working directory")
+                    .iter()
+                    .all(|style| *style == theme.hash)
+            );
+        }
+    }
+
+    /// Hashes of the parents of the commits of the tests of `no changes`.
+    const PARENT_HASHES: [&str; 2] = [
+        "1111111111111111111111111111111111111111",
+        "2222222222222222222222222222222222222222",
+    ];
+
+    /// A commit without files, whose parents are the first `parents_count` of `PARENT_HASHES`.
+    fn commit_without_files(parents_count: usize) -> Commit {
+        let mut commit = short_commit();
+        commit.files.clear();
+        commit.parent_ids = PARENT_HASHES[..parents_count]
+            .iter()
+            .map(|hash| ObjectId::from_hex(hash.as_bytes()).unwrap())
+            .collect();
+        commit
+    }
+
+    /// The text of the rows of `revision` from the blank row below its header (or its body), to
+    /// its separator.
+    fn texts_below_the_metadata(revision: &Revision) -> Vec<String> {
+        let texts = revision_texts(revision);
+        texts[texts.len() - 4..].to_vec()
+    }
+
+    #[test]
+    fn revisions_without_files_display_no_changes_where_the_first_file_would_be() {
+        let revisions = [
+            Revision::Index(index(Some(MAIN_BRANCH), "Subject", "Body.\n")),
+            Revision::WorkingDirectory(WorkingDirectory { files: Vec::new() }),
+            Revision::Commit(commit_without_files(/* parents_count */ 1)),
+            Revision::Commit(commit_without_files(/* parents_count */ 0)),
+        ];
+        for revision in &revisions {
+            // The last row is the separator.
+            assert_eq!(
+                texts_below_the_metadata(revision),
+                ["", "no changes", "", ""],
+                "{revision:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_changes_has_the_placeholder_style() {
+        let revision = Revision::WorkingDirectory(WorkingDirectory { files: Vec::new() });
+        for theme in &themes() {
+            let rows = revision_rows(&revision, /* width */ 110, theme);
+            let line = rows
+                .iter()
+                .find_map(|row| match &row.content {
+                    Content::Text(line) if text(line) == "no changes" => Some(line),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(
+                styles_of(line, "no changes")
+                    .iter()
+                    .all(|style| *style == theme.placeholder)
+            );
+        }
+    }
+
+    #[test]
+    fn merge_commits_without_files_do_not_display_no_changes() {
+        let revision = Revision::Commit(commit_without_files(/* parents_count */ 2));
+        assert!(!revision_texts(&revision).contains(&"no changes".to_string()));
     }
 
     /// A fake commit with a body and 2 files, the second one having 3 hunks, for the tests of the
@@ -2008,6 +2260,22 @@ mod tests {
     }
 
     #[test]
+    fn unmerged_file_name_is_followed_by_unmerged_path_in_the_file_style() {
+        for theme in &themes() {
+            let Content::Text(name) = &file_rows(&unmerged("b"), /* width */ 110, theme)[1].content
+            else {
+                panic!("the file name is not split");
+            };
+            assert_eq!(text(name), "b (unmerged path)");
+            assert!(
+                styles_of(name, "b (unmerged path)")
+                    .iter()
+                    .all(|style| *style == theme.file)
+            );
+        }
+    }
+
+    #[test]
     fn rows_of_a_diff_line_start_at_their_first_character() {
         let rows = Rows::new(
             /* width */ 24,
@@ -2539,6 +2807,90 @@ mod tests {
         assert!(
             status_bar.contains("lint: add fixtures for"),
             "{status_bar}"
+        );
+    }
+
+    /// The text of the status bar while the cursor is on the revision `index` of `revisions`.
+    fn status_text(revisions: &[Revision], index: usize) -> String {
+        text(&revision_status(revisions, index, &Theme::monochrome()))
+    }
+
+    /// The index and the working directory, without files.
+    fn index_and_working_directory(index: Index) -> [Revision; 2] {
+        [
+            Revision::Index(index),
+            Revision::WorkingDirectory(WorkingDirectory { files: Vec::new() }),
+        ]
+    }
+
+    #[test]
+    fn status_bar_of_the_index_is_for_the_branch_then_the_subject() {
+        let revisions = index_and_working_directory(index(Some(MAIN_BRANCH), "Subject", ""));
+        assert_eq!(
+            status_text(&revisions, /* index */ 0),
+            format!("index for main: {LEFT_TO_RIGHT_MARK}Subject")
+        );
+    }
+
+    #[test]
+    fn status_bar_of_the_index_of_a_detached_head_has_no_branch() {
+        let revisions = index_and_working_directory(index(/* branch */ None, "Subject", ""));
+        assert_eq!(
+            status_text(&revisions, /* index */ 0),
+            format!("index: {LEFT_TO_RIGHT_MARK}Subject")
+        );
+    }
+
+    #[test]
+    fn status_bar_of_the_index_without_next_commit_message_has_no_subject() {
+        let revisions = index_and_working_directory(index(Some(MAIN_BRANCH), "", ""));
+        assert_eq!(status_text(&revisions, /* index */ 0), "index for main");
+    }
+
+    #[test]
+    fn status_bar_of_the_working_directory_without_conflicts_is_working_directory() {
+        let revisions = index_and_working_directory(index(Some(MAIN_BRANCH), "Subject", ""));
+        assert_eq!(status_text(&revisions, /* index */ 1), "working directory");
+    }
+
+    /// The index where `a.txt` is unmerged, and the working directory where `conflicts_count`
+    /// conflict markers are added to it.
+    fn revisions_with_conflicts(conflicts_count: usize) -> [Revision; 2] {
+        let mut index = index(Some(MAIN_BRANCH), "Subject", "");
+        index.files.push(unmerged("a.txt"));
+        let markers = vec![line(LineKind::Added, "<<<<<<< HEAD"); conflicts_count];
+        let working_directory = WorkingDirectory { files: vec![modified("a.txt", markers)] };
+        [
+            Revision::Index(index),
+            Revision::WorkingDirectory(working_directory),
+        ]
+    }
+
+    #[test]
+    fn status_bar_of_the_working_directory_counts_the_conflicts_left_in_the_error_style() {
+        let revisions = revisions_with_conflicts(/* conflicts_count */ 2);
+        for theme in &themes() {
+            let status = revision_status(&revisions, /* index */ 1, theme);
+            assert_eq!(text(&status), "working directory (2 conflicts left)");
+            assert!(
+                styles_of(&status, "working directory")
+                    .iter()
+                    .all(|style| *style == theme.status_bar_content)
+            );
+            assert!(
+                styles_of(&status, "(2 conflicts left)")
+                    .iter()
+                    .all(|style| *style == theme.error)
+            );
+        }
+    }
+
+    #[test]
+    fn status_bar_of_the_working_directory_with_a_single_conflict_is_singular() {
+        let revisions = revisions_with_conflicts(/* conflicts_count */ 1);
+        assert_eq!(
+            status_text(&revisions, /* index */ 1),
+            "working directory (1 conflict left)"
         );
     }
 

@@ -57,15 +57,20 @@ pub fn revisions_of(commits: &[Commit]) -> Vec<Revision> {
     commits.iter().cloned().map(Revision::Commit).collect()
 }
 
-/// All the rows of `commits`, on a screen `width` columns wide.
-pub fn rows_of(commits: &[Commit], width: u16) -> Vec<Row> {
+/// All the rows of `revisions`, on a screen `width` columns wide.
+pub fn rows_of_revisions(revisions: &[Revision], width: u16) -> Vec<Row> {
     view::rows(
-        &revisions_of(commits),
+        revisions,
         width,
         &Theme::monochrome(),
         &DateDisplay::for_snapshots(),
     )
     .unwrap()
+}
+
+/// All the rows of `commits`, on a screen `width` columns wide.
+pub fn rows_of(commits: &[Commit], width: u16) -> Vec<Row> {
+    rows_of_revisions(&revisions_of(commits), width)
 }
 
 /// Index of the first row of the header of each commit of `commits`, on a screen `width` columns

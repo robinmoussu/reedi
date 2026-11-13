@@ -1,1 +1,1 @@
-etc/fake_commits/** -text -whitespace
+etc/fake_commits/** -text -whitespace conflict-marker-size=100

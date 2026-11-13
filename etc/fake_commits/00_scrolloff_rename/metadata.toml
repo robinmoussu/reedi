@@ -1,5 +1,6 @@
 # A commit modifying two chunks of the same file.
 hash = "3f9a2c1e5d7b0a4c8f2169e3b5d7a1c9f4e6280b"
+parents = ["8d41e07b6c93a5f1e7d2084b6a9c3e5f7d1b2a48"]
 author = "Alice Martin"
 email = "alice.martin@example.org"
 date = "2026-10-12 14:32:07 +0200"

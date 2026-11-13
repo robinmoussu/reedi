@@ -15,7 +15,7 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
-gix = { version = "0.89.0", default-features = false, features = ["blob-diff", "sha1"] }
+gix = { version = "0.89.0", default-features = false, features = ["blob-diff", "sha1", "status"] }
 icu_properties = "2.3.0"
 icu_segmenter = "2.3.0"
 include_dir = "0.7.4"

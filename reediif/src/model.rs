@@ -22,6 +22,8 @@ pub enum FileContentType {
     Binary,
     /// At least one version is not valid UTF-8. The file has no hunks.
     InvalidUtf8,
+    /// The file has conflicts, so it has no version in the index. The file has no hunks.
+    Unmerged,
 }
 
 /// The modifications of a single file.

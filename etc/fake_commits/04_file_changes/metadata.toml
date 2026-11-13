@@ -2,6 +2,7 @@
 # files, files without newline at their end, and blocks of lines that are only removed or only
 # added.
 hash = "5e2b9d4a1f03c7e8b2d946051fa3c8e7d2b4096a"
+parents = ["a7c3e90b4d1f6285e3a07c9b1d4f8e26053b7a91"]
 author = "Noah Petit"
 email = "noah.petit@example.org"
 date = "2026-09-28 10:24:05 +0200"

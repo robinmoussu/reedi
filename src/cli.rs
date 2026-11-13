@@ -3,6 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
+use clap::ArgGroup;
 use clap::Parser;
 use jiff::Timestamp;
 use jiff::Zoned;
@@ -14,20 +15,26 @@ use crate::date;
 use crate::date::DateFormat;
 use crate::date::DateParseError;
 
-/// `reedi` is a review editor: a TUI to review (and edit) unpushed commits.
+/// The options displaying fake data, which exclude each other.
+const FAKE_DATA_OPTIONS: &str = "fake_data";
+
+/// `reedi` is a review editor: a TUI to review (and edit) unpushed commits, or uncommitted changes.
 #[derive(Debug, Parser)]
-#[command(version)]
+#[command(version, group(ArgGroup::new(FAKE_DATA_OPTIONS).args(["fake", "fake_dirty_directory"])))]
 pub struct Cli {
     /// Display the fake commits instead of those of the repository.
     #[arg(long, hide = true)]
     pub fake: bool,
+    /// Display the fake index and working directory instead of those of the repository.
+    #[arg(long, hide = true)]
+    pub fake_dirty_directory: bool,
     /// The current date (any format of `git commit --date`), used by the `relative` and `human`
     /// date formats.
-    #[arg(long, hide = true, requires = "fake")]
+    #[arg(long, hide = true, requires = FAKE_DATA_OPTIONS)]
     pub fake_now: Option<String>,
     /// The current timezone (IANA name or fixed offset), used by the `-local` and `human` date
     /// formats, and by `--fake-now` when it has no offset.
-    #[arg(long, hide = true, requires = "fake")]
+    #[arg(long, hide = true, requires = FAKE_DATA_OPTIONS)]
     pub fake_timezone: Option<String>,
     /// How dates are displayed (any value of `git log --date=`). Defaults to the `log.date` git
     /// setting, then to `human`.
@@ -107,6 +114,7 @@ mod tests {
     fn options_are_unset_by_default() {
         let cli = parse(&[]).unwrap();
         assert!(!cli.fake);
+        assert!(!cli.fake_dirty_directory);
         assert_eq!(cli.date_format, None);
     }
 
@@ -128,7 +136,13 @@ mod tests {
     }
 
     #[test]
-    fn fake_now_and_timezone_require_fake() {
+    fn fake_dirty_directory_conflicts_with_fake() {
+        let error = parse(&["--fake", "--fake-dirty-directory"]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn fake_now_and_timezone_require_a_fake_option() {
         let now = parse(&["--fake-now", "yesterday"]).unwrap_err();
         assert_eq!(now.kind(), ErrorKind::MissingRequiredArgument);
         let timezone = parse(&["--fake-timezone", "Europe/Paris"]).unwrap_err();
@@ -141,6 +155,14 @@ mod tests {
             "UTC",
         ];
         assert!(parse(&fake).is_ok());
+        let fake_dirty_directory = [
+            "--fake-dirty-directory",
+            "--fake-now",
+            "yesterday",
+            "--fake-timezone",
+            "UTC",
+        ];
+        assert!(parse(&fake_dirty_directory).is_ok());
     }
 
     #[test]

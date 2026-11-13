@@ -4,6 +4,7 @@ use std::ops::Range;
 use std::str;
 
 use bstr::BStr;
+use bstr::BString;
 use gix_imara_diff::Algorithm;
 use gix_imara_diff::Diff;
 use gix_imara_diff::InternedInput;
@@ -46,6 +47,17 @@ impl DiffAs {
         } else {
             DiffAs::Auto
         }
+    }
+}
+
+/// The diff of the file at `path`, unmerged in the index, as `git diff --cached` displays it: it
+/// has no version in the index, so it has no hunks.
+pub fn unmerged(path: impl Into<BString>) -> FileDiff {
+    FileDiff {
+        path: path.into(),
+        change: FileChange::Modified,
+        content: FileContentType::Unmerged,
+        hunks: Vec::new(),
     }
 }
 

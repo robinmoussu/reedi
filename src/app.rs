@@ -305,6 +305,7 @@ mod tests {
     use crate::test_support::header_row_indexes;
     use crate::test_support::revisions_of;
     use crate::test_support::rows_of;
+    use crate::test_support::rows_of_revisions;
     use crate::test_support::short_commits;
     use crate::view::AnchorOffset;
 
@@ -1294,6 +1295,26 @@ mod tests {
         assert_eq!(
             navigated(&rows, Action::PreviousRevision, None, before),
             before
+        );
+    }
+
+    #[test]
+    fn navigate_next_and_previous_revision_go_between_the_index_and_the_working_directory() {
+        let (index, working_directory) = fake::dirty_directory();
+        let rows = rows_of_revisions(
+            &[
+                Revision::Index(index),
+                Revision::WorkingDirectory(working_directory),
+            ],
+            /* width */ 110,
+        );
+        let working_directory_header = view::header_row(&rows, /* revision_index */ 1).unwrap();
+        let on_index = Viewport { cursor: 0, top: 0 };
+        let on_working_directory = navigated(&rows, Action::NextRevision, None, on_index);
+        assert_eq!(on_working_directory.cursor, working_directory_header);
+        assert_eq!(
+            navigated(&rows, Action::PreviousRevision, None, on_working_directory).cursor,
+            0
         );
     }
 

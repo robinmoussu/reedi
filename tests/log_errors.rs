@@ -143,6 +143,9 @@ fn no_commits_replayed_during_a_rebase_is_an_error() {
         let git = Git::on_branch();
         let onto =
             git.start_rebase_stopped_by_conflict(backend, /* replayed_commits_count */ 0);
+        // The conflict makes the working directory dirty, which would be displayed instead of
+        // the error. The rebase is still in progress.
+        git.stdout_of(&["reset", "--hard", "--quiet"]);
         let short_hash = git.stdout_of(&["log", "-1", "--format=format:%h", &onto]);
         assert_eq!(
             error_in(git.path()),
