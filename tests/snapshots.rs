@@ -5,11 +5,11 @@
 
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use reedi::date::DateDisplay;
 use reedi::fake;
 use reedi::model::Commit;
 use reedi::model::Revision;
 use reedi::test_support::backend_without_left_to_right_marks;
+use reedi::test_support::rows_of_revisions;
 use reedi::test_support::unknown_settings_error_modal;
 use reedi::theme::Theme;
 use reedi::view;
@@ -29,7 +29,7 @@ fn screen(
 ) -> String {
     let revisions = [Revision::Commit(commit)];
     let theme = Theme::monochrome();
-    let rows = view::rows(&revisions, width, &theme, &DateDisplay::for_snapshots()).unwrap();
+    let rows = rows_of_revisions(&revisions, width);
     let mut viewport = viewport;
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
