@@ -168,7 +168,7 @@ impl Locale {
         };
         let translated = self.with_translations(|| {
             // SAFETY: the arguments are valid C strings, and the result is either one of them or
-            // a string owned by gettext, valid until the next call.
+            // a string of a message catalog, which gettext never unloads.
             unsafe {
                 let translated = dcngettext(
                     GIT_TEXT_DOMAIN.as_ptr(),

@@ -1,6 +1,8 @@
 //! `reedi` is a review editor: a TUI to review (and edit) unpushed commits, or uncommitted
 //! changes.
 
+#![forbid(unsafe_code)]
+
 mod app;
 pub mod cli;
 pub mod config;
