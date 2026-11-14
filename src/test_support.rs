@@ -1,5 +1,7 @@
 //! Helpers shared by the unit tests and the integration tests.
 
+use std::sync::atomic::AtomicBool;
+
 use ratatui::backend::Backend;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -15,6 +17,9 @@ use crate::view;
 use crate::view::ErrorModal;
 use crate::view::LEFT_TO_RIGHT_MARK;
 use crate::view::Row;
+
+/// Never set: the rows built by the tests are never cancelled.
+pub static NOT_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 /// 3 fake commits displayed on at least 6 rows each, for the tests displaying several commits
 /// (some of them move the cursor 3 rows below a header, inside the same commit).
@@ -64,6 +69,7 @@ pub fn rows_of_revisions(revisions: &[Revision], width: u16) -> Vec<Row> {
         width,
         &Theme::monochrome(),
         &DateDisplay::for_snapshots(),
+        &NOT_CANCELLED,
     )
     .unwrap()
 }

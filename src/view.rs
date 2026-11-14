@@ -4,6 +4,8 @@ use std::iter;
 use std::ops::Div;
 use std::ops::Sub;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use gix::bstr::ByteSlice;
 use ratatui::Frame;
@@ -558,6 +560,7 @@ fn file_parts(file: &FileDiff, theme: &Theme) -> Vec<Part> {
 #[derive(Debug, PartialEq)]
 pub enum RowsError {
     TooNarrow(TooNarrow),
+    Cancelled,
 }
 
 impl From<TooNarrow> for RowsError {
@@ -578,10 +581,17 @@ struct Rows<'a> {
     width: u16,
     theme: &'a Theme,
     dates: &'a DateDisplay,
+    /// Set to stop building the rows.
+    cancellation: &'a AtomicBool,
 }
 
 impl<'a> Rows<'a> {
-    fn new(width: u16, theme: &'a Theme, dates: &'a DateDisplay) -> Self {
+    fn new(
+        width: u16,
+        theme: &'a Theme,
+        dates: &'a DateDisplay,
+        cancellation: &'a AtomicBool,
+    ) -> Self {
         Self {
             rows: Vec::new(),
             lines_count: 0,
@@ -589,6 +599,7 @@ impl<'a> Rows<'a> {
             width,
             theme,
             dates,
+            cancellation,
         }
     }
 
@@ -633,6 +644,9 @@ impl<'a> Rows<'a> {
     /// A carriage return ending a line is replaced if `final_cr` is [`FinalCr::Shown`], and
     /// hidden otherwise.
     fn hunk(&mut self, hunk: &Hunk, final_cr: FinalCr) -> Result<(), RowsError> {
+        if self.cancellation.load(Ordering::Relaxed) {
+            return Err(RowsError::Cancelled);
+        }
         // Each pair of lines displayed side by side is a line (see `Row::line_index`), and so is
         // `MISSING_NEWLINE`.
         let len = pairing::pairs(hunk, MAX_PAIRING_DISTANCE, TAB_WIDTH).len()
@@ -811,14 +825,16 @@ impl<'a> Rows<'a> {
 /// All the rows displaying `revisions` on a screen `width` columns wide.
 ///
 /// Fails if a text area is too narrow to display a grapheme cluster of its line, unless it is in
-/// a hunk, which is then replaced by an error message.
+/// a hunk, which is then replaced by an error message. Fails before the next hunk once
+/// `cancellation` is set.
 pub fn rows(
     revisions: &[Revision],
     width: u16,
     theme: &Theme,
     dates: &DateDisplay,
+    cancellation: &AtomicBool,
 ) -> Result<Vec<Row>, RowsError> {
-    let mut rows = Rows::new(width, theme, dates);
+    let mut rows = Rows::new(width, theme, dates, cancellation);
     for revision in revisions {
         rows.revision(revision)?;
     }
@@ -1182,6 +1198,7 @@ mod tests {
 
     use super::*;
     use crate::fake;
+    use crate::test_support::NOT_CANCELLED;
     use crate::test_support::backend_without_left_to_right_marks;
     use crate::test_support::file_at;
     use crate::test_support::file_at_mut;
@@ -1199,12 +1216,18 @@ mod tests {
         width: u16,
         theme: &Theme,
     ) -> Result<Vec<Row>, RowsError> {
-        rows(revisions, width, theme, &DateDisplay::for_snapshots())
+        rows(
+            revisions,
+            width,
+            theme,
+            &DateDisplay::for_snapshots(),
+            &NOT_CANCELLED,
+        )
     }
 
     /// The rows being built for a screen `width` columns wide.
     fn new_rows<'a>(width: u16, theme: &'a Theme, dates: &'a DateDisplay) -> Rows<'a> {
-        Rows::new(width, theme, dates)
+        Rows::new(width, theme, dates, &NOT_CANCELLED)
     }
 
     /// The rows of `revision`, including the separator below it.
@@ -3750,5 +3773,18 @@ mod tests {
             &Theme::monochrome(),
         );
         assert_eq!(drawn.top, len - 25);
+    }
+
+    #[test]
+    fn cancelled_rows_are_not_built() {
+        let cancellation = AtomicBool::new(true);
+        let result = rows(
+            &[Revision::Commit(fake::scrolloff_rename())],
+            /* width */ 110,
+            &Theme::monochrome(),
+            &DateDisplay::for_snapshots(),
+            &cancellation,
+        );
+        assert_eq!(result, Err(RowsError::Cancelled));
     }
 }

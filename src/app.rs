@@ -2,6 +2,14 @@
 
 use std::io;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
+use std::thread;
+use std::thread::Scope;
+use std::time::Duration;
 
 use nix::sys::signal;
 use nix::sys::signal::Signal;
@@ -26,6 +34,10 @@ use crate::view::Row;
 use crate::view::RowsError;
 use crate::viewport::Viewport;
 use crate::wrap::TooNarrow;
+
+/// How long to wait for a terminal event before checking whether the rows being rewrapped are
+/// built.
+const REWRAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// What a key press does in review mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,8 +164,8 @@ fn navigate(
 /// over them, if any, until a key is pressed.
 ///
 /// Like `less`, the alternate screen is used, and the screen is redrawn when its size changes.
-/// Fails if a text area outside of the hunks is too narrow to display a grapheme cluster of its
-/// line.
+/// The rows are rewrapped in the background, the previous ones being displayed meanwhile. Fails
+/// if a text area outside of the hunks is too narrow to display a grapheme cluster of its line.
 pub fn run(
     revisions: &[Revision],
     settings: &Settings,
@@ -165,86 +177,163 @@ pub fn run(
     let mut size = None;
     let mut viewport = Viewport::default();
     let mut count = Count::default();
-    let mut rewrapper = Rewrapper::new(revisions, &settings.theme, &settings.dates);
     ratatui::run(|terminal| {
-        loop {
-            let screen = terminal.size()?;
-            let height = usize::from(screen.height.saturating_sub(view::STATUS_BAR_HEIGHT));
-            if let Some(new_rows) = rewrapper
-                .poll_rows_for(screen.width)
-                .map_err(io::Error::other)?
-            {
-                replace_rows(&mut rows, new_rows, &mut viewport);
+        thread::scope(|scope| {
+            let mut rewrapper = Rewrapper::new(scope, revisions, &settings.theme, &settings.dates);
+            loop {
+                let screen = terminal.size()?;
+                let height = usize::from(screen.height.saturating_sub(view::STATUS_BAR_HEIGHT));
+                let new_rows = rewrapper
+                    .poll_rows_for(screen.width)
+                    .map_err(io::Error::other)?;
+                let rows_replaced = new_rows.is_some();
+                if let Some(new_rows) = new_rows {
+                    replace_rows(&mut rows, new_rows, &mut viewport);
+                }
+                if rows_replaced || size != Some(screen) {
+                    viewport.scroll(rows.len(), height);
+                    size = Some(screen);
+                }
+                terminal.draw(|frame| {
+                    view::draw(
+                        frame,
+                        revisions,
+                        &rows,
+                        &mut viewport,
+                        Mode::Review,
+                        count.pending(),
+                        error_modal.as_ref(),
+                        &settings.theme,
+                    )
+                })?;
+                if rewrapper.is_running() && !event::poll(REWRAP_POLL_INTERVAL)? {
+                    continue;
+                }
+                let event = event::read()?;
+                let command = if error_modal.is_some() {
+                    close_on_key_press(&event, &mut error_modal);
+                    None
+                } else {
+                    count.apply(&event)
+                };
+                match command {
+                    Some((Action::Quit, _)) => return Ok(()),
+                    Some((Action::Suspend, _)) => suspend(terminal)?,
+                    Some((action, count)) => navigate(action, count, &mut viewport, &rows, height),
+                    None => {}
+                }
             }
-            if size != Some(screen) {
-                viewport.scroll(rows.len(), height);
-                size = Some(screen);
-            }
-            terminal.draw(|frame| {
-                view::draw(
-                    frame,
-                    revisions,
-                    &rows,
-                    &mut viewport,
-                    Mode::Review,
-                    count.pending(),
-                    error_modal.as_ref(),
-                    &settings.theme,
-                )
-            })?;
-            let event = event::read()?;
-            let command = if error_modal.is_some() {
-                close_on_key_press(&event, &mut error_modal);
-                None
-            } else {
-                count.apply(&event)
-            };
-            match command {
-                Some((Action::Quit, _)) => return Ok(()),
-                Some((Action::Suspend, _)) => suspend(terminal)?,
-                Some((action, count)) => navigate(action, count, &mut viewport, &rows, height),
-                None => {}
-            }
-        }
+        })
     })
 }
 
-/// Rewraps the rows when the width of the screen changes.
-struct Rewrapper<'a> {
-    revisions: &'a [Revision],
-    theme: &'a Theme,
-    dates: &'a DateDisplay,
-    /// Width of the screen the displayed rows are wrapped for, if any.
-    wrapped_width: Option<u16>,
+/// Rows being built in the background. Dropping it cancels it.
+struct RewrapJob {
+    /// Width of the screen the rows are built for.
+    width: u16,
+    cancellation: Arc<AtomicBool>,
+    result: Receiver<Result<Vec<Row>, RowsError>>,
 }
 
-impl<'a> Rewrapper<'a> {
-    /// A rewrapper of the rows displaying `revisions`.
-    fn new(revisions: &'a [Revision], theme: &'a Theme, dates: &'a DateDisplay) -> Self {
+impl RewrapJob {
+    /// Start building, in a thread of `scope`, the rows displaying `revisions` on a screen `width`
+    /// columns wide.
+    fn spawn<'scope, 'env>(
+        scope: &'scope Scope<'scope, 'env>,
+        revisions: &'env [Revision],
+        width: u16,
+        theme: &'env Theme,
+        dates: &'env DateDisplay,
+    ) -> Self {
+        let cancellation = Arc::new(AtomicBool::new(false));
+        let (sender, result) = mpsc::channel();
+        let thread_cancellation = Arc::clone(&cancellation);
+        scope.spawn(move || {
+            let rows = view::rows(revisions, width, theme, dates, &thread_cancellation);
+            // The job may have been dropped.
+            let _ = sender.send(rows);
+        });
+        Self { width, cancellation, result }
+    }
+}
+
+impl Drop for RewrapJob {
+    fn drop(&mut self) {
+        self.cancellation.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Rewraps the rows in the background when the width of the screen changes.
+struct Rewrapper<'scope, 'env> {
+    scope: &'scope Scope<'scope, 'env>,
+    revisions: &'env [Revision],
+    theme: &'env Theme,
+    dates: &'env DateDisplay,
+    /// Width of the screen the displayed rows are wrapped for, if any.
+    wrapped_width: Option<u16>,
+    job: Option<RewrapJob>,
+}
+
+impl<'scope, 'env> Rewrapper<'scope, 'env> {
+    /// A rewrapper of the rows displaying `revisions`, in the threads of `scope`.
+    fn new(
+        scope: &'scope Scope<'scope, 'env>,
+        revisions: &'env [Revision],
+        theme: &'env Theme,
+        dates: &'env DateDisplay,
+    ) -> Self {
         Self {
+            scope,
             revisions,
             theme,
             dates,
             wrapped_width: None,
+            job: None,
         }
     }
 
     /// Make progress on rewrapping the rows for a screen `width` columns wide, and return them
-    /// once they are built, if they are not displayed yet.
+    /// once they are built, if they are not displayed yet. A running rewrap for another width is
+    /// cancelled.
     ///
     /// Fails if a text area outside of the hunks is too narrow to display a grapheme cluster of
     /// its line.
     fn poll_rows_for(&mut self, width: u16) -> Result<Option<Vec<Row>>, TooNarrow> {
-        if self.wrapped_width == Some(width) {
+        self.start_rewrapping_for(width);
+        let Some(result) = self.job.as_ref().and_then(|job| job.result.try_recv().ok()) else {
             return Ok(None);
-        }
-        match view::rows(self.revisions, width, self.theme, self.dates) {
+        };
+        self.job = None;
+        match result {
             Ok(rows) => {
                 self.wrapped_width = Some(width);
                 Ok(Some(rows))
             }
             Err(RowsError::TooNarrow(error)) => Err(error),
+            // Only a dropped job is cancelled.
+            Err(RowsError::Cancelled) => Ok(None),
         }
+    }
+
+    /// Start rewrapping the rows for a screen `width` columns wide, unless the displayed rows are
+    /// wrapped for it or are being rewrapped for it. A running rewrap for another width is
+    /// cancelled.
+    fn start_rewrapping_for(&mut self, width: u16) {
+        if self.wrapped_width == Some(width) {
+            self.job = None;
+        } else if self.job.as_ref().is_none_or(|job| job.width != width) {
+            self.job = Some(RewrapJob::spawn(
+                self.scope,
+                self.revisions,
+                width,
+                self.theme,
+                self.dates,
+            ));
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        self.job.is_some()
     }
 }
 
@@ -410,7 +499,27 @@ mod tests {
     fn with_rewrapper(revisions: &[Revision], test: impl FnOnce(&mut Rewrapper)) {
         let theme = Theme::monochrome();
         let dates = DateDisplay::for_snapshots();
-        test(&mut Rewrapper::new(revisions, &theme, &dates));
+        thread::scope(|scope| test(&mut Rewrapper::new(scope, revisions, &theme, &dates)));
+    }
+
+    /// Poll `rewrapper` for the rows of a screen `width` columns wide until its rewrap is
+    /// finished (see [`Rewrapper::poll_rows_for()`]).
+    fn poll_rows_until_finished(
+        rewrapper: &mut Rewrapper,
+        width: u16,
+    ) -> Result<Option<Vec<Row>>, TooNarrow> {
+        loop {
+            let rows = rewrapper.poll_rows_for(width)?;
+            if rows.is_some() || !rewrapper.is_running() {
+                return Ok(rows);
+            }
+        }
+    }
+
+    /// The cancellation of the rewrap running in `rewrapper`.
+    fn cancellation(rewrapper: &Rewrapper) -> Arc<AtomicBool> {
+        let job = rewrapper.job.as_ref().expect("a rewrap is running");
+        Arc::clone(&job.cancellation)
     }
 
     #[test]
@@ -418,9 +527,18 @@ mod tests {
         // Its content does not matter.
         let revisions = [Revision::Commit(fake::ltr_then_rtl_summary())];
         with_rewrapper(&revisions, |rewrapper| {
-            assert!(rewrapper.poll_rows_for(/* width */ 110).unwrap().is_some());
+            assert!(
+                poll_rows_until_finished(rewrapper, /* width */ 110)
+                    .unwrap()
+                    .is_some()
+            );
             assert!(rewrapper.poll_rows_for(/* width */ 110).unwrap().is_none());
-            assert!(rewrapper.poll_rows_for(/* width */ 60).unwrap().is_some());
+            assert!(!rewrapper.is_running());
+            assert!(
+                poll_rows_until_finished(rewrapper, /* width */ 60)
+                    .unwrap()
+                    .is_some()
+            );
         });
     }
 
@@ -429,7 +547,33 @@ mod tests {
         // Its content does not matter.
         let revisions = [Revision::Commit(fake::ltr_then_rtl_summary())];
         with_rewrapper(&revisions, |rewrapper| {
-            assert!(rewrapper.poll_rows_for(/* width */ 0).is_err());
+            assert!(poll_rows_until_finished(rewrapper, /* width */ 0).is_err());
+        });
+    }
+
+    #[test]
+    fn rewrapping_for_the_width_being_rewrapped_keeps_the_running_rewrap() {
+        // Its content does not matter.
+        let revisions = [Revision::Commit(fake::ltr_then_rtl_summary())];
+        with_rewrapper(&revisions, |rewrapper| {
+            rewrapper.start_rewrapping_for(/* width */ 110);
+            let running = cancellation(rewrapper);
+            rewrapper.start_rewrapping_for(/* width */ 110);
+            assert!(Arc::ptr_eq(&running, &cancellation(rewrapper)));
+            assert!(!running.load(Ordering::Relaxed));
+        });
+    }
+
+    #[test]
+    fn polling_the_rows_for_another_width_cancels_the_running_rewrap() {
+        // Its content does not matter.
+        let revisions = [Revision::Commit(fake::ltr_then_rtl_summary())];
+        with_rewrapper(&revisions, |rewrapper| {
+            rewrapper.start_rewrapping_for(/* width */ 60);
+            let running = cancellation(rewrapper);
+            let rows = poll_rows_until_finished(rewrapper, /* width */ 110).unwrap();
+            assert!(running.load(Ordering::Relaxed));
+            assert_eq!(rows, Some(rows_of_revisions(&revisions, /* width */ 110)));
         });
     }
 

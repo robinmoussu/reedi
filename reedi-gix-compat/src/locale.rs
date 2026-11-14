@@ -47,6 +47,15 @@ pub struct Locale {
     raw: libc::locale_t,
 }
 
+// SAFETY: `raw` is private, and POSIX never modifies a locale object after `newlocale()`, nor ties
+// it to a thread. It is only given to `strftime_l()`, and to `uselocale()`, which changes only the
+// locale of the calling thread, restored before returning. gettext must be thread-safe (it is in
+// glibc, in musl, and in GNU libintl built with threads), and changing the global locale
+// (`setlocale()`) or the environment while it is used requires unsafe code.
+unsafe impl Send for Locale {}
+// SAFETY: same as for `Send`.
+unsafe impl Sync for Locale {}
+
 impl Drop for Locale {
     fn drop(&mut self) {
         // SAFETY: `raw` was created by `newlocale()` and is freed only here.
