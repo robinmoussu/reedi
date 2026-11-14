@@ -75,36 +75,33 @@ impl Viewport {
     /// Move the screen `lines_count` lines down (`ctrl+e`), one line at a time, stopping when its
     /// last row is the last of `len` rows, like `less`.
     ///
-    /// For each line, the cursor stays on its row, unless it is at most `scrolloff(height)` rows
-    /// below the top of the screen (inside the margin, or about to enter it): it then moves down
-    /// with the screen, so that it keeps its distance from the top.
+    /// For each line, the cursor moves one row down, like `j`. The screen moves with it, so that the
+    /// cursor stays on its row of the screen, unless the cursor is inside the scrolloff margin
+    /// (less than `scrolloff(height)` rows below the top of the screen) or the screen cannot move
+    /// anymore.
     pub fn scroll_down(&mut self, lines_count: usize, len: usize, height: usize) {
         let height = height.max(1);
-        let lines_count = lines_count.min(len.saturating_sub(height).saturating_sub(self.top));
-        // The cursor stays on its row until it is `scrolloff` rows from the top, then it moves
-        // with the screen.
         let distance = self.cursor.saturating_sub(self.top);
-        let staying = lines_count.min(distance.saturating_sub(scrolloff(height)));
-        self.top += lines_count;
-        self.cursor += lines_count - staying;
+        let leaving_margin_count = lines_count.min(scrolloff(height).saturating_sub(distance));
+        self.top += (lines_count - leaving_margin_count)
+            .min(len.saturating_sub(height).saturating_sub(self.top));
+        self.down_by(lines_count, len);
     }
 
     /// Move the screen `lines_count` lines up (`ctrl+y`), one line at a time, stopping when its
     /// first row is the first row, like `less`.
     ///
-    /// For each line, the cursor stays on its row, unless it is at most `scrolloff(height)` rows
-    /// above the bottom of the screen (inside the margin, or about to enter it): it then moves up
-    /// with the screen, so that it keeps its distance from the bottom.
+    /// For each line, the cursor moves one row up, like `k`. The screen moves with it, so that the
+    /// cursor stays on its row of the screen, unless the cursor is inside the scrolloff margin
+    /// (less than `scrolloff(height)` rows above the bottom of the screen) or the screen cannot
+    /// move anymore.
     pub fn scroll_up(&mut self, lines_count: usize, height: usize) {
         let height = height.max(1);
-        let lines_count = lines_count.min(self.top);
-        // The cursor stays on its row until it is `scrolloff` rows from the bottom, then it moves
-        // with the screen.
-        let distance = self.cursor.saturating_sub(self.top);
         let lowest_allowed = height - 1 - scrolloff(height);
-        let staying = lines_count.min(lowest_allowed.saturating_sub(distance));
-        self.top -= lines_count;
-        self.cursor = self.cursor.saturating_sub(lines_count - staying);
+        let distance = self.cursor.saturating_sub(self.top);
+        let leaving_margin_count = lines_count.min(distance.saturating_sub(lowest_allowed));
+        self.top -= (lines_count - leaving_margin_count).min(self.top);
+        self.up_by(lines_count);
     }
 
     /// Move half the screen (`height / 2` rows, `count` times) down (`d`): the screen scrolls like
@@ -453,102 +450,77 @@ mod tests {
     }
 
     #[test]
-    fn scroll_down_moves_the_screen_and_not_the_cursor_far_from_the_top() {
+    fn scroll_down_moves_the_screen_and_the_cursor_far_from_the_top() {
         let mut viewport = Viewport { cursor: 20, top: 10 };
         viewport.scroll_down(
             /* lines_count */ 1, /* len */ 100, /* height */ 20,
         );
-        assert_eq!(viewport, Viewport { cursor: 20, top: 11 });
+        assert_eq!(viewport, Viewport { cursor: 21, top: 11 });
     }
 
     #[test]
-    fn scroll_down_moves_the_cursor_once_it_is_scrolloff_rows_from_the_top() {
-        // The cursor is the 10th row of the screen: it stays on its row until it is the 6th, then
-        // it moves with the screen.
-        let mut viewport = Viewport { cursor: 20, top: 10 };
-        viewport.scroll_down(
-            /* lines_count */ 5, /* len */ 100, /* height */ 20,
-        );
-        assert_eq!(viewport, Viewport { cursor: 20, top: 15 });
+    fn scroll_down_moves_a_cursor_inside_the_scrolloff_margin_like_j() {
+        // The cursor is the 3rd row of the screen.
+        let mut viewport = Viewport { cursor: 2, top: 0 };
         viewport.scroll_down(
             /* lines_count */ 1, /* len */ 100, /* height */ 20,
         );
-        assert_eq!(viewport, Viewport { cursor: 21, top: 16 });
-        viewport.scroll_down(
-            /* lines_count */ 1, /* len */ 100, /* height */ 20,
-        );
-        assert_eq!(viewport, Viewport { cursor: 22, top: 17 });
+        assert_eq!(viewport, Viewport { cursor: 3, top: 0 });
     }
 
     #[test]
-    fn scroll_down_keeps_the_distance_of_a_cursor_inside_the_scrolloff_margin() {
-        // The cursor is the 3rd row of the screen, and doesn't jump to the 6th.
-        let mut viewport = Viewport { cursor: 12, top: 10 };
+    fn scroll_down_scrolls_once_the_cursor_is_out_of_the_scrolloff_margin() {
+        // The cursor is the 4th row of the screen: it moves to the 6th, then it moves with the
+        // screen.
+        let mut viewport = Viewport { cursor: 3, top: 0 };
         viewport.scroll_down(
-            /* lines_count */ 1, /* len */ 100, /* height */ 20,
+            /* lines_count */ 3, /* len */ 100, /* height */ 20,
         );
-        assert_eq!(viewport, Viewport { cursor: 13, top: 11 });
+        assert_eq!(viewport, Viewport { cursor: 6, top: 1 });
     }
 
     #[test]
-    fn scroll_up_then_down_keeps_a_cursor_inside_the_scrolloff_margin_on_its_screen_row() {
-        let mut viewport = Viewport { cursor: 12, top: 10 };
-        viewport.scroll_down(
-            /* lines_count */ 1, /* len */ 100, /* height */ 20,
-        );
-        // Scrolling up leaves the cursor on its row, which is now the 4th row of the screen.
-        viewport.scroll_up(/* lines_count */ 1, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 13, top: 10 });
-        // Scrolling down again keeps the cursor on the 4th row of the screen.
-        viewport.scroll_down(
-            /* lines_count */ 1, /* len */ 100, /* height */ 20,
-        );
-        assert_eq!(viewport, Viewport { cursor: 14, top: 11 });
-    }
-
-    #[test]
-    fn scroll_down_does_not_move_a_cursor_inside_the_bottom_margin() {
+    fn scroll_down_moves_a_cursor_inside_the_bottom_margin_with_the_screen() {
         // The cursor is the 19th row of the screen.
         let mut viewport = Viewport { cursor: 28, top: 10 };
         viewport.scroll_down(
             /* lines_count */ 1, /* len */ 100, /* height */ 20,
         );
-        assert_eq!(viewport, Viewport { cursor: 28, top: 11 });
+        assert_eq!(viewport, Viewport { cursor: 29, top: 11 });
     }
 
     #[test]
-    fn scroll_down_stops_when_the_last_row_is_displayed() {
+    fn scroll_down_only_moves_the_cursor_when_the_last_row_is_displayed() {
         let mut viewport = Viewport { cursor: 90, top: 79 };
         viewport.scroll_down(
             /* lines_count */ 1, /* len */ 100, /* height */ 20,
         );
-        assert_eq!(viewport, Viewport { cursor: 90, top: 80 });
+        assert_eq!(viewport, Viewport { cursor: 91, top: 80 });
         viewport.scroll_down(
             /* lines_count */ 1, /* len */ 100, /* height */ 20,
         );
-        assert_eq!(viewport, Viewport { cursor: 90, top: 80 });
+        assert_eq!(viewport, Viewport { cursor: 92, top: 80 });
     }
 
     #[test]
-    fn scroll_down_by_more_lines_than_available_stops_at_the_end() {
+    fn scroll_down_by_more_lines_than_available_stops_on_the_last_row() {
         let mut viewport = Viewport { cursor: 50, top: 40 };
         viewport.scroll_down(
             /* lines_count */ 1000, /* len */ 100, /* height */ 20,
         );
-        // The cursor was the 11th row of the screen: 5 lines are scrolled with it staying on its
-        // row, then it moves with the screen for the 35 remaining ones.
-        assert_eq!(viewport, Viewport { cursor: 85, top: 80 });
+        assert_eq!(viewport, Viewport { cursor: 99, top: 80 });
         viewport.scroll_down(usize::MAX, /* len */ 100, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 85, top: 80 });
+        assert_eq!(viewport, Viewport { cursor: 99, top: 80 });
     }
 
     #[test]
-    fn scroll_down_does_nothing_when_everything_fits() {
-        let mut viewport = Viewport { cursor: 3, top: 0 };
+    fn scroll_down_only_moves_the_cursor_when_everything_fits() {
+        // The cursor is the 8th row of the screen, outside the scrolloff margin.
+        let mut viewport = Viewport { cursor: 7, top: 0 };
         viewport.scroll_down(
-            /* lines_count */ 5, /* len */ 10, /* height */ 20,
+            /* lines_count */ 1, /* len */ 10, /* height */ 20,
         );
-        assert_eq!(viewport, Viewport { cursor: 3, top: 0 });
+        assert_eq!(viewport, Viewport { cursor: 8, top: 0 });
     }
 
     #[test]
@@ -563,49 +535,45 @@ mod tests {
     }
 
     #[test]
-    fn scroll_up_moves_the_screen_and_not_the_cursor_far_from_the_bottom() {
+    fn scroll_up_moves_the_screen_and_the_cursor_far_from_the_bottom() {
         let mut viewport = Viewport { cursor: 20, top: 10 };
         viewport.scroll_up(/* lines_count */ 1, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 20, top: 9 });
+        assert_eq!(viewport, Viewport { cursor: 19, top: 9 });
     }
 
     #[test]
-    fn scroll_up_moves_the_cursor_once_it_is_scrolloff_rows_from_the_bottom() {
-        // The cursor is the 10th row of the screen: it stays on its row until it is the 15th, then
-        // it moves with the screen.
-        let mut viewport = Viewport { cursor: 20, top: 10 };
-        viewport.scroll_up(/* lines_count */ 4, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 20, top: 6 });
-        viewport.scroll_up(/* lines_count */ 1, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 19, top: 5 });
-    }
-
-    #[test]
-    fn scroll_up_keeps_the_distance_of_a_cursor_inside_the_bottom_margin() {
+    fn scroll_up_moves_a_cursor_inside_the_bottom_margin_like_k() {
         // The cursor is the 19th row of the screen.
         let mut viewport = Viewport { cursor: 28, top: 10 };
         viewport.scroll_up(/* lines_count */ 1, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 27, top: 9 });
+        assert_eq!(viewport, Viewport { cursor: 27, top: 10 });
     }
 
     #[test]
-    fn scroll_up_stops_when_the_first_row_is_displayed() {
+    fn scroll_up_scrolls_once_the_cursor_is_out_of_the_bottom_margin() {
+        // The cursor is the 17th row of the screen: it moves to the 15th, then it moves with the
+        // screen.
+        let mut viewport = Viewport { cursor: 26, top: 10 };
+        viewport.scroll_up(/* lines_count */ 3, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 23, top: 9 });
+    }
+
+    #[test]
+    fn scroll_up_only_moves_the_cursor_when_the_first_row_is_displayed() {
         let mut viewport = Viewport { cursor: 10, top: 1 };
         viewport.scroll_up(/* lines_count */ 1, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 10, top: 0 });
+        assert_eq!(viewport, Viewport { cursor: 9, top: 0 });
         viewport.scroll_up(/* lines_count */ 1, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 10, top: 0 });
+        assert_eq!(viewport, Viewport { cursor: 8, top: 0 });
     }
 
     #[test]
-    fn scroll_up_by_more_lines_than_available_stops_at_the_beginning() {
+    fn scroll_up_by_more_lines_than_available_stops_on_the_first_row() {
         let mut viewport = Viewport { cursor: 20, top: 10 };
         viewport.scroll_up(/* lines_count */ 1000, /* height */ 20);
-        // 4 lines are scrolled with the cursor staying on its row, then it moves with the screen
-        // for the 6 remaining ones.
-        assert_eq!(viewport, Viewport { cursor: 14, top: 0 });
+        assert_eq!(viewport, Viewport { cursor: 0, top: 0 });
         viewport.scroll_up(usize::MAX, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 14, top: 0 });
+        assert_eq!(viewport, Viewport { cursor: 0, top: 0 });
     }
 
     #[test]

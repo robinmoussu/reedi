@@ -1382,27 +1382,29 @@ mod tests {
     }
 
     #[test]
-    fn navigate_scroll_down_and_up_do_not_apply_the_scrolloff_to_the_cursor() {
+    fn navigate_scroll_down_and_up_move_a_cursor_inside_the_scrolloff_margin_like_j_and_k() {
         let rows = rows_of_a_long_commit();
-        // The cursor is the 3rd row of the screen: it keeps its distance from the top.
+        let len = rows.len();
+        // The cursor is the 3rd row of the screen.
         assert_eq!(
             navigated(
                 &rows,
                 Action::ScrollDown,
                 None,
-                Viewport { cursor: 12, top: 10 }
+                Viewport { cursor: 2, top: 0 }
             ),
-            Viewport { cursor: 13, top: 11 }
+            Viewport { cursor: 3, top: 0 }
         );
-        // Then ctrl+y leaves it on its row, now the 4th one of the screen.
+        // The cursor is the 2nd row from the bottom of the screen.
+        let top = len - HEIGHT;
         assert_eq!(
             navigated(
                 &rows,
                 Action::ScrollUp,
                 None,
-                Viewport { cursor: 13, top: 11 }
+                Viewport { cursor: len - 2, top }
             ),
-            Viewport { cursor: 13, top: 10 }
+            Viewport { cursor: len - 3, top }
         );
     }
 
@@ -1416,7 +1418,7 @@ mod tests {
                 /* count */ Some(3),
                 Viewport { cursor: 20, top: 10 }
             ),
-            Viewport { cursor: 20, top: 13 }
+            Viewport { cursor: 23, top: 13 }
         );
         assert_eq!(
             navigated(
@@ -1425,23 +1427,32 @@ mod tests {
                 /* count */ Some(3),
                 Viewport { cursor: 20, top: 10 }
             ),
-            Viewport { cursor: 20, top: 7 }
+            Viewport { cursor: 17, top: 7 }
         );
     }
 
     #[test]
-    fn navigate_scroll_stops_at_both_ends() {
+    fn navigate_scroll_only_moves_the_cursor_at_both_ends() {
         let rows = rows_of_a_long_commit();
         let len = rows.len();
-        let end = Viewport { cursor: len - 5, top: len - HEIGHT };
+        let top = len - HEIGHT;
         assert_eq!(
-            navigated(&rows, Action::ScrollDown, /* count */ Some(10), end),
-            end
+            navigated(
+                &rows,
+                Action::ScrollDown,
+                /* count */ Some(2),
+                Viewport { cursor: len - 5, top }
+            ),
+            Viewport { cursor: len - 3, top }
         );
-        let start = Viewport { cursor: 5, top: 0 };
         assert_eq!(
-            navigated(&rows, Action::ScrollUp, /* count */ Some(10), start),
-            start
+            navigated(
+                &rows,
+                Action::ScrollUp,
+                /* count */ Some(2),
+                Viewport { cursor: 5, top: 0 }
+            ),
+            Viewport { cursor: 3, top: 0 }
         );
     }
 

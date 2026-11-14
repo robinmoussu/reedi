@@ -481,7 +481,7 @@ version 0.0.11: make it possible to change the before/after screen ratio
 version 0.0.12: improved display
 --------------------------------
 
-- [ ] Fix `ctrl+e`/`ctrl+y`
+- [x] Fix `ctrl+e`/`ctrl+y`
 - [ ] Click set the cursor
 - [ ] Fix `j`/`k` and `down`/`up`
 - [ ] Fix `d`/`u` and `ctrl+d`/`ctrl+u`
