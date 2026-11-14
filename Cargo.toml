@@ -1,8 +1,8 @@
 [workspace]
-members = ["reedi-gix-compat", "reediif"]
+members = ["reedi-crossterm-compat", "reedi-gix-compat", "reediif"]
 
 [workspace.package]
-version = "0.0.10"
+version = "0.0.11"
 edition = "2024"
 rust-version = "1.100"
 
@@ -22,6 +22,7 @@ include_dir = "0.7.4"
 jiff = "0.2.38"
 nix = { version = "0.31.3", features = ["signal"] }
 ratatui = "0.30.2"
+reedi-crossterm-compat = { path = "reedi-crossterm-compat" }
 reedi-gix-compat = { path = "reedi-gix-compat" }
 reediif = { path = "reediif" }
 serde = { version = "1.0.229", features = ["derive"] }

@@ -22,6 +22,16 @@ All git-related parsing/display is done using `gix`, but when `gix` lacks the fu
    `Added git compatibility shim:` followed by a list of short descriptions of each compatibility
    shim added, one per line
 
+All terminal handling is done using `crossterm` (through `ratatui`), but when `crossterm` lacks the
+functionality:
+ - `reedi-crossterm-compat` provides it. `reedi` never writes escape sequences directly.
+ - all of those should be seen as technical debt, and when a new version of `crossterm` gains that
+   functionality, the associated code should be removed
+ - each of those should be documented in `reedi-crossterm-compat/compatibility.md`
+ - each commit that introduces a new compatibility shim should contain
+   `Added crossterm compatibility shim:` followed by a list of short descriptions of each
+   compatibility shim added, one per line
+
 The diff model does not depend on the library used to access git data.
 
 version 0.0.0: general structure
@@ -438,11 +448,35 @@ version 0.0.10: reviewing commit creation
   - the `metadata.toml` of the fake commits has `parents` (a list of hashes): the parent of each
     fake commit is the previous one, the parent of the first one is not a fake commit
 
-version 0.0.x: make it possible to change the before/after screen ratio
------------------------------------------------------------------------
+version 0.0.11: make it possible to change the before/after screen ratio
+------------------------------------------------------------------------
 
-- [ ] Click-dragging the separation line should change the before/after screen ratio (50/50) at
-  startup
+- [x] Click-dragging the separation line should change the before/after screen ratio (50/50 at
+  startup)
+  Details:
+  - the separation line is the column of the `│` starting the right half of a split row. Pressing
+    the left button on it, on a split row displayed on the screen, starts dragging it. Elsewhere,
+    pressing the button does nothing
+  - while dragging, the separation line follows the mouse column, and the rows are rewrapped in
+    the background, the rewrap being cancelled when the mouse column changes. Until a rewrap is
+    finished, the previous rows are displayed at the new widths (cropped or padded). Releasing the
+    button applies the ratio
+  - during the drag, the cursor goes back on the character it was on when the drag started (see
+    "When resizing" in the README)
+  - when the terminal is resized, the rows are also rewrapped in the background, cancelled by a
+    newer size, the previous rows being displayed meanwhile
+  - the ratio is kept when the terminal is resized (the width of the left half is rounded down)
+  - each half is at least as wide as the widest hunk of the displayed revisions needs (its line
+    number column, its frame and its widest grapheme cluster), and at least 5 columns, so that
+    changing the ratio never replaces a hunk by "This hunk cannot be displayed: the terminal is
+    too narrow.". If the screen is too narrow for that, it is split 50/50
+  - the mouse pointer has the `col-resize` shape over the separation line and while dragging it
+    (`OSC 22`, ignored by the terminals that don't support it, like gnome-terminal), and its
+    default shape otherwise, and when `reedi` exits, is suspended or panics
+  - the mouse wheel scrolls the screen like `ctrl+e`/`ctrl+y`
+  - a mouse click closes the error modal
+  - the mouse events, but the moves, cancel the pending number
+  - the ratio is not saved: it is 50/50 at each startup
 
 version 0.0.x: line-diff, word-diff and syntax highlighting
 -----------------------------------------------------------

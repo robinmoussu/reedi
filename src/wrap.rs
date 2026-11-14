@@ -288,6 +288,21 @@ fn text_row(
     }
 }
 
+/// Width of the narrowest text area in which `line` can be wrapped: the widest of its clusters (a
+/// tab fits in a single column), and at least 1.
+pub fn min_width(line: &str, final_cr: FinalCr) -> usize {
+    invisible::clusters(line, final_cr)
+        .iter()
+        .map(|cluster| {
+            if cluster.is_tab() {
+                1
+            } else {
+                cluster.width(0)
+            }
+        })
+        .fold(1, usize::max)
+}
+
 /// Display the line made of `segments` on rows of `width` columns, with its invisible characters
 /// replaced. A line always has at least one row.
 ///
@@ -682,5 +697,20 @@ mod tests {
         );
         assert!(wrap(&[Segment::new("a")], FinalCr::Shown, /* width */ 0).is_err());
         assert!(wrap(&[Segment::new(" ")], FinalCr::Shown, /* width */ 0).is_err());
+    }
+
+    #[test]
+    fn min_width_is_the_width_of_the_widest_cluster() {
+        assert_eq!(min_width("ab日c", FinalCr::Shown), 2);
+    }
+
+    #[test]
+    fn min_width_of_a_tab_is_one_column() {
+        assert_eq!(min_width("\t", FinalCr::Shown), 1);
+    }
+
+    #[test]
+    fn min_width_of_an_empty_line_is_one_column() {
+        assert_eq!(min_width("", FinalCr::Shown), 1);
     }
 }

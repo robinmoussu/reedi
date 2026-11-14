@@ -104,7 +104,8 @@ Areas
 - Editable areas can either be modified using the embedded editor that can use vim (and ideally
   CUA (`ctrl+c`, `ctrl+z`, `ctrl+a`, …)/emacs/helix) style keybinding, or using an external editor
   (`$VISUAL`, or `EDITOR as fallback`).
-- The diffs splits the screen 50/50 (right bigger if odd)
+- The diffs split the screen 50/50 at startup and can be changed by dragging the separation line.
+  The ratio is kept if the terminal is resized
 - A status bar displays the current mode and each mode has an accent color for the background of the
   name of the current mode (`Review`: blue, `Edit`: light green, `Search`: honey, `Comment`: dark
   green, `Command`: mango, `Selection`: purple, `Move`: dark red)
@@ -179,8 +180,8 @@ Review mode:
   displayed, even if the line is wrapped)
 - TODO: how is non-linear history displayed
 
-- `j`/`k` or `up`/`down` move the cursor one row. The screen automatically move so that there is
-  always 5 extra rows on top/bottom (unless the beginning/end of the file is reached)
+- `j`/`k` or `up`/`down` move the cursor one row. The screen automatically move so
+  that there is always 5 extra rows on top/bottom (unless the beginning/end of the file is reached)
 - `tab`/`shift+tab` or `left`/`right` move the cursor to the next/previous editable area (this does
   include `commit_subject`, `author` and `date` that are on the same line)
 - `g`/`G` move the cursor to first/last row
@@ -188,7 +189,7 @@ Review mode:
   the top of the screen)
 - `[`/`]` jumps to the next/previous merge conflict
 
-- `ctrl+e`/`ctrl+y` move the screen one line down/up (and move the cursor if it would have gone
+- `ctrl+e`/`ctrl+y` or mouse wheel move the screen one line down/up (and move the cursor if it would have gone
   closer to the top/bottom of the screen than the scrolloff margin)
 - `d`/`u` or `ctrl+d`/`ctrl+u` move half a screen down/up: both the screen, like
   `ctrl+e`/`ctrl+y`, and the cursor, like `j`/`k`, move by that amount. Nothing moves anymore when

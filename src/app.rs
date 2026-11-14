@@ -1,6 +1,7 @@
 //! Terminal handling and event loop.
 
 use std::io;
+use std::panic;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -15,12 +16,19 @@ use nix::sys::signal;
 use nix::sys::signal::Signal;
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::event;
+use ratatui::crossterm::event::DisableMouseCapture;
+use ratatui::crossterm::event::EnableMouseCapture;
 use ratatui::crossterm::event::Event;
 use ratatui::crossterm::event::KeyCode;
 use ratatui::crossterm::event::KeyModifiers;
+use ratatui::crossterm::event::MouseButton;
+use ratatui::crossterm::event::MouseEvent;
+use ratatui::crossterm::event::MouseEventKind;
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal;
 use ratatui::crossterm::terminal::EnterAlternateScreen;
+use reedi_crossterm_compat::PointerShape;
+use reedi_crossterm_compat::SetPointerShape;
 
 use crate::config::UnknownSetting;
 use crate::date::DateDisplay;
@@ -28,10 +36,13 @@ use crate::model::Revision;
 use crate::settings::Settings;
 use crate::theme::Theme;
 use crate::view;
+use crate::view::Anchor;
+use crate::view::Content;
 use crate::view::ErrorModal;
 use crate::view::Mode;
 use crate::view::Row;
 use crate::view::RowsError;
+use crate::view::SplitRatio;
 use crate::viewport::Viewport;
 use crate::wrap::TooNarrow;
 
@@ -44,9 +55,9 @@ const REWRAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 enum Action {
     Down,
     Up,
-    /// `ctrl+e`.
+    /// `ctrl+e` or mouse wheel down.
     ScrollDown,
-    /// `ctrl+y`.
+    /// `ctrl+y` or mouse wheel up.
     ScrollUp,
     /// `d` or `ctrl+d`.
     HalfPageDown,
@@ -78,9 +89,14 @@ impl Count {
 
     /// Update the number with `event`. Return the action `event` triggers with the number typed
     /// before it, if any, which is then cleared. A digit is added to the number and triggers
-    /// nothing. Any other key press cancels the number; key releases and other events (like
-    /// resizing the screen) don't.
+    /// nothing. Any other key press, and the mouse events other than moves, cancel the number; key
+    /// releases, mouse moves and other events (like resizing the screen) don't.
     fn apply(&mut self, event: &Event) -> Option<(Action, Option<usize>)> {
+        if let Event::Mouse(mouse) = event
+            && mouse.kind != MouseEventKind::Moved
+        {
+            self.0 = None;
+        }
         let Event::Key(key) = event else {
             return None;
         };
@@ -161,11 +177,12 @@ fn navigate(
 
 /// Display `revisions` with `settings` until `q` or `ctrl+c` is pressed, and the
 /// `unknown_settings` of the config file (its path, and at least one setting) in an error modal
-/// over them, if any, until a key is pressed.
+/// over them, if any, until a key is pressed or the mouse is clicked.
 ///
 /// Like `less`, the alternate screen is used, and the screen is redrawn when its size changes.
-/// The rows are rewrapped in the background, the previous ones being displayed meanwhile. Fails
-/// if a text area outside of the hunks is too narrow to display a grapheme cluster of its line.
+/// The rows are rewrapped in the background, the previous ones being displayed meanwhile. The
+/// mouse events are captured while running. Fails if a text area outside of the hunks is too
+/// narrow to display a grapheme cluster of its line.
 pub fn run(
     revisions: &[Revision],
     settings: &Settings,
@@ -175,20 +192,36 @@ pub fn run(
         .map(|(path, unknown_settings)| ErrorModal::UnknownSettings { path, unknown_settings });
     let mut rows = Vec::new();
     let mut size = None;
+    let min_half_width = view::min_half_width(revisions);
+    let mut mouse = Mouse::default();
+    let mut displayed_pointer_shape = PointerShape::Default;
     let mut viewport = Viewport::default();
     let mut count = Count::default();
-    ratatui::run(|terminal| {
+    let panic_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        let _ = release_mouse();
+        panic_hook(info);
+    }));
+    execute!(io::stdout(), EnableMouseCapture)?;
+    let result = ratatui::run(|terminal| {
         thread::scope(|scope| {
             let mut rewrapper = Rewrapper::new(scope, revisions, &settings.theme, &settings.dates);
             loop {
                 let screen = terminal.size()?;
                 let height = usize::from(screen.height.saturating_sub(view::STATUS_BAR_HEIGHT));
-                let new_rows = rewrapper
-                    .poll_rows_for(screen.width)
-                    .map_err(io::Error::other)?;
+                let widths = Widths {
+                    width: screen.width,
+                    left_width: mouse
+                        .displayed_ratio()
+                        .left_width(screen.width, min_half_width),
+                };
+                let new_rows = rewrapper.poll_rows_for(widths).map_err(io::Error::other)?;
                 let rows_replaced = new_rows.is_some();
                 if let Some(new_rows) = new_rows {
-                    replace_rows(&mut rows, new_rows, &mut viewport);
+                    replace_rows(&mut rows, new_rows, &mut viewport, mouse.drag_anchor);
+                }
+                if !rewrapper.is_running() {
+                    mouse.forget_released_drag();
                 }
                 if rows_replaced || size != Some(screen) {
                     viewport.scroll(rows.len(), height);
@@ -200,6 +233,7 @@ pub fn run(
                         revisions,
                         &rows,
                         &mut viewport,
+                        widths.left_width,
                         Mode::Review,
                         count.pending(),
                         error_modal.as_ref(),
@@ -210,38 +244,67 @@ pub fn run(
                     continue;
                 }
                 let event = event::read()?;
-                let command = if error_modal.is_some() {
-                    close_on_key_press(&event, &mut error_modal);
-                    None
-                } else {
-                    count.apply(&event)
-                };
-                match command {
+                if error_modal.is_some() {
+                    close_on_key_press_or_click(&event, &mut error_modal);
+                    continue;
+                }
+                if let Event::Mouse(mouse_event) = event {
+                    if let Some(action) = mouse.apply(&mouse_event, &rows, viewport, widths, height)
+                    {
+                        navigate(action, None, &mut viewport, &rows, height);
+                    }
+                    if mouse.pointer_shape != displayed_pointer_shape {
+                        execute!(io::stdout(), SetPointerShape(mouse.pointer_shape))?;
+                        displayed_pointer_shape = mouse.pointer_shape;
+                    }
+                }
+                match count.apply(&event) {
                     Some((Action::Quit, _)) => return Ok(()),
-                    Some((Action::Suspend, _)) => suspend(terminal)?,
+                    Some((Action::Suspend, _)) => {
+                        suspend(terminal)?;
+                        displayed_pointer_shape = PointerShape::Default;
+                    }
                     Some((action, count)) => navigate(action, count, &mut viewport, &rows, height),
                     None => {}
                 }
             }
         })
-    })
+    });
+    release_mouse()?;
+    result
+}
+
+/// Stop receiving the mouse events, and give the mouse pointer its default shape back.
+fn release_mouse() -> io::Result<()> {
+    execute!(
+        io::stdout(),
+        DisableMouseCapture,
+        SetPointerShape(PointerShape::Default)
+    )
+}
+
+/// The widths the rows are wrapped for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Widths {
+    /// Width of the screen.
+    width: u16,
+    /// Width of the left half of the split rows.
+    left_width: u16,
 }
 
 /// Rows being built in the background. Dropping it cancels it.
 struct RewrapJob {
-    /// Width of the screen the rows are built for.
-    width: u16,
+    widths: Widths,
     cancellation: Arc<AtomicBool>,
     result: Receiver<Result<Vec<Row>, RowsError>>,
 }
 
 impl RewrapJob {
-    /// Start building, in a thread of `scope`, the rows displaying `revisions` on a screen `width`
-    /// columns wide.
+    /// Start building, in a thread of `scope`, the rows displaying `revisions` for `widths`.
     fn spawn<'scope, 'env>(
         scope: &'scope Scope<'scope, 'env>,
         revisions: &'env [Revision],
-        width: u16,
+        widths: Widths,
         theme: &'env Theme,
         dates: &'env DateDisplay,
     ) -> Self {
@@ -249,11 +312,18 @@ impl RewrapJob {
         let (sender, result) = mpsc::channel();
         let thread_cancellation = Arc::clone(&cancellation);
         scope.spawn(move || {
-            let rows = view::rows(revisions, width, theme, dates, &thread_cancellation);
+            let rows = view::rows(
+                revisions,
+                widths.width,
+                widths.left_width,
+                theme,
+                dates,
+                &thread_cancellation,
+            );
             // The job may have been dropped.
             let _ = sender.send(rows);
         });
-        Self { width, cancellation, result }
+        Self { widths, cancellation, result }
     }
 }
 
@@ -263,14 +333,14 @@ impl Drop for RewrapJob {
     }
 }
 
-/// Rewraps the rows in the background when the width of the screen changes.
+/// Rewraps the rows in the background when the widths they are displayed with change.
 struct Rewrapper<'scope, 'env> {
     scope: &'scope Scope<'scope, 'env>,
     revisions: &'env [Revision],
     theme: &'env Theme,
     dates: &'env DateDisplay,
-    /// Width of the screen the displayed rows are wrapped for, if any.
-    wrapped_width: Option<u16>,
+    /// The widths the displayed rows are wrapped for, if any.
+    wrapped_widths: Option<Widths>,
     job: Option<RewrapJob>,
 }
 
@@ -287,26 +357,25 @@ impl<'scope, 'env> Rewrapper<'scope, 'env> {
             revisions,
             theme,
             dates,
-            wrapped_width: None,
+            wrapped_widths: None,
             job: None,
         }
     }
 
-    /// Make progress on rewrapping the rows for a screen `width` columns wide, and return them
-    /// once they are built, if they are not displayed yet. A running rewrap for another width is
-    /// cancelled.
+    /// Make progress on rewrapping the rows for `widths`, and return them once they are built, if
+    /// they are not displayed yet. A running rewrap for other widths is cancelled.
     ///
     /// Fails if a text area outside of the hunks is too narrow to display a grapheme cluster of
     /// its line.
-    fn poll_rows_for(&mut self, width: u16) -> Result<Option<Vec<Row>>, TooNarrow> {
-        self.start_rewrapping_for(width);
+    fn poll_rows_for(&mut self, widths: Widths) -> Result<Option<Vec<Row>>, TooNarrow> {
+        self.start_rewrapping_for(widths);
         let Some(result) = self.job.as_ref().and_then(|job| job.result.try_recv().ok()) else {
             return Ok(None);
         };
         self.job = None;
         match result {
             Ok(rows) => {
-                self.wrapped_width = Some(width);
+                self.wrapped_widths = Some(widths);
                 Ok(Some(rows))
             }
             Err(RowsError::TooNarrow(error)) => Err(error),
@@ -315,17 +384,16 @@ impl<'scope, 'env> Rewrapper<'scope, 'env> {
         }
     }
 
-    /// Start rewrapping the rows for a screen `width` columns wide, unless the displayed rows are
-    /// wrapped for it or are being rewrapped for it. A running rewrap for another width is
-    /// cancelled.
-    fn start_rewrapping_for(&mut self, width: u16) {
-        if self.wrapped_width == Some(width) {
+    /// Start rewrapping the rows for `widths`, unless the displayed rows are wrapped for them or
+    /// are being rewrapped for them. A running rewrap for other widths is cancelled.
+    fn start_rewrapping_for(&mut self, widths: Widths) {
+        if self.wrapped_widths == Some(widths) {
             self.job = None;
-        } else if self.job.as_ref().is_none_or(|job| job.width != width) {
+        } else if self.job.as_ref().is_none_or(|job| job.widths != widths) {
             self.job = Some(RewrapJob::spawn(
                 self.scope,
                 self.revisions,
-                width,
+                widths,
                 self.theme,
                 self.dates,
             ));
@@ -338,18 +406,101 @@ impl<'scope, 'env> Rewrapper<'scope, 'env> {
 }
 
 /// Replace `rows` by `new_rows`, displaying the same lines. The cursor goes, at the same screen
-/// position, on the row displaying the character that was the first of its row (see
-/// [`Row::anchor()`]).
-fn replace_rows(rows: &mut Vec<Row>, new_rows: Vec<Row>, viewport: &mut Viewport) {
-    if let Some(row) = rows.get(viewport.cursor) {
-        viewport.move_cursor(view::find(&new_rows, row.anchor()));
+/// position, on the row displaying `anchor`, or if there is none, the character that was the
+/// first of its row (see [`Row::anchor()`]).
+fn replace_rows(
+    rows: &mut Vec<Row>,
+    new_rows: Vec<Row>,
+    viewport: &mut Viewport,
+    anchor: Option<Anchor>,
+) {
+    let anchor = anchor.or_else(|| rows.get(viewport.cursor).map(Row::anchor));
+    if let Some(anchor) = anchor {
+        viewport.move_cursor(view::find(&new_rows, anchor));
     }
     *rows = new_rows;
 }
 
-/// Close `error_modal` if `event` is a key press.
-fn close_on_key_press(event: &Event, error_modal: &mut Option<ErrorModal>) {
-    if matches!(event, Event::Key(key) if key.is_press()) {
+/// The ratio of the split rows, which is changed by dragging their separator with the mouse, and
+/// the shape of the mouse pointer.
+#[derive(Debug, Default)]
+struct Mouse {
+    ratio: SplitRatio,
+    /// The ratio displayed while the separator is dragged, applied when it is released.
+    dragged_ratio: Option<SplitRatio>,
+    /// The character the cursor was on when the drag started, which it goes back on each time the
+    /// rows are rewrapped, until they are wrapped for the applied ratio.
+    drag_anchor: Option<Anchor>,
+    pointer_shape: PointerShape,
+}
+
+impl Mouse {
+    fn displayed_ratio(&self) -> SplitRatio {
+        self.dragged_ratio.unwrap_or(self.ratio)
+    }
+
+    /// Apply `event` to `rows`, displayed from the row `viewport.top` with `widths`, on a screen
+    /// `height` rows tall (without the status bar). Return the scrolling triggered by the
+    /// wheel, if any.
+    ///
+    /// Pressing the left button on the separator of a split row starts dragging it: the separator
+    /// follows the mouse until the button is released. The pointer has the
+    /// [`PointerShape::ColResize`] shape over the separator and while dragging it.
+    fn apply(
+        &mut self,
+        event: &MouseEvent,
+        rows: &[Row],
+        viewport: Viewport,
+        widths: Widths,
+        height: usize,
+    ) -> Option<Action> {
+        let row = usize::from(event.row);
+        let is_on_separator = event.column == widths.left_width
+            && row < height
+            && rows
+                .get(viewport.top + row)
+                .is_some_and(|row| matches!(row.content, Content::Split { .. }));
+        let action = match event.kind {
+            MouseEventKind::Down(MouseButton::Left) if is_on_separator => {
+                self.dragged_ratio = Some(self.ratio);
+                self.drag_anchor = rows.get(viewport.cursor).map(Row::anchor);
+                None
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.dragged_ratio.is_some() => {
+                self.dragged_ratio = Some(SplitRatio::new(event.column, widths.width));
+                None
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.dragged_ratio.is_some() => {
+                self.ratio = SplitRatio::new(event.column, widths.width);
+                self.dragged_ratio = None;
+                None
+            }
+            MouseEventKind::ScrollDown => Some(Action::ScrollDown),
+            MouseEventKind::ScrollUp => Some(Action::ScrollUp),
+            _ => None,
+        };
+        self.pointer_shape = if self.dragged_ratio.is_some() || is_on_separator {
+            PointerShape::ColResize
+        } else {
+            PointerShape::Default
+        };
+        action
+    }
+
+    /// Forget the character the cursor was on when the drag started, unless the separator is still
+    /// dragged. To call once the rows are wrapped for the applied ratio.
+    fn forget_released_drag(&mut self) {
+        if self.dragged_ratio.is_none() {
+            self.drag_anchor = None;
+        }
+    }
+}
+
+/// Close `error_modal` if `event` is a key press or a mouse click.
+fn close_on_key_press_or_click(event: &Event, error_modal: &mut Option<ErrorModal>) {
+    let is_click =
+        matches!(event, Event::Mouse(mouse) if matches!(mouse.kind, MouseEventKind::Down(_)));
+    if matches!(event, Event::Key(key) if key.is_press()) || is_click {
         *error_modal = None;
     }
 }
@@ -392,11 +543,12 @@ fn action(event: &Event) -> Option<Action> {
 /// In raw mode, `ctrl+z` is received as a key instead of sending `SIGTSTP`, so the terminal is
 /// restored and `SIGTSTP` is sent manually.
 fn suspend(terminal: &mut DefaultTerminal) -> io::Result<()> {
+    release_mouse()?;
     ratatui::try_restore()?;
     signal::raise(Signal::SIGTSTP)?;
     // The process is stopped until it receives `SIGCONT`.
     terminal::enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
     // The content of the alternate screen may have been modified while suspended.
     terminal.clear()
 }
@@ -410,6 +562,7 @@ mod tests {
     use crate::fake;
     use crate::model::Commit;
     use crate::settings::SCROLLOFF;
+    use crate::test_support::fifty_fifty_left_width;
     use crate::test_support::header_row_indexes;
     use crate::test_support::rows_of;
     use crate::test_support::rows_of_revisions;
@@ -495,6 +648,14 @@ mod tests {
         assert_eq!(rows[1].line_index, rows[0].line_index);
     }
 
+    /// The widths of a screen `width` columns wide, split 50/50.
+    fn fifty_fifty(width: u16) -> Widths {
+        Widths {
+            width,
+            left_width: fifty_fifty_left_width(width),
+        }
+    }
+
     /// Run `test` with a rewrapper of `revisions`.
     fn with_rewrapper(revisions: &[Revision], test: impl FnOnce(&mut Rewrapper)) {
         let theme = Theme::monochrome();
@@ -502,14 +663,14 @@ mod tests {
         thread::scope(|scope| test(&mut Rewrapper::new(scope, revisions, &theme, &dates)));
     }
 
-    /// Poll `rewrapper` for the rows of a screen `width` columns wide until its rewrap is
-    /// finished (see [`Rewrapper::poll_rows_for()`]).
+    /// Poll `rewrapper` for the rows wrapped for `widths` until its rewrap is finished (see
+    /// [`Rewrapper::poll_rows_for()`]).
     fn poll_rows_until_finished(
         rewrapper: &mut Rewrapper,
-        width: u16,
+        widths: Widths,
     ) -> Result<Option<Vec<Row>>, TooNarrow> {
         loop {
-            let rows = rewrapper.poll_rows_for(width)?;
+            let rows = rewrapper.poll_rows_for(widths)?;
             if rows.is_some() || !rewrapper.is_running() {
                 return Ok(rows);
             }
@@ -528,14 +689,19 @@ mod tests {
         let revisions = [Revision::Commit(fake::ltr_then_rtl_summary())];
         with_rewrapper(&revisions, |rewrapper| {
             assert!(
-                poll_rows_until_finished(rewrapper, /* width */ 110)
+                poll_rows_until_finished(rewrapper, fifty_fifty(/* width */ 110))
                     .unwrap()
                     .is_some()
             );
-            assert!(rewrapper.poll_rows_for(/* width */ 110).unwrap().is_none());
+            assert!(
+                rewrapper
+                    .poll_rows_for(fifty_fifty(/* width */ 110))
+                    .unwrap()
+                    .is_none()
+            );
             assert!(!rewrapper.is_running());
             assert!(
-                poll_rows_until_finished(rewrapper, /* width */ 60)
+                poll_rows_until_finished(rewrapper, fifty_fifty(/* width */ 60))
                     .unwrap()
                     .is_some()
             );
@@ -547,31 +713,31 @@ mod tests {
         // Its content does not matter.
         let revisions = [Revision::Commit(fake::ltr_then_rtl_summary())];
         with_rewrapper(&revisions, |rewrapper| {
-            assert!(poll_rows_until_finished(rewrapper, /* width */ 0).is_err());
+            assert!(poll_rows_until_finished(rewrapper, fifty_fifty(/* width */ 0)).is_err());
         });
     }
 
     #[test]
-    fn rewrapping_for_the_width_being_rewrapped_keeps_the_running_rewrap() {
+    fn rewrapping_for_the_widths_being_rewrapped_keeps_the_running_rewrap() {
         // Its content does not matter.
         let revisions = [Revision::Commit(fake::ltr_then_rtl_summary())];
         with_rewrapper(&revisions, |rewrapper| {
-            rewrapper.start_rewrapping_for(/* width */ 110);
+            rewrapper.start_rewrapping_for(fifty_fifty(/* width */ 110));
             let running = cancellation(rewrapper);
-            rewrapper.start_rewrapping_for(/* width */ 110);
+            rewrapper.start_rewrapping_for(fifty_fifty(/* width */ 110));
             assert!(Arc::ptr_eq(&running, &cancellation(rewrapper)));
             assert!(!running.load(Ordering::Relaxed));
         });
     }
 
     #[test]
-    fn polling_the_rows_for_another_width_cancels_the_running_rewrap() {
+    fn polling_the_rows_for_other_widths_cancels_the_running_rewrap() {
         // Its content does not matter.
         let revisions = [Revision::Commit(fake::ltr_then_rtl_summary())];
         with_rewrapper(&revisions, |rewrapper| {
-            rewrapper.start_rewrapping_for(/* width */ 60);
+            rewrapper.start_rewrapping_for(fifty_fifty(/* width */ 60));
             let running = cancellation(rewrapper);
-            let rows = poll_rows_until_finished(rewrapper, /* width */ 110).unwrap();
+            let rows = poll_rows_until_finished(rewrapper, fifty_fifty(/* width */ 110)).unwrap();
             assert!(running.load(Ordering::Relaxed));
             assert_eq!(rows, Some(rows_of_revisions(&revisions, /* width */ 110)));
         });
@@ -583,7 +749,7 @@ mod tests {
         let new_rows = rows_of(&[fake::ltr_then_rtl_summary()], /* width */ 110);
         let mut rows = Vec::new();
         let mut viewport = Viewport::default();
-        replace_rows(&mut rows, new_rows, &mut viewport);
+        replace_rows(&mut rows, new_rows, &mut viewport, /* anchor */ None);
         assert!(!rows.is_empty());
         assert_eq!(viewport, Viewport::default());
     }
@@ -600,12 +766,225 @@ mod tests {
             .unwrap();
         let mut rows = narrow.clone();
         let mut viewport = Viewport { cursor, top: cursor - 3 };
-        replace_rows(&mut rows, rows_of(&commits, /* width */ 110), &mut viewport);
+        replace_rows(
+            &mut rows,
+            rows_of(&commits, /* width */ 110),
+            &mut viewport,
+            /* anchor */ None,
+        );
         // The first line of the body is displayed on a single row.
         assert_eq!(rows[viewport.cursor].line_index, 2);
         assert_eq!(viewport.cursor, view::find(&rows, narrow[cursor].anchor()));
         // At the same screen position.
         assert_eq!(viewport.cursor - viewport.top, 3);
+    }
+
+    #[test]
+    fn replacing_the_rows_puts_the_cursor_on_the_given_anchor() {
+        let commits = vec![fake::file_changes()];
+        let narrow = rows_of(&commits, /* width */ 60);
+        // A row of the body other than the one of the cursor, as the anchor of a drag that
+        // started before the cursor moved there.
+        let anchor = narrow[2].anchor();
+        let mut rows = narrow.clone();
+        let mut viewport = Viewport { cursor: 5, top: 0 };
+        replace_rows(
+            &mut rows,
+            rows_of(&commits, /* width */ 110),
+            &mut viewport,
+            Some(anchor),
+        );
+        assert_eq!(viewport.cursor, view::find(&rows, anchor));
+    }
+
+    fn mouse_event(kind: MouseEventKind, column: u16, row: u16) -> MouseEvent {
+        MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        }
+    }
+
+    /// The rows of a commit with a hunk, and the screen row of one of its split rows, which fits
+    /// on a screen `MOUSE_SCREEN_HEIGHT` rows tall displaying them from the first row.
+    fn rows_with_a_split_row() -> (Vec<Row>, u16) {
+        let rows = rows_of(&[fake::file_changes()], MOUSE_SCREEN_WIDTH);
+        let split_row = rows
+            .iter()
+            .position(|row| matches!(row.content, Content::Split { .. }))
+            .unwrap();
+        assert!(split_row < MOUSE_SCREEN_HEIGHT);
+        (rows, u16::try_from(split_row).unwrap())
+    }
+
+    const MOUSE_SCREEN_WIDTH: u16 = 110;
+    const MOUSE_SCREEN_HEIGHT: usize = 40;
+
+    /// Apply `event` to `mouse`, over `rows` displayed from the first row of a screen
+    /// `MOUSE_SCREEN_WIDTH` × `MOUSE_SCREEN_HEIGHT`, with its split rows at their displayed ratio.
+    fn apply(mouse: &mut Mouse, event: MouseEvent, rows: &[Row]) -> Option<Action> {
+        let widths = Widths {
+            width: MOUSE_SCREEN_WIDTH,
+            left_width: displayed_left_width(mouse),
+        };
+        mouse.apply(
+            &event,
+            rows,
+            Viewport::default(),
+            widths,
+            MOUSE_SCREEN_HEIGHT,
+        )
+    }
+
+    fn displayed_left_width(mouse: &Mouse) -> u16 {
+        mouse
+            .displayed_ratio()
+            .left_width(MOUSE_SCREEN_WIDTH, /* min_half_width */ 0)
+    }
+
+    fn applied_left_width(mouse: &Mouse) -> u16 {
+        mouse
+            .ratio
+            .left_width(MOUSE_SCREEN_WIDTH, /* min_half_width */ 0)
+    }
+
+    const LEFT: MouseButton = MouseButton::Left;
+
+    /// The screen row of the header of the first commit, which is not split.
+    const HEADER_ROW: u16 = 0;
+
+    #[test]
+    fn dragging_the_separator_moves_it_and_releasing_it_applies_the_ratio() {
+        let (rows, split_row) = rows_with_a_split_row();
+        let mut mouse = Mouse::default();
+        let separator = displayed_left_width(&mouse);
+        apply(
+            &mut mouse,
+            mouse_event(MouseEventKind::Down(LEFT), separator, split_row),
+            &rows,
+        );
+        apply(
+            &mut mouse,
+            mouse_event(MouseEventKind::Drag(LEFT), 40, split_row),
+            &rows,
+        );
+        assert_eq!(displayed_left_width(&mouse), 40);
+        assert_eq!(applied_left_width(&mouse), separator);
+        apply(
+            &mut mouse,
+            mouse_event(MouseEventKind::Up(LEFT), 30, split_row),
+            &rows,
+        );
+        assert_eq!(displayed_left_width(&mouse), 30);
+        assert_eq!(applied_left_width(&mouse), 30);
+    }
+
+    #[test]
+    fn only_the_separator_of_a_displayed_split_row_can_be_dragged() {
+        let (rows, split_row) = rows_with_a_split_row();
+        let separator = displayed_left_width(&Mouse::default());
+        let below_the_screen = u16::try_from(MOUSE_SCREEN_HEIGHT).unwrap();
+        for (column, row) in [
+            (separator - 1, split_row),
+            (separator, HEADER_ROW),
+            (separator, below_the_screen),
+        ] {
+            let mut mouse = Mouse::default();
+            apply(
+                &mut mouse,
+                mouse_event(MouseEventKind::Down(LEFT), column, row),
+                &rows,
+            );
+            apply(
+                &mut mouse,
+                mouse_event(MouseEventKind::Drag(LEFT), 40, split_row),
+                &rows,
+            );
+            assert_eq!(displayed_left_width(&mouse), separator, "{column}, {row}");
+        }
+    }
+
+    #[test]
+    fn pointer_is_a_column_resize_one_over_the_separator_and_while_dragging_it() {
+        let (rows, split_row) = rows_with_a_split_row();
+        let mut mouse = Mouse::default();
+        let separator = displayed_left_width(&mouse);
+        apply(
+            &mut mouse,
+            mouse_event(MouseEventKind::Moved, separator, split_row),
+            &rows,
+        );
+        assert_eq!(mouse.pointer_shape, PointerShape::ColResize);
+        apply(
+            &mut mouse,
+            mouse_event(MouseEventKind::Moved, 40, split_row),
+            &rows,
+        );
+        assert_eq!(mouse.pointer_shape, PointerShape::Default);
+        apply(
+            &mut mouse,
+            mouse_event(MouseEventKind::Down(LEFT), separator, split_row),
+            &rows,
+        );
+        // The separator follows the mouse with a delay: the next event is not over it.
+        apply(
+            &mut mouse,
+            mouse_event(MouseEventKind::Drag(LEFT), 0, HEADER_ROW),
+            &rows,
+        );
+        assert_eq!(mouse.pointer_shape, PointerShape::ColResize);
+        apply(
+            &mut mouse,
+            mouse_event(MouseEventKind::Up(LEFT), 30, HEADER_ROW),
+            &rows,
+        );
+        assert_eq!(mouse.pointer_shape, PointerShape::Default);
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_the_screen_like_ctrl_e_and_ctrl_y() {
+        let (rows, _) = rows_with_a_split_row();
+        let mut mouse = Mouse::default();
+        assert_eq!(
+            apply(
+                &mut mouse,
+                mouse_event(MouseEventKind::ScrollDown, 0, 0),
+                &rows
+            ),
+            Some(Action::ScrollDown)
+        );
+        assert_eq!(
+            apply(
+                &mut mouse,
+                mouse_event(MouseEventKind::ScrollUp, 0, 0),
+                &rows
+            ),
+            Some(Action::ScrollUp)
+        );
+    }
+
+    #[test]
+    fn drag_anchor_is_the_cursor_row_and_is_kept_until_the_drag_is_released() {
+        let (rows, split_row) = rows_with_a_split_row();
+        let mut mouse = Mouse::default();
+        let separator = displayed_left_width(&mouse);
+        apply(
+            &mut mouse,
+            mouse_event(MouseEventKind::Down(LEFT), separator, split_row),
+            &rows,
+        );
+        assert_eq!(mouse.drag_anchor, Some(rows[0].anchor()));
+        mouse.forget_released_drag();
+        assert_eq!(mouse.drag_anchor, Some(rows[0].anchor()));
+        apply(
+            &mut mouse,
+            mouse_event(MouseEventKind::Up(LEFT), 30, split_row),
+            &rows,
+        );
+        assert_eq!(mouse.drag_anchor, Some(rows[0].anchor()));
+        mouse.forget_released_drag();
+        assert_eq!(mouse.drag_anchor, None);
     }
 
     fn error_modal() -> Option<ErrorModal> {
@@ -620,23 +999,39 @@ mod tests {
         let mut error_modal = error_modal();
         // `q` quits when no error modal is displayed: pressing it must close the modal, whatever
         // the action of the key.
-        close_on_key_press(&key(KeyCode::Char('q')), &mut error_modal);
+        close_on_key_press_or_click(&key(KeyCode::Char('q')), &mut error_modal);
         assert_eq!(error_modal, None);
     }
 
     #[test]
-    fn error_modal_stays_open_until_a_key_is_pressed() {
+    fn mouse_click_closes_the_error_modal() {
+        let mut error_modal = error_modal();
+        let click = Event::Mouse(mouse_event(MouseEventKind::Down(MouseButton::Right), 0, 0));
+        close_on_key_press_or_click(&click, &mut error_modal);
+        assert_eq!(error_modal, None);
+    }
+
+    #[test]
+    fn error_modal_stays_open_until_a_key_is_pressed_or_the_mouse_is_clicked() {
         let mut error_modal = error_modal();
         let release = Event::Key(KeyEvent::new_with_kind(
             KeyCode::Char('q'),
             KeyModifiers::NONE,
             KeyEventKind::Release,
         ));
-        close_on_key_press(&release, &mut error_modal);
-        close_on_key_press(
+        close_on_key_press_or_click(&release, &mut error_modal);
+        close_on_key_press_or_click(
             &Event::Resize(/* columns */ 80, /* rows */ 24),
             &mut error_modal,
         );
+        for kind in [
+            MouseEventKind::Drag(LEFT),
+            MouseEventKind::Up(LEFT),
+            MouseEventKind::Moved,
+            MouseEventKind::ScrollDown,
+        ] {
+            close_on_key_press_or_click(&Event::Mouse(mouse_event(kind, 0, 0)), &mut error_modal);
+        }
         assert!(error_modal.is_some());
     }
 
@@ -832,7 +1227,7 @@ mod tests {
     }
 
     #[test]
-    fn key_releases_and_other_events_keep_the_pending_number() {
+    fn key_releases_mouse_moves_and_other_events_keep_the_pending_number() {
         let release = Event::Key(KeyEvent::new_with_kind(
             KeyCode::Char('j'),
             KeyModifiers::NONE,
@@ -845,7 +1240,24 @@ mod tests {
             count.apply(&Event::Resize(/* columns */ 80, /* rows */ 24)),
             None
         );
+        let mouse_move = Event::Mouse(mouse_event(MouseEventKind::Moved, 0, 0));
+        assert_eq!(count.apply(&mouse_move), None);
         assert_eq!(count.pending(), Some(5));
+    }
+
+    #[test]
+    fn mouse_events_other_than_moves_cancel_the_pending_number() {
+        for kind in [
+            MouseEventKind::Down(LEFT),
+            MouseEventKind::Drag(LEFT),
+            MouseEventKind::Up(LEFT),
+            MouseEventKind::ScrollDown,
+        ] {
+            let mut count = Count::default();
+            type_keys(&mut count, "5");
+            assert_eq!(count.apply(&Event::Mouse(mouse_event(kind, 0, 0))), None);
+            assert_eq!(count.pending(), None, "{kind:?}");
+        }
     }
 
     /// Height of the screen, without the status bar.

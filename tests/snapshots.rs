@@ -9,6 +9,7 @@ use reedi::fake;
 use reedi::model::Commit;
 use reedi::model::Revision;
 use reedi::test_support::backend_without_left_to_right_marks;
+use reedi::test_support::fifty_fifty_left_width;
 use reedi::test_support::rows_of_revisions;
 use reedi::test_support::unknown_settings_error_modal;
 use reedi::theme::Theme;
@@ -39,6 +40,7 @@ fn screen(
                 &revisions,
                 &rows,
                 &mut viewport,
+                fifty_fifty_left_width(width),
                 Mode::Review,
                 /* pending_count */ None,
                 Some(error_modal),

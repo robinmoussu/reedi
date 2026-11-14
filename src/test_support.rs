@@ -17,9 +17,16 @@ use crate::view;
 use crate::view::ErrorModal;
 use crate::view::LEFT_TO_RIGHT_MARK;
 use crate::view::Row;
+use crate::view::SplitRatio;
 
 /// Never set: the rows built by the tests are never cancelled.
 pub static NOT_CANCELLED: AtomicBool = AtomicBool::new(false);
+
+/// Width of the left half of the split rows on a screen `width` columns wide, split 50/50 (as at
+/// startup).
+pub fn fifty_fifty_left_width(width: u16) -> u16 {
+    SplitRatio::default().left_width(width, /* min_half_width */ 0)
+}
 
 /// 3 fake commits displayed on at least 6 rows each, for the tests displaying several commits
 /// (some of them move the cursor 3 rows below a header, inside the same commit).
@@ -62,11 +69,12 @@ pub fn revisions_of(commits: &[Commit]) -> Vec<Revision> {
     commits.iter().cloned().map(Revision::Commit).collect()
 }
 
-/// All the rows of `revisions`, on a screen `width` columns wide.
+/// All the rows of `revisions`, on a screen `width` columns wide, split 50/50.
 pub fn rows_of_revisions(revisions: &[Revision], width: u16) -> Vec<Row> {
     view::rows(
         revisions,
         width,
+        fifty_fifty_left_width(width),
         &Theme::monochrome(),
         &DateDisplay::for_snapshots(),
         &NOT_CANCELLED,

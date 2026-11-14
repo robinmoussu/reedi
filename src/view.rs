@@ -1,8 +1,6 @@
 //! Rendering of the revisions and of the status bar.
 
 use std::iter;
-use std::ops::Div;
-use std::ops::Sub;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -93,11 +91,56 @@ pub enum Content {
     Text(Line<'static>),
     /// A horizontal line spanning the whole width.
     Rule(Style),
-    /// A row split 50/50 (the right half is bigger if the width is odd).
+    /// A row split in a left half (before) and a right half (after), whose widths are given when
+    /// it is rendered.
     Split {
         left: Line<'static>,
         right: Line<'static>,
     },
+}
+
+/// The minimum width of each half of a split row.
+const MIN_HALF_WIDTH: u16 = 5;
+
+/// Number of columns of a half of a split row that display neither the line number nor the text:
+/// `│ `, ` │ `, and the column of the marker.
+const HALF_FRAME_WIDTH: usize = 6;
+
+/// The part of the width of the screen taken by the left half of the split rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SplitRatio {
+    numerator: u16,
+    denominator: u16,
+}
+
+impl Default for SplitRatio {
+    fn default() -> Self {
+        Self { numerator: 1, denominator: 2 }
+    }
+}
+
+impl SplitRatio {
+    /// The ratio giving a left half `left_width` columns wide on a screen `width` columns wide.
+    pub fn new(left_width: u16, width: u16) -> Self {
+        Self {
+            numerator: left_width.min(width),
+            denominator: width.max(1),
+        }
+    }
+
+    /// Width of the left half of a split row `width` columns wide (rounded down, so the right half
+    /// gets the extra column of an odd width at 50/50), each half being at least `min_half_width`
+    /// (and `MIN_HALF_WIDTH`) columns wide. If the row is too narrow for that, it is split 50/50.
+    pub fn left_width(self, width: u16, min_half_width: u16) -> u16 {
+        let min_half_width = min_half_width.max(MIN_HALF_WIDTH);
+        if width < min_half_width.saturating_mul(2) {
+            return width / 2;
+        }
+        let left_width = u32::from(width) * u32::from(self.numerator) / u32::from(self.denominator);
+        u16::try_from(left_width)
+            .expect("the ratio is at most 1")
+            .clamp(min_half_width, width - min_half_width)
+    }
 }
 
 /// Position, in bytes, of the first character displayed on a row in its line, from which
@@ -172,8 +215,9 @@ impl Row {
         }
     }
 
-    /// Render the row on the first line of `area`, cropping it if too wide.
-    fn render(&self, area: Rect, buf: &mut Buffer) {
+    /// Render the row on the first line of `area`, cropping it if too wide. If it is split, its
+    /// left half is `left_width` columns wide.
+    fn render(&self, area: Rect, left_width: u16, buf: &mut Buffer) {
         match &self.content {
             Content::Text(line) => {
                 set_line(buf, area.x, area.y, line, area.width);
@@ -186,9 +230,15 @@ impl Row {
                 buf.set_string(area.x, area.y, rule, *style);
             }
             Content::Split { left, right } => {
-                let (left_width, right_width) = split_in_half(area.width);
+                let left_width = left_width.min(area.width);
                 set_line(buf, area.x, area.y, left, left_width);
-                set_line(buf, area.x + left_width, area.y, right, right_width);
+                set_line(
+                    buf,
+                    area.x + left_width,
+                    area.y,
+                    right,
+                    area.width - left_width,
+                );
                 if left_width > 0 {
                     mark_left_to_right(buf, area.x, area.y);
                     mark_left_to_right(buf, area.x + left_width - 1, area.y);
@@ -513,22 +563,52 @@ fn missing_newline_rows(
         .collect())
 }
 
-/// Widths of the left and right halves of a split row `width` columns wide: the right one gets
-/// the extra column of an odd width.
-fn split_in_half<Width>(width: impl Into<Width>) -> (Width, Width)
-where
-    Width: Copy + From<u8> + Div<Output = Width> + Sub<Output = Width>,
-{
-    let width = width.into();
-    let left_width = width / Width::from(2);
-    (left_width, width - left_width)
-}
-
 /// Width of the text area of a half of a split row, `width` columns wide, whose line number column
 /// is `number_width` wide.
 fn text_width(width: usize, number_width: usize) -> usize {
-    // `│ `, the number, ` │ `, then the text area, then the column of the marker.
-    width.saturating_sub(number_width + 6)
+    width.saturating_sub(number_width + HALF_FRAME_WIDTH)
+}
+
+/// The narrowest half of a split row in which every hunk of `revisions` can be displayed.
+pub fn min_half_width(revisions: &[Revision]) -> u16 {
+    let min_width = revisions
+        .iter()
+        .flat_map(displayed_files)
+        .flat_map(|file| {
+            let final_cr = final_cr(file);
+            file.hunks.iter().map(move |hunk| {
+                let text_width = hunk
+                    .lines
+                    .iter()
+                    .map(|line| wrap::min_width(&line.text, final_cr))
+                    .max()
+                    .unwrap_or(1);
+                line_number_width(hunk) + HALF_FRAME_WIDTH + text_width
+            })
+        })
+        .max()
+        .unwrap_or(0);
+    u16::try_from(min_width).unwrap_or(u16::MAX)
+}
+
+/// The files whose diff is displayed for `revision`.
+fn displayed_files(revision: &Revision) -> &[FileDiff] {
+    match revision {
+        // Like `git log -p`, merge commits have no diff.
+        Revision::Commit(commit) if commit.is_merge() => &[],
+        Revision::Commit(commit) => &commit.files,
+        Revision::Index(index) => &index.files,
+        Revision::WorkingDirectory(working_directory) => &working_directory.files,
+    }
+}
+
+/// How the carriage returns ending the lines of `file` are displayed.
+fn final_cr(file: &FileDiff) -> FinalCr {
+    if file.has_inconsistent_line_endings() {
+        FinalCr::Shown
+    } else {
+        FinalCr::Hidden
+    }
 }
 
 /// `$file`, with a label if the file is not only modified (like `delta`), and a suffix if it has
@@ -579,6 +659,8 @@ struct Rows<'a> {
     /// adding the separator below a revision, which belongs to the next revision.
     revision_index: usize,
     width: u16,
+    /// Width of the left half of the split rows.
+    left_width: u16,
     theme: &'a Theme,
     dates: &'a DateDisplay,
     /// Set to stop building the rows.
@@ -588,6 +670,7 @@ struct Rows<'a> {
 impl<'a> Rows<'a> {
     fn new(
         width: u16,
+        left_width: u16,
         theme: &'a Theme,
         dates: &'a DateDisplay,
         cancellation: &'a AtomicBool,
@@ -597,6 +680,7 @@ impl<'a> Rows<'a> {
             lines_count: 0,
             revision_index: 0,
             width,
+            left_width,
             theme,
             dates,
             cancellation,
@@ -674,7 +758,8 @@ impl<'a> Rows<'a> {
     fn hunk_rows(&self, hunk: &Hunk, final_cr: FinalCr) -> Result<Vec<Row>, TooNarrow> {
         let number_width = line_number_width(hunk);
         let numbers = hunk.line_numbers();
-        let (left_width, right_width) = split_in_half::<usize>(self.width);
+        let left_width = usize::from(self.left_width);
+        let right_width = usize::from(self.width - self.left_width);
         let half = |index: Option<usize>, number: fn(&LineNumbers) -> Option<usize>, width| {
             index.map_or(Ok(Vec::new()), |index| {
                 half_rows(
@@ -739,11 +824,7 @@ impl<'a> Rows<'a> {
     }
 
     fn file(&mut self, file: &FileDiff) -> Result<(), RowsError> {
-        let final_cr = if file.has_inconsistent_line_endings() {
-            FinalCr::Shown
-        } else {
-            FinalCr::Hidden
-        };
+        let final_cr = final_cr(file);
         self.blank();
         self.text(&file_parts(file, self.theme))?;
         self.rule(self.theme.file);
@@ -822,7 +903,8 @@ impl<'a> Rows<'a> {
     }
 }
 
-/// All the rows displaying `revisions` on a screen `width` columns wide.
+/// All the rows displaying `revisions` on a screen `width` columns wide, whose split rows have a
+/// left half `left_width` columns wide.
 ///
 /// Fails if a text area is too narrow to display a grapheme cluster of its line, unless it is in
 /// a hunk, which is then replaced by an error message. Fails before the next hunk once
@@ -830,11 +912,12 @@ impl<'a> Rows<'a> {
 pub fn rows(
     revisions: &[Revision],
     width: u16,
+    left_width: u16,
     theme: &Theme,
     dates: &DateDisplay,
     cancellation: &AtomicBool,
 ) -> Result<Vec<Row>, RowsError> {
-    let mut rows = Rows::new(width, theme, dates, cancellation);
+    let mut rows = Rows::new(width, left_width, theme, dates, cancellation);
     for revision in revisions {
         rows.revision(revision)?;
     }
@@ -850,6 +933,8 @@ pub fn rows(
 pub struct RowsView<'a> {
     pub rows: &'a [Row],
     pub viewport: Viewport,
+    /// Width of the left half of the split rows.
+    pub left_width: u16,
     pub theme: &'a Theme,
 }
 
@@ -862,7 +947,7 @@ impl Widget for RowsView<'_> {
             .zip(area.top()..area.bottom())
             .for_each(|((index, row), y)| {
                 let area = Rect { y, height: 1, ..area };
-                row.render(area, buf);
+                row.render(area, self.left_width, buf);
                 if index == self.viewport.cursor {
                     buf.set_style(area, self.theme.cursor);
                 }
@@ -1148,8 +1233,8 @@ pub fn previous_revision(rows: &[Row], row_index: usize, count: usize) -> usize 
     header_row(rows, revision.saturating_sub(revisions_back_count)).unwrap_or(row_index)
 }
 
-/// Draw `rows` (displaying `revisions`), with the status bar on the last line of the screen, and
-/// `error_modal` over them. The status bar displays the revision the cursor is on, or the number
+/// Draw `rows` (displaying `revisions`, their split rows having a left half `left_width` columns
+/// wide), with the status bar on the last line of the screen, and `error_modal` over them. The status bar displays the revision the cursor is on, or the number
 /// `pending_count` while there is one.
 ///
 /// `viewport` is first scrolled, if needed, to display the cursor on the screen.
@@ -1159,6 +1244,7 @@ pub fn draw(
     revisions: &[Revision],
     rows: &[Row],
     viewport: &mut Viewport,
+    left_width: u16,
     mode: Mode,
     pending_count: Option<usize>,
     error_modal: Option<&ErrorModal>,
@@ -1169,7 +1255,7 @@ pub fn draw(
             .areas(frame.area());
     viewport.fit(rows.len(), content.height.into());
     let viewport = *viewport;
-    frame.render_widget(RowsView { rows, viewport, theme }, content);
+    frame.render_widget(RowsView { rows, viewport, left_width, theme }, content);
     let content = if let Some(count) = pending_count {
         pending_count_status(count, theme)
     } else if revisions.is_empty() {
@@ -1200,6 +1286,7 @@ mod tests {
     use crate::fake;
     use crate::test_support::NOT_CANCELLED;
     use crate::test_support::backend_without_left_to_right_marks;
+    use crate::test_support::fifty_fifty_left_width;
     use crate::test_support::file_at;
     use crate::test_support::file_at_mut;
     use crate::test_support::header_row_indexes;
@@ -1219,15 +1306,22 @@ mod tests {
         rows(
             revisions,
             width,
+            fifty_fifty_left_width(width),
             theme,
             &DateDisplay::for_snapshots(),
             &NOT_CANCELLED,
         )
     }
 
-    /// The rows being built for a screen `width` columns wide.
+    /// The rows being built for a screen `width` columns wide, split 50/50.
     fn new_rows<'a>(width: u16, theme: &'a Theme, dates: &'a DateDisplay) -> Rows<'a> {
-        Rows::new(width, theme, dates, &NOT_CANCELLED)
+        Rows::new(
+            width,
+            fifty_fifty_left_width(width),
+            theme,
+            dates,
+            &NOT_CANCELLED,
+        )
     }
 
     /// The rows of `revision`, including the separator below it.
@@ -1395,7 +1489,15 @@ mod tests {
         theme: &Theme,
     ) -> (Buffer, Viewport) {
         let revisions = revisions_of(commits);
-        let rows = fifty_fifty_rows(&revisions, width, theme).unwrap();
+        let rows = rows(
+            &revisions,
+            width,
+            fifty_fifty_left_width(width),
+            theme,
+            &DateDisplay::for_snapshots(),
+            &NOT_CANCELLED,
+        )
+        .unwrap();
         let mut viewport = viewport;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
@@ -1405,6 +1507,7 @@ mod tests {
                     &revisions,
                     &rows,
                     &mut viewport,
+                    fifty_fifty_left_width(width),
                     Mode::Review,
                     pending_count,
                     error_modal,
@@ -1868,7 +1971,7 @@ mod tests {
             /* x */ 0, /* y */ 0, /* width */ 21, /* height */ 1,
         );
         let mut buf = Buffer::empty(area);
-        row.render(area, &mut buf);
+        row.render(area, fifty_fifty_left_width(area.width), &mut buf);
         assert_eq!(
             without_left_to_right_marks(&buf),
             Buffer::with_lines(["LLLLLLLLLLRRRRRRRRRRR"])
@@ -1882,7 +1985,7 @@ mod tests {
         );
         let symbols = |content: Content| {
             let mut buf = Buffer::empty(area);
-            row(content).render(area, &mut buf);
+            row(content).render(area, fifty_fifty_left_width(area.width), &mut buf);
             buf.content
                 .iter()
                 .map(|cell| cell.symbol().to_string())
@@ -1912,7 +2015,7 @@ mod tests {
             left: Line::raw("LLLLLLLL日"),
             right: Line::raw("R"),
         });
-        row.render(area, &mut buf);
+        row.render(area, fifty_fifty_left_width(area.width), &mut buf);
         assert_eq!(buf[(8, 0)].symbol(), "日\u{200e}");
         assert_eq!(buf[(9, 0)].symbol(), " ");
     }
@@ -1993,7 +2096,7 @@ mod tests {
                 /* x */ 0, /* y */ 0, /* width */ 24, /* height */ 1,
             );
             let mut buf = Buffer::empty(area);
-            rows[0].render(area, &mut buf);
+            rows[0].render(area, fifty_fifty_left_width(area.width), &mut buf);
             let buf = without_left_to_right_marks(&buf);
             // In the last column of the left half.
             assert_eq!(buf[(11, 0)].symbol(), WRAP_MARKER);
@@ -2013,7 +2116,7 @@ mod tests {
             /* x */ 0, /* y */ 0, /* width */ 24, /* height */ 1,
         );
         let mut buf = Buffer::empty(area);
-        rows[0].render(area, &mut buf);
+        rows[0].render(area, fifty_fifty_left_width(area.width), &mut buf);
         assert_eq!(buf[(23, 0)].symbol(), WRAP_MARKER);
     }
 
@@ -2082,7 +2185,7 @@ mod tests {
     fn backgrounds(row: &Row, width: u16) -> Vec<Color> {
         let area = Rect::new(/* x */ 0, /* y */ 0, width, /* height */ 1);
         let mut buf = Buffer::empty(area);
-        row.render(area, &mut buf);
+        row.render(area, fifty_fifty_left_width(area.width), &mut buf);
         buf.content.iter().map(|cell| cell.bg).collect()
     }
 
@@ -3776,15 +3879,141 @@ mod tests {
     }
 
     #[test]
+    fn split_row_is_rendered_at_the_given_left_width() {
+        let row = row(Content::Split {
+            left: Line::raw("LLLLLLLLLLLLLLL"),
+            right: Line::raw("RRRRRRRRRRRRRRR"),
+        });
+        let area = Rect::new(
+            /* x */ 0, /* y */ 0, /* width */ 21, /* height */ 1,
+        );
+        let mut buf = Buffer::empty(area);
+        row.render(area, /* left_width */ 6, &mut buf);
+        assert_eq!(
+            without_left_to_right_marks(&buf),
+            Buffer::with_lines(["LLLLLLRRRRRRRRRRRRRRR"])
+        );
+    }
+
+    #[test]
+    fn hunk_halves_are_wrapped_at_the_given_left_width() {
+        let dates = DateDisplay::for_snapshots();
+        let theme = Theme::monochrome();
+        // The left half is 12 columns wide: 6 for the line number column, 5 for the text, and 1
+        // for the marker. The right half is 28 columns wide.
+        let rows = Rows::new(
+            /* width */ 40,
+            /* left_width */ 12,
+            &theme,
+            &dates,
+            &NOT_CANCELLED,
+        )
+        .hunk_rows(&hunk("aaaa bbbb", "aaaa bbbb"), FinalCr::Hidden)
+        .unwrap();
+        let texts: Vec<_> = rows.iter().map(text_of_row).collect();
+        assert_eq!(
+            texts,
+            [
+                ("│ 1 │ aaaa ↵".to_string(), "│ 1 │ aaaa bbbb".to_string()),
+                ("│   │ bbbb".to_string(), "│   │ ".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn cancelled_rows_are_not_built() {
         let cancellation = AtomicBool::new(true);
         let result = rows(
             &[Revision::Commit(fake::scrolloff_rename())],
             /* width */ 110,
+            /* left_width */ 55,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
             &cancellation,
         );
         assert_eq!(result, Err(RowsError::Cancelled));
+    }
+
+    #[test]
+    fn split_ratio_is_fifty_fifty_at_startup_with_the_right_half_bigger_if_odd() {
+        let ratio = SplitRatio::default();
+        assert_eq!(
+            ratio.left_width(/* width */ 110, /* min_half_width */ 0),
+            55
+        );
+        assert_eq!(
+            ratio.left_width(/* width */ 111, /* min_half_width */ 0),
+            55
+        );
+    }
+
+    #[test]
+    fn split_ratio_is_kept_when_the_width_changes() {
+        let ratio = SplitRatio::new(/* left_width */ 30, /* width */ 100);
+        assert_eq!(
+            ratio.left_width(/* width */ 200, /* min_half_width */ 0),
+            60
+        );
+        // Rounded down.
+        assert_eq!(
+            ratio.left_width(/* width */ 155, /* min_half_width */ 0),
+            46
+        );
+    }
+
+    #[test]
+    fn split_ratio_keeps_each_half_at_least_min_half_width_columns_wide() {
+        let narrow_left = SplitRatio::new(/* left_width */ 10, /* width */ 100);
+        assert_eq!(
+            narrow_left.left_width(/* width */ 100, /* min_half_width */ 20),
+            20
+        );
+        let narrow_right = SplitRatio::new(/* left_width */ 90, /* width */ 100);
+        assert_eq!(
+            narrow_right.left_width(/* width */ 100, /* min_half_width */ 20),
+            80
+        );
+    }
+
+    #[test]
+    fn split_ratio_keeps_each_half_at_least_min_half_width_constant_columns_wide() {
+        let ratio = SplitRatio::new(/* left_width */ 0, /* width */ 100);
+        assert_eq!(
+            ratio.left_width(/* width */ 100, /* min_half_width */ 0),
+            MIN_HALF_WIDTH
+        );
+    }
+
+    #[test]
+    fn split_ratio_is_fifty_fifty_if_the_halves_cannot_be_wide_enough() {
+        let ratio = SplitRatio::new(/* left_width */ 10, /* width */ 100);
+        assert_eq!(
+            ratio.left_width(/* width */ 39, /* min_half_width */ 20),
+            19
+        );
+    }
+
+    /// `fake::scrolloff_rename()`, whose single file has `hunk` as its only hunk.
+    fn commit_with_hunk(hunk: Hunk) -> Commit {
+        let mut commit = fake::scrolloff_rename();
+        file_at_mut(&mut commit, "src/config.rs").hunks = vec![hunk];
+        commit
+    }
+
+    #[test]
+    fn min_half_width_fits_the_line_number_column_and_the_widest_cluster() {
+        // `日` is 2 columns wide, and the line numbers are 1 column wide.
+        let commit = commit_with_hunk(hunk("日本", "a"));
+        assert_eq!(
+            min_half_width(&[Revision::Commit(commit)]),
+            1 + u16::try_from(HALF_FRAME_WIDTH).unwrap() + 2
+        );
+    }
+
+    #[test]
+    fn min_half_width_ignores_the_files_of_merge_commits() {
+        let mut commit = commit_with_hunk(hunk("日本", "a"));
+        commit.parent_ids = vec![ObjectId::null(gix::hash::Kind::Sha1); 2];
+        assert_eq!(min_half_width(&[Revision::Commit(commit)]), 0);
     }
 }
