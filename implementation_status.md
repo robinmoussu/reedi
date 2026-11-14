@@ -478,6 +478,32 @@ version 0.0.11: make it possible to change the before/after screen ratio
   - the mouse events, but the moves, cancel the pending number
   - the ratio is not saved: it is 50/50 at each startup
 
+version 0.0.12: improved display
+--------------------------------
+
+- [ ] Fix `ctrl+e`/`ctrl+y`
+- [ ] Click set the cursor
+- [ ] Fix `j`/`k` and `down`/`up`
+- [ ] Fix `d`/`u` and `ctrl+d`/`ctrl+u`
+- [ ] Fix resizing
+
+- [ ] The name of a file should stay at the top of the screen until the last line of that file is
+  scrolled away. When scrolling, if the filename didn’t fit in a single row, it is progressively
+  shortened down to a single row using `…` instead of behing pushed away.
+  Details:
+  - with an actual scrolloff smaller than 2, the file name is shortened the same way down to a
+    single row, then pushed above the screen
+  - pressing the mouse button on the sticky header never starts dragging the separation line. The
+    mouse wheel works as usual
+
+- [ ] The % (in number of rows) should be displayed on the right side of the status bar.
+  Details:
+  - it is also displayed while a number is pending, and not displayed if there are no rows
+
+- [ ] when the message of the index comes from `.git/rebase-merge/message` (used by `git rebase
+  --continue`, not by `git commit`), the header says `index for git rebase --continue` instead of
+  `index for $branch`
+
 version 0.0.x: line-diff, word-diff and syntax highlighting
 -----------------------------------------------------------
 

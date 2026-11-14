@@ -173,6 +173,9 @@ Cursor:
   displayed on one row and is now split in 2, the cursor stays on the first one, and if a line was
   displayed on 2 rows, now merged, and the cursor was on the second one, the merged row goes at the
   position of the cursor.
+- When the cursor or the screen would move into (or further into) the `scrolloff` rows at the
+  top/bottom of the screen, the other one moves instead (see `scrolloff` in Settings), unless the
+  beginning/end of the file is reached.
 
 Review mode:
 
@@ -180,8 +183,9 @@ Review mode:
   displayed, even if the line is wrapped)
 - TODO: how is non-linear history displayed
 
-- `j`/`k` or `up`/`down` move the cursor one row. The screen automatically move so
-  that there is always 5 extra rows on top/bottom (unless the beginning/end of the file is reached)
+- clicking on any row set the cursor position to this row
+
+- `j`/`k` or `up`/`down` move the cursor one row.
 - `tab`/`shift+tab` or `left`/`right` move the cursor to the next/previous editable area (this does
   include `commit_subject`, `author` and `date` that are on the same line)
 - `g`/`G` move the cursor to first/last row
@@ -189,11 +193,12 @@ Review mode:
   the top of the screen)
 - `[`/`]` jumps to the next/previous merge conflict
 
-- `ctrl+e`/`ctrl+y` or mouse wheel move the screen one line down/up (and move the cursor if it would have gone
-  closer to the top/bottom of the screen than the scrolloff margin)
-- `d`/`u` or `ctrl+d`/`ctrl+u` move half a screen down/up: both the screen, like
-  `ctrl+e`/`ctrl+y`, and the cursor, like `j`/`k`, move by that amount. Nothing moves anymore when
-  the last/first row is displayed
+- `ctrl+e`/`ctrl+y` or mouse wheel move the screen and the cursor one line down/up, so that the
+  cursor stays on the same row of the screen. While the cursor is inside the scrolloff margin, or
+  when the screen cannot move anymore, only the cursor moves, like `j`/`k`
+- `d`/`u` or `ctrl+d`/`ctrl+u` move the screen and the cursor half a screen down/up. The screen
+  stops when the last/first row is displayed. Then, the cursor is moved. It ignores `scrolloff`
+  rules
 
 - numbers before a move repeat that move by this amount
 - `${number}g` or `${number}G` move the cursor to the `number`th row from the top (like
@@ -404,7 +409,13 @@ Settings
 
 - There is a named action for each shortcut, and all of them can be remapped (and unmapped).
 - Incremental search can be toggled off
-- Scrolloff (by default 5) can be changed
+- `scrolloff`: 5
+    - The top `scrolloff` rows of the screen and the bottom `scrolloff` ones are inside the
+    scrolloff margins
+    - Moving the cursor into (or further into if it’s already inside) the scrolloff moves the
+    screen instead
+    - Likewise, moving the screen into the scrolloff moves the cursor instead
+    - Setting the cursor position ignores the scrolloff
 - external editor (by default `$VISUAL`, then `$EDITOR`) can be changed
 - search case setting can be set to smartcase (default), ignorecase, and noignorecase
 - search pattern setting can be set to perl regex (default) or literal
