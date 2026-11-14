@@ -25,6 +25,7 @@ use crate::view::Mode;
 use crate::view::Row;
 use crate::view::RowsError;
 use crate::viewport::Viewport;
+use crate::wrap::TooNarrow;
 
 /// What a key press does in review mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,22 +165,18 @@ pub fn run(
     let mut size = None;
     let mut viewport = Viewport::default();
     let mut count = Count::default();
+    let mut rewrapper = Rewrapper::new(revisions, &settings.theme, &settings.dates);
     ratatui::run(|terminal| {
         loop {
             let screen = terminal.size()?;
             let height = usize::from(screen.height.saturating_sub(view::STATUS_BAR_HEIGHT));
+            if let Some(new_rows) = rewrapper
+                .poll_rows_for(screen.width)
+                .map_err(io::Error::other)?
+            {
+                replace_rows(&mut rows, new_rows, &mut viewport);
+            }
             if size != Some(screen) {
-                if size.map(|size| size.width) != Some(screen.width) {
-                    rows = rewrap(
-                        revisions,
-                        &rows,
-                        &mut viewport,
-                        screen.width,
-                        &settings.theme,
-                        &settings.dates,
-                    )
-                    .map_err(|RowsError::TooNarrow(error)| io::Error::other(error))?;
-                }
                 viewport.scroll(rows.len(), height);
                 size = Some(screen);
             }
@@ -212,23 +209,53 @@ pub fn run(
     })
 }
 
-/// The rows displaying `revisions` on a screen `width` columns wide, replacing `rows`.
-///
-/// The cursor goes, at the same screen position, on the row displaying the character that was the
-/// first of its row (see [`Row::anchor()`]).
-fn rewrap(
-    revisions: &[Revision],
-    rows: &[Row],
-    viewport: &mut Viewport,
-    width: u16,
-    theme: &Theme,
-    dates: &DateDisplay,
-) -> Result<Vec<Row>, RowsError> {
-    let new_rows = view::rows(revisions, width, theme, dates)?;
+/// Rewraps the rows when the width of the screen changes.
+struct Rewrapper<'a> {
+    revisions: &'a [Revision],
+    theme: &'a Theme,
+    dates: &'a DateDisplay,
+    /// Width of the screen the displayed rows are wrapped for, if any.
+    wrapped_width: Option<u16>,
+}
+
+impl<'a> Rewrapper<'a> {
+    /// A rewrapper of the rows displaying `revisions`.
+    fn new(revisions: &'a [Revision], theme: &'a Theme, dates: &'a DateDisplay) -> Self {
+        Self {
+            revisions,
+            theme,
+            dates,
+            wrapped_width: None,
+        }
+    }
+
+    /// Make progress on rewrapping the rows for a screen `width` columns wide, and return them
+    /// once they are built, if they are not displayed yet.
+    ///
+    /// Fails if a text area outside of the hunks is too narrow to display a grapheme cluster of
+    /// its line.
+    fn poll_rows_for(&mut self, width: u16) -> Result<Option<Vec<Row>>, TooNarrow> {
+        if self.wrapped_width == Some(width) {
+            return Ok(None);
+        }
+        match view::rows(self.revisions, width, self.theme, self.dates) {
+            Ok(rows) => {
+                self.wrapped_width = Some(width);
+                Ok(Some(rows))
+            }
+            Err(RowsError::TooNarrow(error)) => Err(error),
+        }
+    }
+}
+
+/// Replace `rows` by `new_rows`, displaying the same lines. The cursor goes, at the same screen
+/// position, on the row displaying the character that was the first of its row (see
+/// [`Row::anchor()`]).
+fn replace_rows(rows: &mut Vec<Row>, new_rows: Vec<Row>, viewport: &mut Viewport) {
     if let Some(row) = rows.get(viewport.cursor) {
         viewport.move_cursor(view::find(&new_rows, row.anchor()));
     }
-    Ok(new_rows)
+    *rows = new_rows;
 }
 
 /// Close `error_modal` if `event` is a key press.
@@ -295,7 +322,6 @@ mod tests {
     use crate::model::Commit;
     use crate::settings::SCROLLOFF;
     use crate::test_support::header_row_indexes;
-    use crate::test_support::revisions_of;
     use crate::test_support::rows_of;
     use crate::test_support::rows_of_revisions;
     use crate::test_support::short_commits;
@@ -380,25 +406,46 @@ mod tests {
         assert_eq!(rows[1].line_index, rows[0].line_index);
     }
 
+    /// Run `test` with a rewrapper of `revisions`.
+    fn with_rewrapper(revisions: &[Revision], test: impl FnOnce(&mut Rewrapper)) {
+        let theme = Theme::monochrome();
+        let dates = DateDisplay::for_snapshots();
+        test(&mut Rewrapper::new(revisions, &theme, &dates));
+    }
+
     #[test]
-    fn wrapping_at_start_up_keeps_the_cursor_on_the_first_row() {
+    fn rows_are_polled_once_for_each_width() {
+        // Its content does not matter.
+        let revisions = [Revision::Commit(fake::ltr_then_rtl_summary())];
+        with_rewrapper(&revisions, |rewrapper| {
+            assert!(rewrapper.poll_rows_for(/* width */ 110).unwrap().is_some());
+            assert!(rewrapper.poll_rows_for(/* width */ 110).unwrap().is_none());
+            assert!(rewrapper.poll_rows_for(/* width */ 60).unwrap().is_some());
+        });
+    }
+
+    #[test]
+    fn polling_the_rows_for_a_too_narrow_screen_is_an_error() {
+        // Its content does not matter.
+        let revisions = [Revision::Commit(fake::ltr_then_rtl_summary())];
+        with_rewrapper(&revisions, |rewrapper| {
+            assert!(rewrapper.poll_rows_for(/* width */ 0).is_err());
+        });
+    }
+
+    #[test]
+    fn replacing_the_rows_at_start_up_keeps_the_cursor_on_the_first_row() {
+        // Its content does not matter.
+        let new_rows = rows_of(&[fake::ltr_then_rtl_summary()], /* width */ 110);
+        let mut rows = Vec::new();
         let mut viewport = Viewport::default();
-        let rows = rewrap(
-            // Its content does not matter.
-            &[Revision::Commit(fake::ltr_then_rtl_summary())],
-            &[],
-            &mut viewport,
-            /* width */ 110,
-            &Theme::monochrome(),
-            &DateDisplay::for_snapshots(),
-        )
-        .unwrap();
+        replace_rows(&mut rows, new_rows, &mut viewport);
         assert!(!rows.is_empty());
         assert_eq!(viewport, Viewport::default());
     }
 
     #[test]
-    fn rewrapping_keeps_the_cursor_on_the_first_character_of_its_row() {
+    fn replacing_the_rows_keeps_the_cursor_on_the_first_character_of_its_row() {
         let commits = vec![fake::file_changes()];
         let narrow = rows_of(&commits, /* width */ 60);
         // The second row of the first line of the body (the header is the line 0, then a blank
@@ -407,38 +454,14 @@ mod tests {
             .iter()
             .position(|row| row.line_index == 2 && row.anchor_offset != AnchorOffset::Whole(0))
             .unwrap();
+        let mut rows = narrow.clone();
         let mut viewport = Viewport { cursor, top: cursor - 3 };
-        let wide = rewrap(
-            &revisions_of(&commits),
-            &narrow,
-            &mut viewport,
-            /* width */ 110,
-            &Theme::monochrome(),
-            &DateDisplay::for_snapshots(),
-        )
-        .unwrap();
+        replace_rows(&mut rows, rows_of(&commits, /* width */ 110), &mut viewport);
         // The first line of the body is displayed on a single row.
-        assert_eq!(wide[viewport.cursor].line_index, 2);
-        assert_eq!(viewport.cursor, view::find(&wide, narrow[cursor].anchor()));
+        assert_eq!(rows[viewport.cursor].line_index, 2);
+        assert_eq!(viewport.cursor, view::find(&rows, narrow[cursor].anchor()));
         // At the same screen position.
         assert_eq!(viewport.cursor - viewport.top, 3);
-    }
-
-    #[test]
-    fn rewrapping_to_a_too_narrow_screen_is_an_error() {
-        let mut viewport = Viewport::default();
-        assert!(
-            rewrap(
-                // Its content does not matter.
-                &[Revision::Commit(fake::ltr_then_rtl_summary())],
-                &[],
-                &mut viewport,
-                /* width */ 0,
-                &Theme::monochrome(),
-                &DateDisplay::for_snapshots()
-            )
-            .is_err()
-        );
     }
 
     fn error_modal() -> Option<ErrorModal> {
