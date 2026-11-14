@@ -23,8 +23,8 @@ use crate::view;
 use crate::view::ErrorModal;
 use crate::view::Mode;
 use crate::view::Row;
+use crate::view::RowsError;
 use crate::viewport::Viewport;
-use crate::wrap::TooNarrow;
 
 /// What a key press does in review mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,7 +178,7 @@ pub fn run(
                         &settings.theme,
                         &settings.dates,
                     )
-                    .map_err(io::Error::other)?;
+                    .map_err(|RowsError::TooNarrow(error)| io::Error::other(error))?;
                 }
                 viewport.scroll(rows.len(), height);
                 size = Some(screen);
@@ -223,7 +223,7 @@ fn rewrap(
     width: u16,
     theme: &Theme,
     dates: &DateDisplay,
-) -> Result<Vec<Row>, TooNarrow> {
+) -> Result<Vec<Row>, RowsError> {
     let new_rows = view::rows(revisions, width, theme, dates)?;
     if let Some(row) = rows.get(viewport.cursor) {
         viewport.move_cursor(view::find(&new_rows, row.anchor()));

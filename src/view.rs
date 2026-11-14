@@ -554,6 +554,18 @@ fn file_parts(file: &FileDiff, theme: &Theme) -> Vec<Part> {
     name.into_iter().chain(suffix).collect()
 }
 
+/// Why the rows could not be built.
+#[derive(Debug, PartialEq)]
+pub enum RowsError {
+    TooNarrow(TooNarrow),
+}
+
+impl From<TooNarrow> for RowsError {
+    fn from(error: TooNarrow) -> Self {
+        RowsError::TooNarrow(error)
+    }
+}
+
 /// The rows being built.
 struct Rows<'a> {
     rows: Vec<Row>,
@@ -620,7 +632,7 @@ impl<'a> Rows<'a> {
     ///
     /// A carriage return ending a line is replaced if `final_cr` is [`FinalCr::Shown`], and
     /// hidden otherwise.
-    fn hunk(&mut self, hunk: &Hunk, final_cr: FinalCr) -> Result<(), TooNarrow> {
+    fn hunk(&mut self, hunk: &Hunk, final_cr: FinalCr) -> Result<(), RowsError> {
         // Each pair of lines displayed side by side is a line (see `Row::line_index`), and so is
         // `MISSING_NEWLINE`.
         let len = pairing::pairs(hunk, MAX_PAIRING_DISTANCE, TAB_WIDTH).len()
@@ -712,7 +724,7 @@ impl<'a> Rows<'a> {
             .collect())
     }
 
-    fn file(&mut self, file: &FileDiff) -> Result<(), TooNarrow> {
+    fn file(&mut self, file: &FileDiff) -> Result<(), RowsError> {
         let final_cr = if file.has_inconsistent_line_endings() {
             FinalCr::Shown
         } else {
@@ -741,7 +753,7 @@ impl<'a> Rows<'a> {
     }
 
     /// Add the diff of each of `files`, or `NO_CHANGES` if there are none.
-    fn diff(&mut self, files: &[FileDiff]) -> Result<(), TooNarrow> {
+    fn diff(&mut self, files: &[FileDiff]) -> Result<(), RowsError> {
         if files.is_empty() {
             self.blank();
             self.text(&[Part::markup(NO_CHANGES, self.theme.placeholder)])?;
@@ -749,7 +761,7 @@ impl<'a> Rows<'a> {
         files.iter().try_for_each(|file| self.file(file))
     }
 
-    fn commit(&mut self, commit: &Commit) -> Result<(), TooNarrow> {
+    fn commit(&mut self, commit: &Commit) -> Result<(), RowsError> {
         self.text(&header_parts(commit, self.theme, self.dates))?;
         self.body(&commit.body)?;
         // Like `git log -p`, merge commits have no diff.
@@ -760,7 +772,7 @@ impl<'a> Rows<'a> {
     }
 
     /// `index for $branch $subject`
-    fn index(&mut self, index: &Index) -> Result<(), TooNarrow> {
+    fn index(&mut self, index: &Index) -> Result<(), RowsError> {
         let mut header = vec![Part::markup("index", self.theme.hash)];
         if let Some(branch) = index.short_branch() {
             header.push(Part::markup(" for ", self.theme.hash));
@@ -775,13 +787,13 @@ impl<'a> Rows<'a> {
         self.diff(&index.files)
     }
 
-    fn working_directory(&mut self, working_directory: &WorkingDirectory) -> Result<(), TooNarrow> {
+    fn working_directory(&mut self, working_directory: &WorkingDirectory) -> Result<(), RowsError> {
         self.text(&[Part::markup("working directory", self.theme.hash)])?;
         self.diff(&working_directory.files)
     }
 
     /// Add `revision`, including the separator below it.
-    fn revision(&mut self, revision: &Revision) -> Result<(), TooNarrow> {
+    fn revision(&mut self, revision: &Revision) -> Result<(), RowsError> {
         match revision {
             Revision::Commit(commit) => self.commit(commit)?,
             Revision::Index(index) => self.index(index)?,
@@ -805,7 +817,7 @@ pub fn rows(
     width: u16,
     theme: &Theme,
     dates: &DateDisplay,
-) -> Result<Vec<Row>, TooNarrow> {
+) -> Result<Vec<Row>, RowsError> {
     let mut rows = Rows::new(width, theme, dates);
     for revision in revisions {
         rows.revision(revision)?;
@@ -1186,7 +1198,7 @@ mod tests {
         revisions: &[Revision],
         width: u16,
         theme: &Theme,
-    ) -> Result<Vec<Row>, TooNarrow> {
+    ) -> Result<Vec<Row>, RowsError> {
         rows(revisions, width, theme, &DateDisplay::for_snapshots())
     }
 
@@ -2404,7 +2416,10 @@ mod tests {
         )
         .hunk(&file_at(&commit, "src/config.rs").hunks[0], FinalCr::Hidden)
         .unwrap_err();
-        assert_eq!(error.width, 0);
+        assert!(matches!(
+            error,
+            RowsError::TooNarrow(TooNarrow { width: 0, .. })
+        ));
     }
 
     #[test]
@@ -2417,7 +2432,10 @@ mod tests {
             &Theme::monochrome(),
         )
         .unwrap_err();
-        assert_eq!(error, TooNarrow { width: 1, cluster: "日".to_string() });
+        assert_eq!(
+            error,
+            RowsError::TooNarrow(TooNarrow { width: 1, cluster: "日".to_string() })
+        );
         assert!(
             fifty_fifty_rows(
                 &[Revision::Commit(fake::scrolloff_rename())],
