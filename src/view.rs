@@ -1181,10 +1181,24 @@ mod tests {
     use crate::test_support::without_left_to_right_marks;
     use crate::theme::Theme;
 
+    /// All the rows displaying `revisions` on a screen `width` columns wide, split 50/50.
+    fn fifty_fifty_rows(
+        revisions: &[Revision],
+        width: u16,
+        theme: &Theme,
+    ) -> Result<Vec<Row>, TooNarrow> {
+        rows(revisions, width, theme, &DateDisplay::for_snapshots())
+    }
+
+    /// The rows being built for a screen `width` columns wide.
+    fn new_rows<'a>(width: u16, theme: &'a Theme, dates: &'a DateDisplay) -> Rows<'a> {
+        Rows::new(width, theme, dates)
+    }
+
     /// The rows of `revision`, including the separator below it.
     fn revision_rows(revision: &Revision, width: u16, theme: &Theme) -> Vec<Row> {
         let dates = DateDisplay::for_snapshots();
-        let mut rows = Rows::new(width, theme, &dates);
+        let mut rows = new_rows(width, theme, &dates);
         rows.revision(revision).unwrap();
         rows.rows
     }
@@ -1196,7 +1210,7 @@ mod tests {
     /// The rows of `file`, starting with the blank row above the file name.
     fn file_rows(file: &FileDiff, width: u16, theme: &Theme) -> Vec<Row> {
         let dates = DateDisplay::for_snapshots();
-        let mut rows = Rows::new(width, theme, &dates);
+        let mut rows = new_rows(width, theme, &dates);
         rows.file(file).unwrap();
         rows.rows
     }
@@ -1346,7 +1360,7 @@ mod tests {
         theme: &Theme,
     ) -> (Buffer, Viewport) {
         let revisions = revisions_of(commits);
-        let rows = rows(&revisions, width, theme, &DateDisplay::for_snapshots()).unwrap();
+        let rows = fifty_fifty_rows(&revisions, width, theme).unwrap();
         let mut viewport = viewport;
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
@@ -1369,14 +1383,9 @@ mod tests {
     /// All the rows of `commits` on a single screen 110 columns wide, with the cursor on the first
     /// row.
     fn render_on_a_single_screen(commits: &[Commit], theme: &Theme) -> TestBackend {
-        let height = rows(
-            &revisions_of(commits),
-            /* width */ 110,
-            theme,
-            &DateDisplay::for_snapshots(),
-        )
-        .unwrap()
-        .len()
+        let height = fifty_fifty_rows(&revisions_of(commits), /* width */ 110, theme)
+            .unwrap()
+            .len()
             + 1;
         render(
             commits,
@@ -1422,11 +1431,10 @@ mod tests {
 
     #[test]
     fn lines_are_numbered_consecutively() {
-        let rows = rows(
+        let rows = fifty_fifty_rows(
             &revisions_of(&short_commits()),
             /* width */ 110,
             &Theme::monochrome(),
-            &DateDisplay::for_snapshots(),
         )
         .unwrap();
         assert_eq!(rows[0].line_index, 0);
@@ -1878,7 +1886,7 @@ mod tests {
     fn line_numbers_are_aligned_per_hunk() {
         let commit = fake::scrolloff_rename();
         for theme in &themes() {
-            let rows = Rows::new(/* width */ 110, theme, &DateDisplay::for_snapshots())
+            let rows = new_rows(/* width */ 110, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&file_at(&commit, "src/config.rs").hunks[1], FinalCr::Hidden)
                 .unwrap();
             let Content::Split { left, right } = &rows[0].content else {
@@ -1930,7 +1938,7 @@ mod tests {
         for theme in &themes() {
             // Each half is 12 columns wide: 6 for the line number column, 5 for the text, and 1
             // for the marker.
-            let rows = Rows::new(/* width */ 24, theme, &DateDisplay::for_snapshots())
+            let rows = new_rows(/* width */ 24, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&hunk("aaaa bbbb cccc", "aaaa"), FinalCr::Hidden)
                 .unwrap();
             let texts: Vec<_> = rows.iter().map(text_of_row).collect();
@@ -1959,7 +1967,7 @@ mod tests {
 
     #[test]
     fn marker_is_in_the_last_column_of_the_right_half() {
-        let rows = Rows::new(
+        let rows = new_rows(
             /* width */ 24,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -1976,7 +1984,7 @@ mod tests {
 
     #[test]
     fn unpaired_lines_have_a_filler_on_the_other_side() {
-        let rows = Rows::new(
+        let rows = new_rows(
             /* width */ 24,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -2020,7 +2028,7 @@ mod tests {
             _ => panic!("hunk rows are split"),
         };
         for theme in &themes() {
-            let rows = Rows::new(/* width */ 40, theme, &DateDisplay::for_snapshots())
+            let rows = new_rows(/* width */ 40, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&hunk, FinalCr::Hidden)
                 .unwrap();
             let (left, right) = halves(&rows[0]);
@@ -2050,7 +2058,7 @@ mod tests {
             let added = theme.added_line.bg.unwrap();
             // Each half is 20 columns wide: 6 for the line number column, 13 for the text, and 1
             // for the marker.
-            let rows = Rows::new(/* width */ 40, theme, &DateDisplay::for_snapshots())
+            let rows = new_rows(/* width */ 40, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&hunk("aaaa bbbb cccc dddd", "aaaa bbbb"), FinalCr::Hidden)
                 .unwrap();
             let first = backgrounds(&rows[0], /* width */ 40);
@@ -2069,7 +2077,7 @@ mod tests {
     #[test]
     fn replacements_of_modified_lines_keep_their_background() {
         for theme in &themes() {
-            let rows = Rows::new(/* width */ 40, theme, &DateDisplay::for_snapshots())
+            let rows = new_rows(/* width */ 40, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&hunk("a b", "a\u{a0}b"), FinalCr::Hidden)
                 .unwrap();
             let Content::Split { right, .. } = &rows[0].content else {
@@ -2092,7 +2100,7 @@ mod tests {
             },
         );
         for theme in &themes() {
-            let rows = Rows::new(/* width */ 40, theme, &DateDisplay::for_snapshots())
+            let rows = new_rows(/* width */ 40, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&hunk, FinalCr::Hidden)
                 .unwrap();
             assert!(
@@ -2114,7 +2122,7 @@ mod tests {
         // Each half is 40 columns wide: the right line is wrapped, not the left one.
         let mut hunk = hunk("aaaa bbbb cccc", "aaaa bbbb cccc dddd eeee ffff gggg hhhh");
         hunk.lines[0].missing_newline = true;
-        let rows = Rows::new(
+        let rows = new_rows(
             /* width */ 80,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -2149,7 +2157,7 @@ mod tests {
         let mut hunk = hunk("aaaa", "aaaa bbbb");
         hunk.lines[0].missing_newline = true;
         for theme in &themes() {
-            let rows = Rows::new(/* width */ 80, theme, &DateDisplay::for_snapshots())
+            let rows = new_rows(/* width */ 80, theme, &DateDisplay::for_snapshots())
                 .hunk_rows(&hunk, FinalCr::Hidden)
                 .unwrap();
             let Content::Split { left, .. } = &rows[1].content else {
@@ -2168,7 +2176,7 @@ mod tests {
             text: "bbbb".to_string(),
             missing_newline: false,
         });
-        let rows = Rows::new(
+        let rows = new_rows(
             /* width */ 80,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -2195,7 +2203,7 @@ mod tests {
         hunk.lines[0].missing_newline = true;
         let theme = Theme::monochrome();
         let dates = DateDisplay::for_snapshots();
-        let mut rows = Rows::new(/* width */ 12, &theme, &dates);
+        let mut rows = new_rows(/* width */ 12, &theme, &dates);
         rows.hunk(&hunk, FinalCr::Hidden).unwrap();
         // The pair of lines, and the line displaying `MISSING_NEWLINE`.
         assert_eq!(rows.lines_count, 2);
@@ -2277,7 +2285,7 @@ mod tests {
 
     #[test]
     fn rows_of_a_diff_line_start_at_their_first_character() {
-        let rows = Rows::new(
+        let rows = new_rows(
             /* width */ 24,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -2389,7 +2397,7 @@ mod tests {
     #[test]
     fn hunk_too_narrow_for_the_error_message_is_an_error() {
         let commit = fake::scrolloff_rename();
-        let error = Rows::new(
+        let error = new_rows(
             /* width */ 0,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -2403,20 +2411,18 @@ mod tests {
     fn text_area_too_narrow_outside_of_a_hunk_is_an_error() {
         let mut commit = fake::scrolloff_rename();
         commit.author = "日本".to_string();
-        let error = rows(
+        let error = fifty_fifty_rows(
             &[Revision::Commit(commit)],
             /* width */ 1,
             &Theme::monochrome(),
-            &DateDisplay::for_snapshots(),
         )
         .unwrap_err();
         assert_eq!(error, TooNarrow { width: 1, cluster: "日".to_string() });
         assert!(
-            rows(
+            fifty_fifty_rows(
                 &[Revision::Commit(fake::scrolloff_rename())],
                 /* width */ 0,
                 &Theme::monochrome(),
-                &DateDisplay::for_snapshots()
             )
             .is_err()
         );
@@ -2424,7 +2430,7 @@ mod tests {
 
     #[test]
     fn anchor_is_on_the_right_half_if_it_displays_text() {
-        let rows = Rows::new(
+        let rows = new_rows(
             /* width */ 24,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -2439,7 +2445,7 @@ mod tests {
                 offset: 5
             }
         );
-        let rows = Rows::new(
+        let rows = new_rows(
             /* width */ 24,
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
@@ -2460,20 +2466,8 @@ mod tests {
     fn find_returns_the_row_displaying_the_first_character_of_a_row() {
         // Lines are wrapped in all the areas, both at 60 and at 110 columns.
         let revisions = [Revision::Commit(fake::line_wrapping())];
-        let wide = rows(
-            &revisions,
-            /* width */ 110,
-            &Theme::monochrome(),
-            &DateDisplay::for_snapshots(),
-        )
-        .unwrap();
-        let narrow = rows(
-            &revisions,
-            /* width */ 60,
-            &Theme::monochrome(),
-            &DateDisplay::for_snapshots(),
-        )
-        .unwrap();
+        let wide = fifty_fifty_rows(&revisions, /* width */ 110, &Theme::monochrome()).unwrap();
+        let narrow = fifty_fifty_rows(&revisions, /* width */ 60, &Theme::monochrome()).unwrap();
         for row in &narrow {
             let anchor = row.anchor();
             let i = find(&wide, anchor);
