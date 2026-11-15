@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>{{ author }} requested your review</title>
+  </head>
+  <body>
+    <p>Hello {{ reviewer }},</p>
+    <p>{{ author }} requested your review on:</p>
+    <ul>
+      {% for file in files %}
+      <li><code>{{ file.path }}</code> ({{ file.changed_lines_count }} lines changed)</li>
+      {% endfor %}
+    </ul>
+    <p>The names of the long files stay at the top of the screen while you scroll through them.</p>
+  </body>
+</html>

@@ -385,10 +385,13 @@ displaying the part of a line that did not fit on the previous row.
       line number column of the hunk)
     - if one side of a line wraps on more rows than the other, the shorter side is padded with rows
       displaying only the line number column without number
-- The header, the commit message and the file names are wrapped the same way, but without `↵`
+- The header and the commit message are wrapped the same way, but without `↵`
   marker. The header can be broken inside any field (like the subject, or between `tag:` and the
   tag name), each part keeping the color of its field. The spaces between the fields are never
   replaced (nor colored as dimmed or highlighted whitespace), even next to a break.
+- File names are also wrapped without `↵` marker, but are broken between any two grapheme
+  clusters. Their spaces and U+2800 ending or starting a row are always displayed with the
+  replacement character, even alone, except those of the label, the arrow and the suffix.
 - Right-to-left text is broken in memory order, like any other text, and then reordered by the
   terminal (see the beginning of this document). The right-to-left part of a text area can thus be
   displayed on either side of its left-to-right part. Rows are still left-aligned.
@@ -586,7 +589,8 @@ Colorscheme
       at the beginning of a row because of a line wrap (except the only space or U+2800 around a
       line wrap, which is not displayed), and non-trailing tabs (including before a line wrap)
     - highlighted whitespace: trailing whitespace (including U+2800, whitespace-only lines, and
-      before a line wrap)
+      before a line wrap), and in a file name, the whitespace at both ends of each folder and of
+      the file name (the parts of the path between the `/`)
     - all other invisible characters
 
 Line-level diff:

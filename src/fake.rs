@@ -234,6 +234,8 @@ mod tests {
             .collect();
         assert!(!paths.is_empty());
         let output = std::process::Command::new("git")
+            // Without it, the paths with non-ASCII characters are quoted and escaped.
+            .args(["-c", "core.quotePath=false"])
             .args(["check-attr", "text", "whitespace", "--"])
             .args(&paths)
             .current_dir(env!("CARGO_MANIFEST_DIR"))

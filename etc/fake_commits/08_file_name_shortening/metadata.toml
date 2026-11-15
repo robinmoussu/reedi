@@ -1,0 +1,21 @@
+# A commit whose file names are too long for a single row, to show how the name of a file is
+# shortened at the top of the screen: renamed, added, removed and binary files, long folders, long
+# file stems, long extensions, file names without extension or starting with a dot, and file names
+# with wide characters, multi-character graphemes or spaces, a renamed binary file, a file whose
+# content is not valid UTF-8, a short file name in long folders, a file with a single line, a file
+# with several extensions, and folders and file names starting or ending with spaces (one of them
+# being the old name of a renamed file).
+hash = "1f5c8e2a9b3d7f04c6e1a8b5d2f9c3e7a0b4d618"
+parents = ["6b2e9f1d4a7c08e3b5f2a961d7c4e0b38a5f2d17"]
+author = "Mei Takahashi"
+email = "mei.takahashi@example.org"
+date = "2026-09-22 15:41:06 +0200"
+subject = "view: move the sticky headers to their own module, and document how long file names are shortened"
+body = """
+The sticky headers were drawn by the scrollable view itself, which made
+it hard to test the shortening of the file names on its own."""
+
+[gitattributes]
+"03_after_assets__screenshots__sticky_header__the_name_of_a_long_file_shortened_down_to_a_single_row_of_the_terminal.png" = "binary"
+"09_before_assets__icons__toolbar__the_icon_of_the_button_that_shows_the_sticky_header_of_the_current_file.png" = "binary"
+"09_after_assets__icons__toolbar__sticky_header__the_icon_of_the_button_that_keeps_the_name_of_the_file_on_screen.png" = "binary"

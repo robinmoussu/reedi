@@ -1,0 +1,10 @@
+Monday: 09:30 - 12:00 👩‍💻 pair programming on the sticky headers
+Monday: 14:00 - 16:30 👨‍👩‍👧‍👦 no meetings, school pickup
+Tuesday: 10:00 - 12:00 👩‍💻 review of the shortening rules
+Tuesday: 13:30 - 15:00 🧑‍🔬 testing with long file names
+Wednesday: 09:00 - 11:30 👩‍💻 pair programming on the mouse handling
+Wednesday: afternoon off 👨‍👩‍👧‍👦
+Thursday: 09:30 - 12:00 👩‍💻 wide characters and graphemes
+Thursday: 14:00 - 16:00 🧑‍🔬 testing on narrow terminals
+Friday: 10:00 - 11:00 🗓️ planning of the next version
+Friday: 11:00 - 12:30 👩‍💻 cleanup

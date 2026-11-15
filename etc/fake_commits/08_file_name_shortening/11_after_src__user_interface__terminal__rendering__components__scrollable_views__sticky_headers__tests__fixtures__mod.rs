@@ -1,0 +1,14 @@
+pub mod added_files;
+pub mod binary_files;
+pub mod deleted_files;
+pub mod dotfiles;
+pub mod file_names_with_spaces;
+pub mod invalid_utf8_files;
+pub mod long_extensions;
+pub mod long_folders;
+pub mod long_stems;
+pub mod renamed_binary_files;
+pub mod renamed_files;
+pub mod short_file_names;
+pub mod single_line_files;
+pub mod wide_characters;

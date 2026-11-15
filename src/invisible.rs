@@ -13,7 +13,8 @@ use crate::settings::TAB_WIDTH;
 
 /// Replacement of a tab, followed by spaces up to the next tab stop.
 const TAB: char = '⇥';
-/// Replacement of the highlighted spaces, and of the spaces before a break.
+/// Replacement of the highlighted spaces (see [`HighlightedWhitespace`]), and of the spaces before
+/// a break (or after it, in a path component).
 const TRAILING_AND_WRAPPING_SPACE: char = '∙';
 /// Replacement of U+2800 (braille pattern blank) when it is part of the highlighted whitespace, or
 /// at the end or at the beginning of a row because of a break.
@@ -54,7 +55,8 @@ pub enum Kind {
     /// Replacement of a tab, or of a space or U+2800 next to a break, that is not part of the
     /// highlighted whitespace.
     DimmedWhitespace,
-    /// Replacement of the highlighted whitespace, including the tabs.
+    /// Replacement of the highlighted whitespace (see [`HighlightedWhitespace`]), including the
+    /// tabs.
     HighlightedWhitespace,
     /// Replacement of any other invisible character.
     Replacement,
@@ -80,6 +82,10 @@ pub enum Wrap {
     /// The only space or U+2800 around a break (ending the row before it or starting the row
     /// after it). It is not displayed (see [`Cluster::push()`]).
     Single,
+    /// A space or U+2800 of a folder or a file name of a path
+    /// ([`SegmentKind::PathComponent`](crate::wrap::SegmentKind::PathComponent)) ending or
+    /// starting a row. It is replaced, even alone.
+    PathComponentBreak,
 }
 
 /// How a grapheme cluster is displayed.
@@ -105,10 +111,10 @@ pub enum Contextual {
 /// A grapheme cluster (what is displayed as a single character) of a line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cluster {
-    /// Position in the line, in bytes.
+    /// Position in the text it was built from (see [`clusters()`]), in bytes.
     pub range: Range<usize>,
     pub content: Content,
-    /// Whether it is part of the highlighted whitespace
+    /// Whether it is part of the highlighted whitespace (see [`HighlightedWhitespace`]).
     pub highlighted_whitespace: bool,
 }
 
@@ -136,9 +142,9 @@ impl Cluster {
 
     /// Display the cluster after `pieces`.
     ///
-    /// Unless highlighted, the only space or U+2800 around a break is not displayed: its column is
-    /// left blank. A tab is cut to the `room` columns left in the text area, and displayed alone
-    /// (without the spaces up to the next tab stop) before a break.
+    /// Unless highlighted or in a path component, the only space or U+2800 around a break is not
+    /// displayed: its column is left blank. A tab is cut to the `room` columns left in the text
+    /// area, and displayed alone (without the spaces up to the next tab stop) before a break.
     pub fn push(&self, pieces: &mut Pieces, wrap: Wrap, room: usize) {
         let whitespace = match &self.content {
             Content::Fixed(fixed) => {
@@ -164,12 +170,13 @@ impl Cluster {
             (Contextual::Space | Contextual::BrailleBlank, Wrap::Single) => {
                 pieces.push(Kind::Text, " ")
             }
-            (Contextual::Space, Wrap::BeforeBreak) => {
+            (Contextual::Space, Wrap::BeforeBreak | Wrap::PathComponentBreak) => {
                 pieces.push_char(replaced, TRAILING_AND_WRAPPING_SPACE)
             }
-            (Contextual::BrailleBlank, Wrap::BeforeBreak | Wrap::AfterBreak) => {
-                pieces.push_char(replaced, TRAILING_AND_WRAPPING_BRAILLE_BLANK)
-            }
+            (
+                Contextual::BrailleBlank,
+                Wrap::BeforeBreak | Wrap::AfterBreak | Wrap::PathComponentBreak,
+            ) => pieces.push_char(replaced, TRAILING_AND_WRAPPING_BRAILLE_BLANK),
             (Contextual::Space, Wrap::None | Wrap::AfterBreak) => pieces.push(Kind::Text, " "),
             (Contextual::BrailleBlank, Wrap::None) => pieces.push(Kind::Text, BRAILLE_BLANK),
             (Contextual::Tab, _) => {
@@ -295,26 +302,43 @@ fn fixed(cluster: &str, highlighted_whitespace: bool) -> Vec<Piece> {
     pieces.pieces
 }
 
-/// The clusters of `line`, its trailing whitespace being highlighted.
+/// Which whitespace of a text is highlighted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HighlightedWhitespace {
+    /// The whitespace ending the text.
+    Trailing,
+    /// The whitespace at both ends of the text.
+    LeadingAndTrailing,
+}
+
+/// The clusters of `text`, its `highlighted` whitespace being marked as such.
 ///
-/// A carriage return ending `line` is a cluster replaced by `␍` if `final_cr` is
+/// A carriage return ending `text` is a cluster replaced by `␍` if `final_cr` is
 /// [`FinalCr::Shown`], and is hidden (not part of any cluster) otherwise.
-pub fn clusters(line: &str, final_cr: FinalCr) -> Vec<Cluster> {
-    let (content, ends_with_cr) = match line.strip_suffix('\r') {
+pub fn clusters(text: &str, final_cr: FinalCr, highlighted: HighlightedWhitespace) -> Vec<Cluster> {
+    let (content, ends_with_cr) = match text.strip_suffix('\r') {
         Some(content) => (content, true),
-        None => (line, false),
+        None => (text, false),
     };
     // Grapheme clusters (what is displayed as a single character), with their position in the
-    // line.
+    // text.
     let graphemes: Vec<(usize, &str)> = content.grapheme_indices(/* is_extended */ true).collect();
+    let is_whitespace_cluster =
+        |(_, grapheme): &&(usize, &str)| grapheme.chars().all(is_whitespace);
+    let leading_len = match highlighted {
+        HighlightedWhitespace::Trailing => 0,
+        HighlightedWhitespace::LeadingAndTrailing => {
+            graphemes.iter().take_while(is_whitespace_cluster).count()
+        }
+    };
     let trailing_len = graphemes
         .iter()
         .rev()
-        .take_while(|(_, grapheme)| grapheme.chars().all(is_whitespace))
+        .take_while(is_whitespace_cluster)
         .count();
     let trailing_start = graphemes.len() - trailing_len;
     let clusters = graphemes.iter().enumerate().map(|(i, &(start, grapheme))| {
-        let highlighted_whitespace = i >= trailing_start;
+        let highlighted_whitespace = i < leading_len || i >= trailing_start;
         let content = match grapheme {
             " " => Content::Contextual(Contextual::Space),
             BRAILLE_BLANK => Content::Contextual(Contextual::BrailleBlank),
@@ -329,7 +353,7 @@ pub fn clusters(line: &str, final_cr: FinalCr) -> Vec<Cluster> {
     });
     let final_cr = if ends_with_cr && final_cr == FinalCr::Shown {
         Some(Cluster {
-            range: content.len()..line.len(),
+            range: content.len()..text.len(),
             content: Content::Fixed(vec![Piece {
                 text: CARRIAGE_RETURN.to_string(),
                 kind: Kind::Replacement,
@@ -352,7 +376,7 @@ mod tests {
     /// otherwise.
     fn display(line: &str, final_cr: FinalCr) -> Vec<Piece> {
         let mut pieces = Pieces::new(/* column */ 0);
-        for cluster in &clusters(line, final_cr) {
+        for cluster in &clusters(line, final_cr, HighlightedWhitespace::Trailing) {
             cluster.push(&mut pieces, Wrap::None, usize::MAX);
         }
         pieces.pieces
@@ -366,7 +390,8 @@ mod tests {
         wrap: Wrap,
         room: usize,
     ) -> Vec<Piece> {
-        let cluster = clusters(line, FinalCr::Shown).remove(cluster_index);
+        let cluster =
+            clusters(line, FinalCr::Shown, HighlightedWhitespace::Trailing).remove(cluster_index);
         let mut pieces = Pieces::new(column);
         cluster.push(&mut pieces, wrap, room);
         pieces.pieces
@@ -450,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn space_is_dimmed_before_a_break() {
+    fn space_is_dimmed_before_a_break_and_next_to_a_break_in_a_path_component() {
         let space = |wrap| {
             cluster_at(
                 " x",
@@ -469,6 +494,10 @@ mod tests {
         );
         // Not displayed: its column is left blank.
         assert_eq!(space(Wrap::Single), [piece(" ", Kind::Text)]);
+        assert_eq!(
+            space(Wrap::PathComponentBreak),
+            [piece("∙", Kind::DimmedWhitespace)]
+        );
     }
 
     #[test]
@@ -493,6 +522,10 @@ mod tests {
         );
         // Not displayed: its column is left blank.
         assert_eq!(blank(Wrap::Single), [piece(" ", Kind::Text)]);
+        assert_eq!(
+            blank(Wrap::PathComponentBreak),
+            [piece("∙", Kind::DimmedWhitespace)]
+        );
     }
 
     #[test]
@@ -584,7 +617,7 @@ mod tests {
 
     #[test]
     fn cluster_width_depends_on_the_column_for_tabs_only() {
-        let clusters = clusters("日\t", FinalCr::Shown);
+        let clusters = clusters("日\t", FinalCr::Shown, HighlightedWhitespace::Trailing);
         assert_eq!(clusters[0].width(/* column */ 3), 2);
         assert_eq!(clusters[1].width(/* column */ 0), 4);
         assert_eq!(clusters[1].width(/* column */ 3), 1);
@@ -600,7 +633,7 @@ mod tests {
         ];
         // The whitespace is the first cluster, and is trailing whitespace in the last three lines.
         for line in [" x", "\u{2800}x", "\tx", " ", "\u{2800}", "\t"] {
-            let cluster = clusters(line, FinalCr::Shown).remove(0);
+            let cluster = clusters(line, FinalCr::Shown, HighlightedWhitespace::Trailing).remove(0);
             for column in 0..TAB_WIDTH {
                 for wrap in wraps {
                     let mut pieces = Pieces::new(column);
@@ -619,6 +652,24 @@ mod tests {
         assert_eq!(
             display(" \t\u{a0} ", FinalCr::Shown),
             [piece("∙⇥  ⍽∙", Kind::HighlightedWhitespace)]
+        );
+    }
+
+    #[test]
+    fn leading_whitespace_is_highlighted_only_if_requested() {
+        let highlighted = |highlighted| -> Vec<_> {
+            clusters(" a b\u{2800}", FinalCr::Shown, highlighted)
+                .iter()
+                .map(|cluster| cluster.highlighted_whitespace)
+                .collect()
+        };
+        assert_eq!(
+            highlighted(HighlightedWhitespace::Trailing),
+            [false, false, false, false, true]
+        );
+        assert_eq!(
+            highlighted(HighlightedWhitespace::LeadingAndTrailing),
+            [true, false, false, false, true]
         );
     }
 

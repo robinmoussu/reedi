@@ -44,7 +44,9 @@ pub struct Theme {
     pub dimmed_whitespace: Style,
     /// The text displayed instead of a diff (`no changes`).
     pub placeholder: Style,
-    /// Replacements of the highlighted whitespace, including the tabs.
+    /// Replacements of the highlighted whitespace (see
+    /// [`HighlightedWhitespace`](crate::invisible::HighlightedWhitespace)), including the
+    /// tabs.
     pub highlighted_whitespace: Style,
     /// Replacements of the other invisible characters.
     pub invisible: Style,

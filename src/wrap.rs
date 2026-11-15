@@ -12,25 +12,36 @@ use crate::invisible::Cluster;
 use crate::invisible::Content;
 use crate::invisible::Contextual;
 use crate::invisible::FinalCr;
+use crate::invisible::HighlightedWhitespace;
 use crate::invisible::Piece;
 use crate::invisible::Pieces;
 use crate::invisible::Wrap;
+
+/// What a segment displays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentKind {
+    /// Part of the data, whose trailing whitespace is highlighted.
+    Data,
+    /// Text structuring the display of the data (like the spaces between the fields of the
+    /// header), not part of the data. It contains no invisible character other than spaces, which
+    /// are never replaced, even next to a break or at the end of the line.
+    Markup,
+    /// A folder or a file name of a path, whose leading and trailing whitespace is highlighted. Its
+    /// spaces and U+2800 next to a break are always replaced, even alone.
+    PathComponent,
+}
 
 /// A part of a line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Segment<'a> {
     pub text: &'a str,
-    /// Whether the segment is markup: text structuring the display of the data (like the spaces
-    /// between the fields of the header), not part of the data. It contains no invisible
-    /// character other than spaces, which are never replaced, even next to a break or at the end
-    /// of the line.
-    pub markup: bool,
+    pub kind: SegmentKind,
 }
 
 impl<'a> Segment<'a> {
-    /// A segment that is not markup.
+    /// A segment that is part of the data.
     pub fn new(text: &'a str) -> Self {
-        Self { text, markup: false }
+        Self { text, kind: SegmentKind::Data }
     }
 }
 
@@ -44,6 +55,16 @@ pub struct TextRow {
     pub columns_count: usize,
     /// The displayed pieces, with the index of their segment.
     pub pieces: Vec<(usize, Piece)>,
+}
+
+/// Where a line can be broken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Breaks {
+    /// At the break opportunities of the Unicode line breaking algorithm (UAX #14), computed on
+    /// the original text.
+    Words,
+    /// Between any two grapheme clusters.
+    Anywhere,
 }
 
 /// A text area too narrow to display a grapheme cluster of its line.
@@ -71,8 +92,7 @@ impl Error for TooNarrow {}
 #[derive(Debug, Clone)]
 struct Item {
     segment_index: usize,
-    /// See [`Segment::markup`].
-    markup: bool,
+    kind: SegmentKind,
     cluster: Cluster,
     /// Whether there is a break opportunity right after it.
     break_after: bool,
@@ -227,8 +247,13 @@ impl RowBreaks {
         let single = |blanks: Option<usize>| blanks == Some(1) && !item.cluster.is_tab();
         let ends_row = i >= self.ending_whitespace_start;
         let starts_row = i < self.leading_whitespace_end;
-        if item.markup {
+        if item.kind == SegmentKind::Markup {
             Wrap::None
+        } else if item.kind == SegmentKind::PathComponent
+            && (ends_row || starts_row)
+            && !item.cluster.is_tab()
+        {
+            Wrap::PathComponentBreak
         } else if ends_row && single(self.blanks_after) {
             Wrap::Single
         } else if ends_row && (!item.cluster.is_tab() || i + 1 == row.len()) {
@@ -291,7 +316,7 @@ fn text_row(
 /// Width of the narrowest text area in which `line` can be wrapped: the widest of its clusters (a
 /// tab fits in a single column), and at least 1.
 pub fn min_width(line: &str, final_cr: FinalCr) -> usize {
-    invisible::clusters(line, final_cr)
+    invisible::clusters(line, final_cr, HighlightedWhitespace::Trailing)
         .iter()
         .map(|cluster| {
             if cluster.is_tab() {
@@ -303,14 +328,14 @@ pub fn min_width(line: &str, final_cr: FinalCr) -> usize {
         .fold(1, usize::max)
 }
 
-/// Display the line made of `segments` on rows of `width` columns, with its invisible characters
-/// replaced. A line always has at least one row.
+/// Display the line made of `segments` on rows of `width` columns, broken at `breaks`, with its
+/// invisible characters replaced. A line always has at least one row.
 ///
-/// The line is broken at the break opportunities of the Unicode line breaking algorithm (UAX
-/// #14), computed on the original text. A carriage return ending a segment is replaced if
-/// `final_cr` is [`FinalCr::Shown`], and hidden otherwise.
+/// A carriage return ending a segment is replaced if `final_cr` is [`FinalCr::Shown`], and hidden
+/// otherwise.
 pub fn wrap(
     segments: &[Segment],
+    breaks: Breaks,
     final_cr: FinalCr,
     width: usize,
 ) -> Result<Vec<TextRow>, TooNarrow> {
@@ -322,10 +347,12 @@ pub fn wrap(
         })
         .collect();
     let text = texts.concat();
-    let opportunities: Vec<usize> =
-        LineSegmenter::new_for_non_complex_scripts(LineBreakOptions::default())
+    let opportunities: Vec<usize> = match breaks {
+        Breaks::Words => LineSegmenter::new_for_non_complex_scripts(LineBreakOptions::default())
             .segment_str(&text)
-            .collect();
+            .collect(),
+        Breaks::Anywhere => Vec::new(),
+    };
     let items: Vec<Item> = texts
         .iter()
         .enumerate()
@@ -333,7 +360,11 @@ pub fn wrap(
             let start = *offset;
             *offset += text.len();
             // The hidden carriage returns are already removed.
-            let clusters = invisible::clusters(text, FinalCr::Shown);
+            let highlighted = match segments[segment_index].kind {
+                SegmentKind::Data | SegmentKind::Markup => HighlightedWhitespace::Trailing,
+                SegmentKind::PathComponent => HighlightedWhitespace::LeadingAndTrailing,
+            };
+            let clusters = invisible::clusters(text, FinalCr::Shown, highlighted);
             Some(
                 clusters
                     .into_iter()
@@ -343,14 +374,16 @@ pub fn wrap(
         .flatten()
         .map(|(segment_index, start, cluster)| {
             let range = start + cluster.range.start..start + cluster.range.end;
+            let kind = segments[segment_index].kind;
             Item {
                 segment_index,
-                markup: segments[segment_index].markup,
-                break_after: opportunities.binary_search(&range.end).is_ok(),
+                kind,
+                break_after: breaks == Breaks::Anywhere
+                    || opportunities.binary_search(&range.end).is_ok(),
                 cluster: Cluster {
                     range,
                     highlighted_whitespace: cluster.highlighted_whitespace
-                        && !segments[segment_index].markup,
+                        && kind != SegmentKind::Markup,
                     ..cluster
                 },
             }
@@ -382,23 +415,26 @@ mod tests {
     use super::*;
     use crate::invisible::Kind;
 
-    /// The text of each row displaying `line`.
+    /// The text of each row displaying `line`, broken at words.
     fn rows(line: &str, width: usize) -> Vec<String> {
-        wrap(&[Segment::new(line)], FinalCr::Shown, width)
-            .unwrap()
-            .into_iter()
-            .map(|row| {
-                row.pieces
-                    .into_iter()
-                    .map(|(_, piece)| piece.text)
-                    .collect()
-            })
+        texts(&pieces(line, width))
+    }
+
+    /// The text of each row of `rows`.
+    fn texts(rows: &[Vec<Piece>]) -> Vec<String> {
+        rows.iter()
+            .map(|row| row.iter().map(|piece| piece.text.as_str()).collect())
             .collect()
     }
 
-    /// The pieces of each row displaying `line`.
+    /// The pieces of each row displaying `line`, broken at words.
     fn pieces(line: &str, width: usize) -> Vec<Vec<Piece>> {
-        wrap(&[Segment::new(line)], FinalCr::Shown, width)
+        segments_pieces(&[Segment::new(line)], Breaks::Words, width)
+    }
+
+    /// The pieces of each row displaying the line made of `segments`, broken at `breaks`.
+    fn segments_pieces(segments: &[Segment], breaks: Breaks, width: usize) -> Vec<Vec<Piece>> {
+        wrap(segments, breaks, FinalCr::Shown, width)
             .unwrap()
             .into_iter()
             .map(|row| row.pieces.into_iter().map(|(_, piece)| piece).collect())
@@ -583,7 +619,7 @@ mod tests {
     #[test]
     fn segments_are_wrapped_as_a_single_line() {
         let segments = ["abc ", "de", "f gh"].map(Segment::new);
-        let rows = wrap(&segments, FinalCr::Shown, /* width */ 8).unwrap();
+        let rows = wrap(&segments, Breaks::Words, FinalCr::Shown, /* width */ 8).unwrap();
         assert_eq!(
             rows,
             [
@@ -610,6 +646,7 @@ mod tests {
     fn tab_stops_are_counted_from_the_start_of_the_row_in_all_segments() {
         let rows = wrap(
             &["ab", "\tc"].map(Segment::new),
+            Breaks::Words,
             FinalCr::Shown,
             /* width */ 20,
         )
@@ -619,7 +656,7 @@ mod tests {
 
     /// A segment that is markup.
     fn markup(text: &str) -> Segment<'_> {
-        Segment { text, markup: true }
+        Segment { text, kind: SegmentKind::Markup }
     }
 
     #[test]
@@ -631,7 +668,7 @@ mod tests {
             markup("b  "),
             markup("  c "),
         ];
-        let rows = wrap(&segments, FinalCr::Shown, /* width */ 7).unwrap();
+        let rows = wrap(&segments, Breaks::Words, FinalCr::Shown, /* width */ 7).unwrap();
         assert_eq!(
             rows,
             [
@@ -654,10 +691,88 @@ mod tests {
         );
     }
 
+    /// A segment that is a folder or a file name of a path.
+    fn path_component(text: &str) -> Segment<'_> {
+        Segment { text, kind: SegmentKind::PathComponent }
+    }
+
+    #[test]
+    fn line_broken_anywhere_is_broken_inside_words() {
+        // Broken at words, the second row would start with `cdef`.
+        let rows = segments_pieces(
+            &[Segment::new("ab cdef")],
+            Breaks::Anywhere,
+            /* width */ 4,
+        );
+        assert_eq!(texts(&rows), ["ab c", "def"]);
+    }
+
+    #[test]
+    fn single_space_of_a_path_component_next_to_a_break_is_replaced() {
+        let before = segments_pieces(
+            &[path_component("ab cd")],
+            Breaks::Anywhere,
+            /* width */ 3,
+        );
+        assert_eq!(
+            before,
+            [
+                vec![piece("ab", Kind::Text), piece("∙", Kind::DimmedWhitespace)],
+                vec![piece("cd", Kind::Text)],
+            ]
+        );
+        let after = segments_pieces(
+            &[path_component("abc de")],
+            Breaks::Anywhere,
+            /* width */ 3,
+        );
+        assert_eq!(
+            after,
+            [
+                vec![piece("abc", Kind::Text)],
+                vec![piece("∙", Kind::DimmedWhitespace), piece("de", Kind::Text)],
+            ]
+        );
+    }
+
+    #[test]
+    fn whitespace_at_both_ends_of_a_path_component_is_highlighted() {
+        let rows = segments_pieces(
+            &[path_component(" a b ")],
+            Breaks::Words,
+            /* width */ 10,
+        );
+        assert_eq!(
+            rows,
+            [[
+                piece("∙", Kind::HighlightedWhitespace),
+                piece("a b", Kind::Text),
+                piece("∙", Kind::HighlightedWhitespace),
+            ]]
+        );
+    }
+
+    #[test]
+    fn highlighted_whitespace_of_a_path_component_next_to_a_break_stays_highlighted() {
+        let rows = segments_pieces(
+            &[path_component("abc ")],
+            Breaks::Anywhere,
+            /* width */ 3,
+        );
+        assert_eq!(
+            rows,
+            [
+                vec![piece("abc", Kind::Text)],
+                vec![piece("∙", Kind::HighlightedWhitespace)],
+            ]
+        );
+    }
+
     #[test]
     fn rows_start_at_their_first_character() {
         let starts: Vec<_> = wrap(
             &[Segment::new("the quick brown")],
+            Breaks::Words,
             FinalCr::Shown,
             /* width */ 10,
         )
@@ -671,7 +786,13 @@ mod tests {
     #[test]
     fn width_of_a_row_is_counted_per_grapheme_cluster() {
         // As a whole, `unicode-width` counts the lam-alef ligature `لا` as 1 column.
-        let rows = wrap(&[Segment::new("سلام")], FinalCr::Shown, /* width */ 10).unwrap();
+        let rows = wrap(
+            &[Segment::new("سلام")],
+            Breaks::Words,
+            FinalCr::Shown,
+            /* width */ 10,
+        )
+        .unwrap();
         assert_eq!(rows[0].columns_count, 4);
     }
 
@@ -679,25 +800,54 @@ mod tests {
     fn hidden_carriage_return_is_not_displayed() {
         let rows = wrap(
             &[Segment::new("ab\r")],
+            Breaks::Words,
             FinalCr::Hidden,
             /* width */ 10,
         )
         .unwrap();
         assert_eq!(rows[0].pieces, [(0, piece("ab", Kind::Text))]);
-        let rows = wrap(&[Segment::new("ab\r")], FinalCr::Shown, /* width */ 10).unwrap();
+        let rows = wrap(
+            &[Segment::new("ab\r")],
+            Breaks::Words,
+            FinalCr::Shown,
+            /* width */ 10,
+        )
+        .unwrap();
         assert_eq!(rows[0].pieces[1], (0, piece("␍", Kind::Replacement)));
     }
 
     #[test]
     fn too_narrow_text_area_is_an_error() {
-        let error = wrap(&[Segment::new("a日")], FinalCr::Shown, /* width */ 1).unwrap_err();
+        let error = wrap(
+            &[Segment::new("a日")],
+            Breaks::Words,
+            FinalCr::Shown,
+            /* width */ 1,
+        )
+        .unwrap_err();
         assert_eq!(error, TooNarrow { width: 1, cluster: "日".to_string() });
         assert_eq!(
             error.to_string(),
             "the terminal is too narrow to display \"日\" in a text area of 1 column"
         );
-        assert!(wrap(&[Segment::new("a")], FinalCr::Shown, /* width */ 0).is_err());
-        assert!(wrap(&[Segment::new(" ")], FinalCr::Shown, /* width */ 0).is_err());
+        assert!(
+            wrap(
+                &[Segment::new("a")],
+                Breaks::Words,
+                FinalCr::Shown,
+                /* width */ 0
+            )
+            .is_err()
+        );
+        assert!(
+            wrap(
+                &[Segment::new(" ")],
+                Breaks::Words,
+                FinalCr::Shown,
+                /* width */ 0
+            )
+            .is_err()
+        );
     }
 
     #[test]

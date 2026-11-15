@@ -44,7 +44,9 @@ use crate::settings::TAB_WIDTH;
 use crate::theme::Theme;
 use crate::viewport::Viewport;
 use crate::wrap;
+use crate::wrap::Breaks;
 use crate::wrap::Segment;
+use crate::wrap::SegmentKind;
 use crate::wrap::TooNarrow;
 
 /// Displayed in the last column of each half of a diff row followed by a continuation row of the
@@ -282,8 +284,7 @@ pub fn find(rows: &[Row], anchor: Anchor) -> usize {
 struct Part {
     text: String,
     style: Style,
-    /// See [`Segment::markup`].
-    markup: bool,
+    kind: SegmentKind,
 }
 
 impl Part {
@@ -292,16 +293,25 @@ impl Part {
         Self {
             text: text.to_string(),
             style,
-            markup: false,
+            kind: SegmentKind::Data,
         }
     }
 
-    /// Markup (see [`Segment::markup`]): separators, labels and messages.
+    /// Markup (see [`SegmentKind::Markup`]): separators, labels and messages.
     fn markup(text: &str, style: Style) -> Self {
         Self {
             text: text.to_string(),
             style,
-            markup: true,
+            kind: SegmentKind::Markup,
+        }
+    }
+
+    /// A folder or a file name of a path.
+    fn path_component(text: &str, style: Style) -> Self {
+        Self {
+            text: text.to_string(),
+            style,
+            kind: SegmentKind::PathComponent,
         }
     }
 }
@@ -321,19 +331,20 @@ fn kind_style(kind: Kind, theme: &Theme) -> Style {
 /// replaced, the style of each replacement being the style of its part, patched with the style of
 /// its kind.
 ///
-/// A carriage return ending a part is replaced if `final_cr` is [`FinalCr::Shown`], and hidden
-/// otherwise.
+/// The line is broken at `breaks`. A carriage return ending a part is replaced if `final_cr` is
+/// [`FinalCr::Shown`], and hidden otherwise.
 fn wrapped(
     parts: &[Part],
+    breaks: Breaks,
     final_cr: FinalCr,
     width: usize,
     theme: &Theme,
 ) -> Result<Vec<(usize, usize, Vec<Span<'static>>)>, TooNarrow> {
     let segments: Vec<_> = parts
         .iter()
-        .map(|part| Segment { text: &part.text, markup: part.markup })
+        .map(|part| Segment { text: &part.text, kind: part.kind })
         .collect();
-    let rows = wrap::wrap(&segments, final_cr, width)?;
+    let rows = wrap::wrap(&segments, breaks, final_cr, width)?;
     Ok(rows
         .into_iter()
         .map(|row| {
@@ -508,7 +519,7 @@ fn half_rows(
     let text_width = text_width(width, number_width);
     let background = line_style(line.kind, theme);
     let code = Part::content(&line.text, background);
-    let rows = wrapped(&[code], final_cr, text_width, theme)?;
+    let rows = wrapped(&[code], Breaks::Words, final_cr, text_width, theme)?;
     let last = rows.len() - 1;
     Ok(rows
         .into_iter()
@@ -547,6 +558,7 @@ fn missing_newline_rows(
     let message = Part::markup(MISSING_NEWLINE, theme.error);
     let rows = wrapped(
         &[message],
+        Breaks::Words,
         FinalCr::Shown,
         text_width(width, number_width),
         theme,
@@ -615,17 +627,17 @@ fn final_cr(file: &FileDiff) -> FinalCr {
 /// no hunks because of its content.
 fn file_parts(file: &FileDiff, theme: &Theme) -> Vec<Part> {
     // Invalid UTF-8 is replaced by `�`.
-    let path = Part::content(&file.path.to_str_lossy(), theme.file);
-    let name = match &file.change {
-        FileChange::Modified => vec![path],
-        FileChange::Added => vec![Part::markup("added: ", theme.file), path],
-        FileChange::Deleted => vec![Part::markup("removed: ", theme.file), path],
-        FileChange::Renamed { from } => vec![
-            Part::markup("renamed: ", theme.file),
-            Part::content(&from.to_str_lossy(), theme.file),
-            Part::markup(" ⟶   ", theme.file),
-            path,
-        ],
+    let path = path_component_parts(&file.path.to_str_lossy(), theme.file);
+    let label = |label: &str| iter::once(Part::markup(label, theme.file));
+    let name: Vec<_> = match &file.change {
+        FileChange::Modified => path,
+        FileChange::Added => label("added: ").chain(path).collect(),
+        FileChange::Deleted => label("removed: ").chain(path).collect(),
+        FileChange::Renamed { from } => label("renamed: ")
+            .chain(path_component_parts(&from.to_str_lossy(), theme.file))
+            .chain(iter::once(Part::markup(" ⟶   ", theme.file)))
+            .chain(path)
+            .collect(),
     };
     let suffix = match file.content {
         FileContentType::Text => None,
@@ -634,6 +646,26 @@ fn file_parts(file: &FileDiff, theme: &Theme) -> Vec<Part> {
         FileContentType::Unmerged => Some(Part::markup(" (unmerged path)", theme.file)),
     };
     name.into_iter().chain(suffix).collect()
+}
+
+const PATH_SEPARATOR: &str = "/";
+
+/// The folders and the file name of `path`, each in its own part (with the `/` between them in
+/// their own parts), so that the whitespace at both ends of each of them is highlighted.
+fn path_component_parts(path: &str, style: Style) -> Vec<Part> {
+    path.split(PATH_SEPARATOR)
+        .enumerate()
+        .flat_map(|(i, component)| {
+            let separator = if i == 0 {
+                None
+            } else {
+                Some(Part::content(PATH_SEPARATOR, style))
+            };
+            separator
+                .into_iter()
+                .chain(iter::once(Part::path_component(component, style)))
+        })
+        .collect()
 }
 
 /// Why the rows could not be built.
@@ -706,10 +738,10 @@ impl<'a> Rows<'a> {
         self.single(Content::Rule(style));
     }
 
-    /// Add a line made of `parts`, using the whole width. A carriage return ending a part is
-    /// replaced.
-    fn text(&mut self, parts: &[Part]) -> Result<(), TooNarrow> {
-        let rows = wrapped(parts, FinalCr::Shown, self.width.into(), self.theme)?;
+    /// Add a line made of `parts`, using the whole width, broken at `breaks`. A carriage return
+    /// ending a part is replaced.
+    fn text(&mut self, parts: &[Part], breaks: Breaks) -> Result<(), TooNarrow> {
+        let rows = wrapped(parts, breaks, FinalCr::Shown, self.width.into(), self.theme)?;
         let line_index = self.lines_count;
         let revision_index = self.revision_index;
         self.rows
@@ -741,7 +773,10 @@ impl<'a> Rows<'a> {
                 self.lines_count += len;
             }
             Err(_) => {
-                self.text(&[Part::markup(HUNK_TOO_NARROW, self.theme.error)])?;
+                self.text(
+                    &[Part::markup(HUNK_TOO_NARROW, self.theme.error)],
+                    Breaks::Words,
+                )?;
                 // The error message takes the index of the first line.
                 self.lines_count += len.saturating_sub(1);
             }
@@ -826,7 +861,7 @@ impl<'a> Rows<'a> {
     fn file(&mut self, file: &FileDiff) -> Result<(), RowsError> {
         let final_cr = final_cr(file);
         self.blank();
-        self.text(&file_parts(file, self.theme))?;
+        self.text(&file_parts(file, self.theme), Breaks::Anywhere)?;
         self.rule(self.theme.file);
         file.hunks.iter().enumerate().try_for_each(|(i, hunk)| {
             if i > 0 {
@@ -844,20 +879,23 @@ impl<'a> Rows<'a> {
         self.blank();
         // Unlike `str::lines()`, a carriage return ending a line is kept, to be displayed.
         body.split_terminator('\n')
-            .try_for_each(|line| self.text(&[Part::content(line, Style::new())]))
+            .try_for_each(|line| self.text(&[Part::content(line, Style::new())], Breaks::Words))
     }
 
     /// Add the diff of each of `files`, or `NO_CHANGES` if there are none.
     fn diff(&mut self, files: &[FileDiff]) -> Result<(), RowsError> {
         if files.is_empty() {
             self.blank();
-            self.text(&[Part::markup(NO_CHANGES, self.theme.placeholder)])?;
+            self.text(
+                &[Part::markup(NO_CHANGES, self.theme.placeholder)],
+                Breaks::Words,
+            )?;
         }
         files.iter().try_for_each(|file| self.file(file))
     }
 
     fn commit(&mut self, commit: &Commit) -> Result<(), RowsError> {
-        self.text(&header_parts(commit, self.theme, self.dates))?;
+        self.text(&header_parts(commit, self.theme, self.dates), Breaks::Words)?;
         self.body(&commit.body)?;
         // Like `git log -p`, merge commits have no diff.
         if commit.is_merge() {
@@ -877,13 +915,16 @@ impl<'a> Rows<'a> {
             header.push(Part::markup(" ", Style::new()));
             header.push(Part::content(&index.subject, Style::new()));
         }
-        self.text(&header)?;
+        self.text(&header, Breaks::Words)?;
         self.body(&index.body)?;
         self.diff(&index.files)
     }
 
     fn working_directory(&mut self, working_directory: &WorkingDirectory) -> Result<(), RowsError> {
-        self.text(&[Part::markup("working directory", self.theme.hash)])?;
+        self.text(
+            &[Part::markup("working directory", self.theme.hash)],
+            Breaks::Words,
+        )?;
         self.diff(&working_directory.files)
     }
 
@@ -1070,7 +1111,13 @@ impl Widget for ErrorModalView<'_> {
             .iter()
             .map(|line| {
                 let line = Part::content(line, Style::new());
-                wrapped(&[line], FinalCr::Shown, max_width, self.theme)
+                wrapped(
+                    &[line],
+                    Breaks::Words,
+                    FinalCr::Shown,
+                    max_width,
+                    self.theme,
+                )
             })
             .collect::<Result<Vec<_>, _>>()
             .map(|rows| rows.into_iter().flatten().collect())
@@ -1381,6 +1428,7 @@ mod tests {
     fn header(commit: &Commit, theme: &Theme) -> Line<'static> {
         let (_, _, spans) = wrapped(
             &header_parts(commit, theme, &DateDisplay::for_snapshots()),
+            Breaks::Words,
             FinalCr::Shown,
             /* width */ 1000,
             theme,
@@ -2459,20 +2507,61 @@ mod tests {
         assert_eq!((rows[0].line_index, rows[1].line_index), (0, 0));
         // The first line of the body.
         assert_eq!(rows[3].line_index, rows[4].line_index);
+        // The file name is wider than the screen.
         let mut commit = fake::scrolloff_rename();
         file_at_mut(&mut commit, "src/config.rs").path =
             "src/a/very/long/path/to/the/config.rs".into();
         let rows = commit_rows(&commit, /* width */ 20, &Theme::monochrome());
-        let names: Vec<_> = rows
-            .iter()
-            .filter(|row| row.line_index == rows[0].line_index + 5)
-            .map(|row| text_of_row(row).0)
-            .collect();
-        assert_eq!(names, ["src/a/very/long/", "path/to/the/", "config.rs"]);
         assert!(rows.iter().all(|row| match &row.content {
             Content::Text(line) => !text(line).contains(WRAP_MARKER),
             _ => true,
         }));
+    }
+
+    /// The text of each row of the name of `file`.
+    fn file_name_rows(file: &FileDiff, width: u16) -> Vec<String> {
+        file_rows(file, width, &Theme::monochrome())
+            .iter()
+            .skip(1)
+            .take_while(|row| !matches!(row.content, Content::Rule(_)))
+            .map(|row| text_of_row(row).0)
+            .collect()
+    }
+
+    #[test]
+    fn file_name_is_broken_between_any_two_grapheme_clusters() {
+        let file = FileDiff {
+            path: "src/config.rs".into(),
+            change: FileChange::Renamed { from: "a b/c".into() },
+            content: FileContentType::Text,
+            hunks: Vec::new(),
+        };
+        // Neither between words nor at `/`, and the space before the break is replaced.
+        assert_eq!(
+            file_name_rows(&file, /* width */ 11),
+            ["renamed: a∙", "b/c ⟶   src", "/config.rs"]
+        );
+    }
+
+    #[test]
+    fn whitespace_at_both_ends_of_each_folder_and_file_name_is_highlighted() {
+        let file = FileDiff {
+            path: "new /a b".into(),
+            change: FileChange::Renamed { from: " old/ name".into() },
+            content: FileContentType::Text,
+            hunks: Vec::new(),
+        };
+        for theme in &themes() {
+            let Content::Text(name) = &file_rows(&file, /* width */ 110, theme)[1].content else {
+                panic!("the file name is not split");
+            };
+            // The spaces of the label and of the arrow are not replaced, nor the one inside `a b`.
+            assert_eq!(text(name), "renamed: ∙old/∙name ⟶   new∙/a b");
+            let highlighted = theme.file.patch(theme.highlighted_whitespace);
+            assert_eq!(styles_of(name, "∙"), [highlighted]);
+            assert_eq!(styles_of(name, "/∙"), [theme.file, highlighted]);
+            assert_eq!(styles_of(name, "w∙"), [theme.file, highlighted]);
+        }
     }
 
     #[test]

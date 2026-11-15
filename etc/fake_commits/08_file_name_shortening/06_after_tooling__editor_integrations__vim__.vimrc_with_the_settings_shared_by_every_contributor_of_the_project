@@ -1,0 +1,23 @@
+" Settings shared by every contributor of the project.
+set expandtab
+set shiftwidth=4
+set tabstop=4
+set textwidth=100
+set colorcolumn=+1
+set scrolloff=5
+set number
+set relativenumber
+set ignorecase
+set smartcase
+set incsearch
+set hlsearch
+set nowrap
+set list
+set listchars=tab:»\ ,trail:·
+set encoding=utf-8
+set fileformat=unix
+set nobackup
+set noswapfile
+set undofile
+set splitright
+set splitbelow

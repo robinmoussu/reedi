@@ -1,0 +1,34 @@
+#!/bin/sh
+# Rotate the encryption keys of the backups stored outside of the main datacenter.
+set -eu
+
+echo "rotating the keys of the backups of paris"
+rotate-keys --site paris --keep 2
+
+echo "rotating the keys of the backups of lyon"
+rotate-keys --site lyon --keep 2
+
+echo "rotating the keys of the backups of marseille"
+rotate-keys --site marseille --keep 2
+
+echo "rotating the keys of the backups of toulouse"
+rotate-keys --site toulouse --keep 2
+
+echo "rotating the keys of the backups of nantes"
+rotate-keys --site nantes --keep 2
+
+echo "rotating the keys of the backups of lille"
+rotate-keys --site lille --keep 2
+
+echo "rotating the keys of the backups of rennes"
+rotate-keys --site rennes --keep 2
+
+echo "rotating the keys of the backups of bordeaux"
+rotate-keys --site bordeaux --keep 2
+
+echo "rotating the keys of the backups of strasbourg"
+rotate-keys --site strasbourg --keep 2
+
+echo "rotating the keys of the backups of montpellier"
+rotate-keys --site montpellier --keep 2
+

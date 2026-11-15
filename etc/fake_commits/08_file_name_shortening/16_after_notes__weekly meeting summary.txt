@@ -1,0 +1,3 @@
+Attendees: everyone.
+Decision: keep the spaces in the names of the files.
+Action: remove the space ending the name of this file.
