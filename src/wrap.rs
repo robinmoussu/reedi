@@ -349,7 +349,8 @@ pub fn wrap(
                 break_after: opportunities.binary_search(&range.end).is_ok(),
                 cluster: Cluster {
                     range,
-                    trailing: cluster.trailing && !segments[segment_index].markup,
+                    highlighted_whitespace: cluster.highlighted_whitespace
+                        && !segments[segment_index].markup,
                     ..cluster
                 },
             }
@@ -478,7 +479,7 @@ mod tests {
             pieces("ab  ", /* width */ 3)[0],
             [
                 piece("ab", Kind::Text),
-                piece("∙", Kind::TrailingWhitespace)
+                piece("∙", Kind::HighlightedWhitespace)
             ]
         );
     }
@@ -508,9 +509,9 @@ mod tests {
             [
                 vec![
                     piece("ab", Kind::Text),
-                    piece("∙", Kind::TrailingWhitespace)
+                    piece("∙", Kind::HighlightedWhitespace)
                 ],
-                vec![piece("∙∙∙", Kind::TrailingWhitespace)],
+                vec![piece("∙∙∙", Kind::HighlightedWhitespace)],
             ]
         );
         assert_eq!(
@@ -518,9 +519,9 @@ mod tests {
             [
                 vec![
                     piece("ab", Kind::Text),
-                    piece("⇥", Kind::TrailingWhitespace)
+                    piece("⇥", Kind::HighlightedWhitespace)
                 ],
-                vec![piece("⇥   ", Kind::TrailingWhitespace)],
+                vec![piece("⇥   ", Kind::HighlightedWhitespace)],
             ]
         );
     }
@@ -591,7 +592,7 @@ mod tests {
                     columns_count: 8,
                     pieces: vec![
                         (0, piece("abc", Kind::Text)),
-                        (0, piece("∙", Kind::TrailingWhitespace)),
+                        (0, piece("∙", Kind::HighlightedWhitespace)),
                         (1, piece("de", Kind::Text)),
                         (2, piece("f ", Kind::Text)),
                     ],
@@ -639,7 +640,7 @@ mod tests {
                     columns_count: 7,
                     pieces: vec![
                         (0, piece("a", Kind::Text)),
-                        (0, piece("∙", Kind::TrailingWhitespace)),
+                        (0, piece("∙", Kind::HighlightedWhitespace)),
                         (1, piece(" (", Kind::Text)),
                         (2, piece("b  ", Kind::Text)),
                     ],

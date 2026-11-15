@@ -40,12 +40,12 @@ pub struct Theme {
     pub revision_separator: Style,
     pub error: Style,
     /// Replacements of the tabs, and of the spaces and U+2800 next to a break, that are not part
-    /// of the trailing whitespace.
+    /// of the highlighted whitespace.
     pub dimmed_whitespace: Style,
     /// The text displayed instead of a diff (`no changes`).
     pub placeholder: Style,
-    /// Replacements of the trailing whitespace, including the tabs.
-    pub trailing_whitespace: Style,
+    /// Replacements of the highlighted whitespace, including the tabs.
+    pub highlighted_whitespace: Style,
     /// Replacements of the other invisible characters.
     pub invisible: Style,
     /// The row of the cursor.
@@ -87,7 +87,7 @@ impl Theme {
             error: Style::new().fg(Color::LightRed).bold(),
             dimmed_whitespace: Style::new().fg(Color::DarkGray),
             placeholder: Style::new().fg(Color::DarkGray),
-            trailing_whitespace: Style::new().fg(Color::Red).bold(),
+            highlighted_whitespace: Style::new().fg(Color::Red).bold(),
             invisible: Style::new().fg(Color::Red).bold(),
             cursor: Style::new().bg(Color::Indexed(235)),
             review_mode: Style::new().fg(Color::Black).bg(Color::Blue).bold(),
@@ -141,7 +141,7 @@ impl Theme {
             error: Style::new().bold(),
             dimmed_whitespace: Style::new(),
             placeholder: Style::new(),
-            trailing_whitespace: Style::new().bold(),
+            highlighted_whitespace: Style::new().bold(),
             invisible: Style::new().bold(),
             cursor: Style::new().reversed(),
             review_mode: Style::new().reversed().bold(),

@@ -372,8 +372,8 @@ displaying the part of a line that did not fit on the previous row.
       up to the next tab stop). After a break they are displayed with the replacement character as
       usual (in all case `⇥` is displayed)
     - the replacement characters of non-trailing spaces, U+2800 and tabs use the dimmed whitespace
-      color, and those of trailing spaces, U+2800 and tabs always use the trailing whitespace color
-      (including before a break)
+      color, and those of trailing spaces, U+2800 and tabs always use the highlighted whitespace
+      color (including before a break)
     - other whitespaces are replaced and highlighted normally
 - Tab stops are counted from the start of the text area
 - Continuation rows start at the first column of the text area: the indentation of the line is not
@@ -388,7 +388,7 @@ displaying the part of a line that did not fit on the previous row.
 - The header, the commit message and the file names are wrapped the same way, but without `↵`
   marker. The header can be broken inside any field (like the subject, or between `tag:` and the
   tag name), each part keeping the color of its field. The spaces between the fields are never
-  replaced (nor colored as dimmed or trailing whitespace), even next to a break.
+  replaced (nor colored as dimmed or highlighted whitespace), even next to a break.
 - Right-to-left text is broken in memory order, like any other text, and then reordered by the
   terminal (see the beginning of this document). The right-to-left part of a text area can thus be
   displayed on either side of its left-to-right part. Rows are still left-aligned.
@@ -447,7 +447,7 @@ Settings
       `Default_Ignorable_Code_Point`): `⍰`
 - color of each invisible character replacements category:
     - dimmed whitespace: dim gray
-    - trailing whitespace: bold red
+    - highlighted whitespace: bold red
     - all other invisible characters: bold red
 - error color: bold bright red
 - current mode accent color:
@@ -585,7 +585,8 @@ Colorscheme
     - dimmed whitespace: non-trailing spaces before a line wrap, non-trailing U+2800 at the end or
       at the beginning of a row because of a line wrap (except the only space or U+2800 around a
       line wrap, which is not displayed), and non-trailing tabs (including before a line wrap)
-    - trailing whitespace (including U+2800, whitespace-only lines, and before a line wrap)
+    - highlighted whitespace: trailing whitespace (including U+2800, whitespace-only lines, and
+      before a line wrap)
     - all other invisible characters
 
 Line-level diff:

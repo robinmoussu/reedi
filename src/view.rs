@@ -311,7 +311,7 @@ fn kind_style(kind: Kind, theme: &Theme) -> Style {
     match kind {
         Kind::Text => Style::new(),
         Kind::DimmedWhitespace => theme.dimmed_whitespace,
-        Kind::TrailingWhitespace => theme.trailing_whitespace,
+        Kind::HighlightedWhitespace => theme.highlighted_whitespace,
         Kind::Replacement => theme.invisible,
     }
 }
@@ -3274,7 +3274,7 @@ mod tests {
             );
             assert_eq!(
                 style_in(&header, "∙"),
-                theme.local_branch.patch(theme.trailing_whitespace)
+                theme.local_branch.patch(theme.highlighted_whitespace)
             );
         }
     }
@@ -3288,7 +3288,7 @@ mod tests {
                 panic!("the body is not split");
             };
             assert_eq!(style_in(body, "⍽"), theme.invisible);
-            assert_eq!(style_in(body, "∙"), theme.trailing_whitespace);
+            assert_eq!(style_in(body, "∙"), theme.highlighted_whitespace);
             let makefile = file_rows(file_at(&commit, "Makefile"), /* width */ 110, theme);
             let Content::Split { right, .. } = &makefile[7].content else {
                 panic!("hunk rows are split");
@@ -3302,7 +3302,7 @@ mod tests {
             assert_eq!(text(right), "│ 2 │ all: build⇥ ");
             assert_eq!(
                 style_in(right, "⇥ "),
-                theme.trailing_whitespace.patch(theme.added_line)
+                theme.highlighted_whitespace.patch(theme.added_line)
             );
         }
     }

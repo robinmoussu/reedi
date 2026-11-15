@@ -13,10 +13,10 @@ use crate::settings::TAB_WIDTH;
 
 /// Replacement of a tab, followed by spaces up to the next tab stop.
 const TAB: char = '⇥';
-/// Replacement of the trailing spaces, and of the spaces before a break.
+/// Replacement of the highlighted spaces, and of the spaces before a break.
 const TRAILING_AND_WRAPPING_SPACE: char = '∙';
-/// Replacement of U+2800 (braille pattern blank) when it is part of the trailing whitespace, or at
-/// the end or at the beginning of a row because of a break.
+/// Replacement of U+2800 (braille pattern blank) when it is part of the highlighted whitespace, or
+/// at the end or at the beginning of a row because of a break.
 const TRAILING_AND_WRAPPING_BRAILLE_BLANK: char = '∙';
 /// Replacement of the spaces other than U+0020.
 const NON_ASCII_SPACE: char = '⍽';
@@ -52,10 +52,10 @@ pub enum Kind {
     /// Text displayed as is.
     Text,
     /// Replacement of a tab, or of a space or U+2800 next to a break, that is not part of the
-    /// trailing whitespace.
+    /// highlighted whitespace.
     DimmedWhitespace,
-    /// Replacement of the trailing whitespace, including the tabs.
-    TrailingWhitespace,
+    /// Replacement of the highlighted whitespace, including the tabs.
+    HighlightedWhitespace,
     /// Replacement of any other invisible character.
     Replacement,
 }
@@ -108,8 +108,8 @@ pub struct Cluster {
     /// Position in the line, in bytes.
     pub range: Range<usize>,
     pub content: Content,
-    /// Whether it is part of the trailing whitespace of the line.
-    pub trailing: bool,
+    /// Whether it is part of the highlighted whitespace
+    pub highlighted_whitespace: bool,
 }
 
 impl Cluster {
@@ -136,8 +136,8 @@ impl Cluster {
 
     /// Display the cluster after `pieces`.
     ///
-    /// Unless trailing, the only space or U+2800 around a break is not displayed: its column is left
-    /// blank. A tab is cut to the `room` columns left in the text area, and displayed alone
+    /// Unless highlighted, the only space or U+2800 around a break is not displayed: its column is
+    /// left blank. A tab is cut to the `room` columns left in the text area, and displayed alone
     /// (without the spaces up to the next tab stop) before a break.
     pub fn push(&self, pieces: &mut Pieces, wrap: Wrap, room: usize) {
         let whitespace = match &self.content {
@@ -149,16 +149,16 @@ impl Cluster {
             }
             Content::Contextual(whitespace) => *whitespace,
         };
-        let replaced = if self.trailing {
-            Kind::TrailingWhitespace
+        let replaced = if self.highlighted_whitespace {
+            Kind::HighlightedWhitespace
         } else {
             Kind::DimmedWhitespace
         };
         match (whitespace, wrap) {
-            (Contextual::Space, _) if self.trailing => {
+            (Contextual::Space, _) if self.highlighted_whitespace => {
                 pieces.push_char(replaced, TRAILING_AND_WRAPPING_SPACE)
             }
-            (Contextual::BrailleBlank, _) if self.trailing => {
+            (Contextual::BrailleBlank, _) if self.highlighted_whitespace => {
                 pieces.push_char(replaced, TRAILING_AND_WRAPPING_BRAILLE_BLANK)
             }
             (Contextual::Space | Contextual::BrailleBlank, Wrap::Single) => {
@@ -201,7 +201,7 @@ fn is_non_ascii_space(c: char) -> bool {
     )
 }
 
-/// Whether `c` can be part of the trailing whitespace.
+/// Whether `c` can be part of the highlighted whitespace.
 fn is_whitespace(c: char) -> bool {
     c == ' ' || c == '\t' || c == '\u{2800}' || is_non_ascii_space(c)
 }
@@ -271,7 +271,7 @@ impl Pieces {
 }
 
 /// The pieces displaying `cluster`, which is not whitespace.
-fn fixed(cluster: &str, trailing: bool) -> Vec<Piece> {
+fn fixed(cluster: &str, highlighted_whitespace: bool) -> Vec<Piece> {
     let in_emoji = cluster.chars().next().is_some_and(|c| EMOJI.contains(c));
     let shown: Vec<_> = cluster.chars().map(|c| shown(c, in_emoji)).collect();
     let mut pieces = Pieces::new(/* column */ 0);
@@ -280,8 +280,8 @@ fn fixed(cluster: &str, trailing: bool) -> Vec<Piece> {
         pieces.push(Kind::Text, cluster);
         return pieces.pieces;
     }
-    let replaced = if trailing {
-        Kind::TrailingWhitespace
+    let replaced = if highlighted_whitespace {
+        Kind::HighlightedWhitespace
     } else {
         Kind::Replacement
     };
@@ -295,7 +295,7 @@ fn fixed(cluster: &str, trailing: bool) -> Vec<Piece> {
     pieces.pieces
 }
 
-/// The clusters of `line`.
+/// The clusters of `line`, its trailing whitespace being highlighted.
 ///
 /// A carriage return ending `line` is a cluster replaced by `␍` if `final_cr` is
 /// [`FinalCr::Shown`], and is hidden (not part of any cluster) otherwise.
@@ -314,17 +314,17 @@ pub fn clusters(line: &str, final_cr: FinalCr) -> Vec<Cluster> {
         .count();
     let trailing_start = graphemes.len() - trailing_len;
     let clusters = graphemes.iter().enumerate().map(|(i, &(start, grapheme))| {
-        let trailing = i >= trailing_start;
+        let highlighted_whitespace = i >= trailing_start;
         let content = match grapheme {
             " " => Content::Contextual(Contextual::Space),
             BRAILLE_BLANK => Content::Contextual(Contextual::BrailleBlank),
             "\t" => Content::Contextual(Contextual::Tab),
-            _ => Content::Fixed(fixed(grapheme, trailing)),
+            _ => Content::Fixed(fixed(grapheme, highlighted_whitespace)),
         };
         Cluster {
             range: start..start + grapheme.len(),
             content,
-            trailing,
+            highlighted_whitespace,
         }
     });
     let final_cr = if ends_with_cr && final_cr == FinalCr::Shown {
@@ -334,7 +334,7 @@ pub fn clusters(line: &str, final_cr: FinalCr) -> Vec<Cluster> {
                 text: CARRIAGE_RETURN.to_string(),
                 kind: Kind::Replacement,
             }]),
-            trailing: false,
+            highlighted_whitespace: false,
         })
     } else {
         None
@@ -417,7 +417,7 @@ mod tests {
             [
                 piece("⇥   ", Kind::DimmedWhitespace),
                 piece("x", Kind::Text),
-                piece("⇥  ", Kind::TrailingWhitespace),
+                piece("⇥  ", Kind::HighlightedWhitespace),
             ]
         );
     }
@@ -428,7 +428,7 @@ mod tests {
             display("a b  ", FinalCr::Shown),
             [
                 piece("a b", Kind::Text),
-                piece("∙∙", Kind::TrailingWhitespace)
+                piece("∙∙", Kind::HighlightedWhitespace)
             ]
         );
     }
@@ -439,7 +439,7 @@ mod tests {
             display("a\u{2800} \u{2800}", FinalCr::Shown),
             [
                 piece("a", Kind::Text),
-                piece("∙∙∙", Kind::TrailingWhitespace)
+                piece("∙∙∙", Kind::HighlightedWhitespace)
             ]
         );
     }
@@ -505,7 +505,7 @@ mod tests {
                 Wrap::Single,
                 usize::MAX
             ),
-            [piece("∙", Kind::TrailingWhitespace)]
+            [piece("∙", Kind::HighlightedWhitespace)]
         );
     }
 
@@ -519,7 +519,7 @@ mod tests {
                 Wrap::BeforeBreak,
                 usize::MAX
             ),
-            [piece("∙", Kind::TrailingWhitespace)]
+            [piece("∙", Kind::HighlightedWhitespace)]
         );
         assert_eq!(
             cluster_at(
@@ -529,7 +529,7 @@ mod tests {
                 Wrap::AfterBreak,
                 usize::MAX
             ),
-            [piece("∙", Kind::TrailingWhitespace)]
+            [piece("∙", Kind::HighlightedWhitespace)]
         );
         assert_eq!(
             cluster_at(
@@ -539,7 +539,7 @@ mod tests {
                 Wrap::BeforeBreak,
                 usize::MAX
             ),
-            [piece("⇥", Kind::TrailingWhitespace)]
+            [piece("⇥", Kind::HighlightedWhitespace)]
         );
     }
 
@@ -618,7 +618,7 @@ mod tests {
     fn whitespace_only_lines_are_trailing_whitespace() {
         assert_eq!(
             display(" \t\u{a0} ", FinalCr::Shown),
-            [piece("∙⇥  ⍽∙", Kind::TrailingWhitespace)]
+            [piece("∙⇥  ⍽∙", Kind::HighlightedWhitespace)]
         );
     }
 
