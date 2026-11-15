@@ -50,7 +50,7 @@ use crate::wrap::TooNarrow;
 /// built.
 const REWRAP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-/// What a key press does in review mode.
+/// What a key press or a mouse event does in review mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
     Down,
@@ -71,6 +71,8 @@ enum Action {
     NextRevision,
     /// `K` or `ctrl+up`.
     PreviousRevision,
+    /// A left click on the row of this index.
+    SetCursor(usize),
     /// A digit of the number repeating the next command.
     Digit(u8),
     Quit,
@@ -171,6 +173,7 @@ fn navigate(
             len,
             height,
         ),
+        Action::SetCursor(row_index) => viewport.cursor = row_index,
         Action::Digit(_) | Action::Quit | Action::Suspend => {}
     }
 }
@@ -440,12 +443,13 @@ impl Mouse {
     }
 
     /// Apply `event` to `rows`, displayed from the row `viewport.top` with `widths`, on a screen
-    /// `height` rows tall (without the status bar). Return the scrolling triggered by the
-    /// wheel, if any.
+    /// `height` rows tall (without the status bar). Return the action triggered by the wheel or
+    /// by a left click on a row, if any.
     ///
     /// Pressing the left button on the separator of a split row starts dragging it: the separator
     /// follows the mouse until the button is released. The pointer has the
-    /// [`PointerShape::ColResize`] shape over the separator and while dragging it.
+    /// [`PointerShape::ColResize`] shape over the separator and while dragging it. Pressing it
+    /// anywhere else on a row sets the cursor on that row.
     fn apply(
         &mut self,
         event: &MouseEvent,
@@ -474,6 +478,11 @@ impl Mouse {
                 self.ratio = SplitRatio::new(event.column, widths.width);
                 self.dragged_ratio = None;
                 None
+            }
+            MouseEventKind::Down(MouseButton::Left)
+                if row < height && viewport.top + row < rows.len() =>
+            {
+                Some(Action::SetCursor(viewport.top + row))
             }
             MouseEventKind::ScrollDown => Some(Action::ScrollDown),
             MouseEventKind::ScrollUp => Some(Action::ScrollUp),
@@ -824,17 +833,21 @@ mod tests {
     /// Apply `event` to `mouse`, over `rows` displayed from the first row of a screen
     /// `MOUSE_SCREEN_WIDTH` × `MOUSE_SCREEN_HEIGHT`, with its split rows at their displayed ratio.
     fn apply(mouse: &mut Mouse, event: MouseEvent, rows: &[Row]) -> Option<Action> {
+        apply_at(mouse, event, rows, Viewport::default())
+    }
+
+    /// Like [`apply()`], with `rows` displayed from the row `viewport.top`.
+    fn apply_at(
+        mouse: &mut Mouse,
+        event: MouseEvent,
+        rows: &[Row],
+        viewport: Viewport,
+    ) -> Option<Action> {
         let widths = Widths {
             width: MOUSE_SCREEN_WIDTH,
             left_width: displayed_left_width(mouse),
         };
-        mouse.apply(
-            &event,
-            rows,
-            Viewport::default(),
-            widths,
-            MOUSE_SCREEN_HEIGHT,
-        )
+        mouse.apply(&event, rows, viewport, widths, MOUSE_SCREEN_HEIGHT)
     }
 
     fn displayed_left_width(mouse: &Mouse) -> u16 {
@@ -940,6 +953,56 @@ mod tests {
             &rows,
         );
         assert_eq!(mouse.pointer_shape, PointerShape::Default);
+    }
+
+    #[test]
+    fn left_click_on_a_row_sets_the_cursor_on_it() {
+        let (rows, _) = rows_with_a_split_row();
+        let viewport = Viewport { cursor: 0, top: 2 };
+        assert_eq!(
+            apply_at(
+                &mut Mouse::default(),
+                mouse_event(MouseEventKind::Down(LEFT), 0, 3),
+                &rows,
+                viewport
+            ),
+            Some(Action::SetCursor(5))
+        );
+    }
+
+    #[test]
+    fn left_click_on_the_separator_does_not_set_the_cursor() {
+        let (rows, split_row) = rows_with_a_split_row();
+        let mut mouse = Mouse::default();
+        let separator = displayed_left_width(&mouse);
+        assert_eq!(
+            apply(
+                &mut mouse,
+                mouse_event(MouseEventKind::Down(LEFT), separator, split_row),
+                &rows
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn left_click_below_the_last_row_or_on_the_status_bar_does_nothing() {
+        let (rows, _) = rows_with_a_split_row();
+        // Only the last row is displayed, on the first row of the screen.
+        let viewport = Viewport { cursor: 0, top: rows.len() - 1 };
+        let status_bar_row = u16::try_from(MOUSE_SCREEN_HEIGHT).unwrap();
+        for row in [1, status_bar_row] {
+            assert_eq!(
+                apply_at(
+                    &mut Mouse::default(),
+                    mouse_event(MouseEventKind::Down(LEFT), 0, row),
+                    &rows,
+                    viewport
+                ),
+                None,
+                "{row}"
+            );
+        }
     }
 
     #[test]
@@ -1287,6 +1350,21 @@ mod tests {
         let mut viewport = viewport;
         navigate(action, count, &mut viewport, rows, HEIGHT);
         viewport
+    }
+
+    #[test]
+    fn navigate_set_cursor_moves_the_cursor_without_moving_the_screen() {
+        let rows = rows_of_a_long_commit();
+        // The row 12 is the 3rd row of the screen, inside the scrolloff margin.
+        assert_eq!(
+            navigated(
+                &rows,
+                Action::SetCursor(12),
+                None,
+                Viewport { cursor: 20, top: 10 }
+            ),
+            Viewport { cursor: 12, top: 10 }
+        );
     }
 
     #[test]
