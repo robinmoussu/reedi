@@ -149,7 +149,7 @@ fn navigate(
         Action::ScrollDown => viewport.scroll_down(repeat_count, len, height),
         Action::ScrollUp => viewport.scroll_up(repeat_count, height),
         Action::HalfPageDown => viewport.half_page_down(repeat_count, len, height),
-        Action::HalfPageUp => viewport.half_page_up(repeat_count, len, height),
+        Action::HalfPageUp => viewport.half_page_up(repeat_count, height),
         Action::First => viewport.jump(repeat_count.saturating_sub(1), len, height),
         Action::Last => {
             let row_index = count.map_or(len.saturating_sub(1), |row_number| {
@@ -1604,26 +1604,32 @@ mod tests {
     }
 
     #[test]
-    fn navigate_half_page_stops_when_the_last_or_first_row_is_displayed() {
+    fn navigate_half_page_moves_the_cursor_alone_when_the_last_or_first_row_is_displayed() {
         let rows = rows_of_a_long_commit();
         let len = rows.len();
-        // The cursor is not moved anymore, even if it is not on the last row.
-        let end = Viewport { cursor: len - 5, top: len - HEIGHT };
-        assert_eq!(navigated(&rows, Action::HalfPageDown, None, end), end);
+        let top = len - HEIGHT;
         assert_eq!(
-            navigated(&rows, Action::HalfPageDown, /* count */ Some(3), end),
-            end
+            navigated(
+                &rows,
+                Action::HalfPageDown,
+                None,
+                Viewport { cursor: len - 15, top }
+            ),
+            Viewport { cursor: len - 5, top }
         );
-        let start = Viewport { cursor: 5, top: 0 };
-        assert_eq!(navigated(&rows, Action::HalfPageUp, None, start), start);
         assert_eq!(
-            navigated(&rows, Action::HalfPageUp, /* count */ Some(3), start),
-            start
+            navigated(
+                &rows,
+                Action::HalfPageUp,
+                None,
+                Viewport { cursor: 15, top: 0 }
+            ),
+            Viewport { cursor: 5, top: 0 }
         );
     }
 
     #[test]
-    fn navigate_half_page_moves_the_cursor_by_the_scrolled_rows_if_the_screen_stops() {
+    fn navigate_half_page_scrolls_by_fewer_rows_then_moves_the_cursor_alone_if_the_screen_stops() {
         let rows = rows_of_a_long_commit();
         let len = rows.len();
         // Only 3 rows are left below the screen.
@@ -1647,7 +1653,7 @@ mod tests {
                 Some(usize::MAX),
                 Viewport { cursor: 20, top: 10 }
             ),
-            Viewport { cursor: len - 10, top: len - HEIGHT }
+            Viewport { cursor: len - 1, top: len - HEIGHT }
         );
         assert_eq!(
             navigated(
@@ -1665,7 +1671,7 @@ mod tests {
                 Some(usize::MAX),
                 Viewport { cursor: 20, top: 10 }
             ),
-            Viewport { cursor: 10, top: 0 }
+            Viewport { cursor: 0, top: 0 }
         );
     }
 

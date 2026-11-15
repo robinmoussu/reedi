@@ -484,7 +484,7 @@ version 0.0.12: improved display
 - [x] Fix `ctrl+e`/`ctrl+y`
 - [x] Click set the cursor
 - [x] Fix `j`/`k` and `down`/`up`
-- [ ] Fix `d`/`u` and `ctrl+d`/`ctrl+u`
+- [x] Fix `d`/`u` and `ctrl+d`/`ctrl+u`
 - [ ] Fix resizing
 
 - [ ] The name of a file should stay at the top of the screen until the last line of that file is

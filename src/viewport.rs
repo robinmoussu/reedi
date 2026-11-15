@@ -8,6 +8,18 @@ fn scrolloff(height: usize) -> usize {
     SCROLLOFF.min(height.saturating_sub(1) / 2)
 }
 
+/// Number of rows the cursor moves alone during `count` moves of `half` rows, once the screen,
+/// moved by `scrolled_count` rows, cannot move anymore: each move scrolls the screen if it still
+/// can (possibly by fewer rows), otherwise it moves the cursor.
+fn cursor_only_count(scrolled_count: usize, half: usize, count: usize) -> usize {
+    if half == 0 {
+        return 0;
+    }
+    count
+        .saturating_sub(scrolled_count.div_ceil(half))
+        .saturating_mul(half)
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Viewport {
     /// Row of the cursor.
@@ -128,33 +140,32 @@ impl Viewport {
         self.up_by(lines_count);
     }
 
-    /// Move half the screen (`height / 2` rows, `count` times) down (`d`): the screen scrolls like
-    /// with [`Viewport::scroll_down()`], and the cursor moves down by the same number of rows, like
-    /// with [`Viewport::down_by()`], instead of following the scroll. Nothing moves anymore when
-    /// the last of `len` rows is displayed, and a scroll that would go further than that is
-    /// shortened.
+    /// Move half the screen (`height / 2` rows, `count` times) down (`d`), ignoring the scrolloff
+    /// margin. Each time, the screen and the cursor move together, by fewer rows if the screen
+    /// reaches the last of `len` rows, or, if the last row is already displayed, the cursor moves
+    /// alone, stopping on the last row.
     pub fn half_page_down(&mut self, count: usize, len: usize, height: usize) {
-        let rows_count = (height / 2).saturating_mul(count);
-        let rows_count = rows_count.min(len.saturating_sub(height).saturating_sub(self.top));
-        if rows_count > 0 {
-            self.top += rows_count;
-            self.down_by(rows_count, len);
-            self.scroll(len, height);
-        }
+        let half = height / 2;
+        let scrolled_count = len
+            .saturating_sub(height)
+            .saturating_sub(self.top)
+            .min(half.saturating_mul(count));
+        self.top += scrolled_count;
+        self.down_by(
+            scrolled_count.saturating_add(cursor_only_count(scrolled_count, half, count)),
+            len,
+        );
     }
 
-    /// Move half the screen (`height / 2` rows, `count` times) up (`u`): the screen scrolls like
-    /// with [`Viewport::scroll_up()`], and the cursor moves up by the same number of rows, like
-    /// with [`Viewport::up_by()`], instead of following the scroll. Nothing moves anymore when the
-    /// first row is displayed, and a scroll that would go further than that is shortened.
-    pub fn half_page_up(&mut self, count: usize, len: usize, height: usize) {
-        let rows_count = (height / 2).saturating_mul(count);
-        let rows_count = rows_count.min(self.top);
-        if rows_count > 0 {
-            self.top -= rows_count;
-            self.up_by(rows_count);
-            self.scroll(len, height);
-        }
+    /// Move half the screen (`height / 2` rows, `count` times) up (`u`), ignoring the scrolloff
+    /// margin. Each time, the screen and the cursor move together, by fewer rows if the screen
+    /// reaches the first row, or, if the first row is already displayed, the cursor moves alone,
+    /// stopping on the first row.
+    pub fn half_page_up(&mut self, count: usize, height: usize) {
+        let half = height / 2;
+        let scrolled_count = self.top.min(half.saturating_mul(count));
+        self.top -= scrolled_count;
+        self.up_by(scrolled_count.saturating_add(cursor_only_count(scrolled_count, half, count)));
     }
 
     /// Move the cursor to the row `cursor`, keeping it at the same screen position (unless the
@@ -732,7 +743,7 @@ mod tests {
     #[test]
     fn half_page_up_moves_the_screen_and_the_cursor_by_half_the_height() {
         let mut viewport = Viewport { cursor: 40, top: 30 };
-        viewport.half_page_up(/* count */ 1, /* len */ 100, /* height */ 20);
+        viewport.half_page_up(/* count */ 1, /* height */ 20);
         assert_eq!(viewport, Viewport { cursor: 30, top: 20 });
     }
 
@@ -742,7 +753,7 @@ mod tests {
         viewport.half_page_down(/* count */ 1, /* len */ 100, /* height */ 21);
         assert_eq!(viewport, Viewport { cursor: 30, top: 20 });
         let mut viewport = Viewport { cursor: 40, top: 30 };
-        viewport.half_page_up(/* count */ 1, /* len */ 100, /* height */ 21);
+        viewport.half_page_up(/* count */ 1, /* height */ 21);
         assert_eq!(viewport, Viewport { cursor: 30, top: 20 });
     }
 
@@ -752,71 +763,74 @@ mod tests {
         viewport.half_page_down(/* count */ 3, /* len */ 100, /* height */ 20);
         assert_eq!(viewport, Viewport { cursor: 50, top: 40 });
         let mut viewport = Viewport { cursor: 40, top: 30 };
-        viewport.half_page_up(/* count */ 2, /* len */ 100, /* height */ 20);
+        viewport.half_page_up(/* count */ 2, /* height */ 20);
         assert_eq!(viewport, Viewport { cursor: 20, top: 10 });
     }
 
     #[test]
-    fn half_page_keeps_the_scrolloff_of_a_cursor_inside_the_margin() {
-        // The cursor is the 3rd row of the screen: it is moved with the screen, then the screen
-        // scrolls back to keep the scrolloff, like with `j`.
+    fn half_page_leaves_a_cursor_inside_the_scrolloff_margin() {
+        // The cursor is the 3rd row of the screen.
         let mut viewport = Viewport { cursor: 12, top: 10 };
         viewport.half_page_down(/* count */ 1, /* len */ 100, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 22, top: 17 });
+        assert_eq!(viewport, Viewport { cursor: 22, top: 20 });
     }
 
     #[test]
-    fn half_page_down_does_nothing_when_the_last_row_is_displayed() {
-        for (cursor, top) in [(95, 80), (85, 80), (80, 80)] {
-            let mut viewport = Viewport { cursor, top };
-            viewport.half_page_down(/* count */ 1, /* len */ 100, /* height */ 20);
-            assert_eq!(viewport, Viewport { cursor, top });
-            viewport.half_page_down(usize::MAX, /* len */ 100, /* height */ 20);
-            assert_eq!(viewport, Viewport { cursor, top });
-        }
+    fn half_page_down_moves_the_cursor_alone_when_the_last_row_is_displayed() {
+        let mut viewport = Viewport { cursor: 85, top: 80 };
+        viewport.half_page_down(/* count */ 1, /* len */ 100, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 95, top: 80 });
+        viewport.half_page_down(/* count */ 1, /* len */ 100, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 99, top: 80 });
+        viewport.half_page_down(usize::MAX, /* len */ 100, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 99, top: 80 });
     }
 
     #[test]
-    fn half_page_up_does_nothing_when_the_first_row_is_displayed() {
-        for (cursor, top) in [(0, 0), (5, 0), (10, 0)] {
-            let mut viewport = Viewport { cursor, top };
-            viewport.half_page_up(/* count */ 1, /* len */ 100, /* height */ 20);
-            assert_eq!(viewport, Viewport { cursor, top });
-            viewport.half_page_up(usize::MAX, /* len */ 100, /* height */ 20);
-            assert_eq!(viewport, Viewport { cursor, top });
-        }
+    fn half_page_up_moves_the_cursor_alone_when_the_first_row_is_displayed() {
+        let mut viewport = Viewport { cursor: 15, top: 0 };
+        viewport.half_page_up(/* count */ 1, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 5, top: 0 });
+        viewport.half_page_up(/* count */ 1, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 0, top: 0 });
+        viewport.half_page_up(usize::MAX, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 0, top: 0 });
     }
 
     #[test]
-    fn half_page_down_moves_the_cursor_by_the_scrolled_rows_when_the_screen_stops() {
+    fn half_page_down_scrolls_by_fewer_rows_then_moves_the_cursor_alone_when_the_screen_stops() {
         // Only 5 rows are left below the screen.
         let mut viewport = Viewport { cursor: 85, top: 75 };
         viewport.half_page_down(/* count */ 1, /* len */ 100, /* height */ 20);
         assert_eq!(viewport, Viewport { cursor: 90, top: 80 });
-        let mut viewport = Viewport { cursor: 20, top: 10 };
-        viewport.half_page_down(usize::MAX, /* len */ 100, /* height */ 20);
+        let mut viewport = Viewport { cursor: 75, top: 75 };
+        viewport.half_page_down(/* count */ 2, /* len */ 100, /* height */ 20);
         assert_eq!(viewport, Viewport { cursor: 90, top: 80 });
     }
 
     #[test]
-    fn half_page_up_moves_the_cursor_by_the_scrolled_rows_when_the_screen_stops() {
+    fn half_page_up_scrolls_by_fewer_rows_then_moves_the_cursor_alone_when_the_screen_stops() {
         // Only 3 rows are left above the screen.
         let mut viewport = Viewport { cursor: 15, top: 3 };
-        viewport.half_page_up(/* count */ 1, /* len */ 100, /* height */ 20);
+        viewport.half_page_up(/* count */ 1, /* height */ 20);
         assert_eq!(viewport, Viewport { cursor: 12, top: 0 });
-        let mut viewport = Viewport { cursor: 20, top: 10 };
-        viewport.half_page_up(usize::MAX, /* len */ 100, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 10, top: 0 });
+        let mut viewport = Viewport { cursor: 15, top: 3 };
+        viewport.half_page_up(/* count */ 2, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 2, top: 0 });
     }
 
     #[test]
-    fn half_page_does_nothing_when_everything_fits_or_the_screen_is_one_row_tall() {
+    fn half_page_moves_the_cursor_alone_when_everything_fits() {
         let mut viewport = Viewport { cursor: 3, top: 0 };
-        viewport.half_page_down(/* count */ 1, /* len */ 10, /* height */ 20);
-        assert_eq!(viewport, Viewport { cursor: 3, top: 0 });
+        viewport.half_page_down(/* count */ 1, /* len */ 20, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 13, top: 0 });
+    }
+
+    #[test]
+    fn half_page_does_nothing_when_the_screen_is_one_row_tall() {
         let mut viewport = Viewport { cursor: 30, top: 30 };
         viewport.half_page_down(/* count */ 1, /* len */ 100, /* height */ 1);
-        viewport.half_page_up(/* count */ 1, /* len */ 100, /* height */ 1);
+        viewport.half_page_up(/* count */ 1, /* height */ 1);
         assert_eq!(viewport, Viewport { cursor: 30, top: 30 });
     }
 }
