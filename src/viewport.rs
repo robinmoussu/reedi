@@ -72,6 +72,30 @@ impl Viewport {
             .min(len.saturating_sub(height));
     }
 
+    /// Move the cursor `rows_count` rows down (`j`), one row at a time. When the cursor would move
+    /// into (or further into) the bottom scrolloff margin of the screen, `height` rows tall, the
+    /// screen moves with it instead, unless the last of `len` rows is displayed.
+    pub fn move_down(&mut self, rows_count: usize, len: usize, height: usize) {
+        let height = height.max(1);
+        let lowest_allowed = height - 1 - scrolloff(height);
+        let distance = self.cursor.saturating_sub(self.top);
+        let reaching_margin_count = rows_count.min(lowest_allowed.saturating_sub(distance));
+        self.top += (rows_count - reaching_margin_count)
+            .min(len.saturating_sub(height).saturating_sub(self.top));
+        self.down_by(rows_count, len);
+    }
+
+    /// Move the cursor `rows_count` rows up (`k`), one row at a time. When the cursor would move
+    /// into (or further into) the top scrolloff margin of the screen, `height` rows tall, the
+    /// screen moves with it instead, unless the first row is displayed.
+    pub fn move_up(&mut self, rows_count: usize, height: usize) {
+        let height = height.max(1);
+        let distance = self.cursor.saturating_sub(self.top);
+        let reaching_margin_count = rows_count.min(distance.saturating_sub(scrolloff(height)));
+        self.top -= (rows_count - reaching_margin_count).min(self.top);
+        self.up_by(rows_count);
+    }
+
     /// Move the screen `lines_count` lines down (`ctrl+e`), one line at a time, stopping when its
     /// last row is the last of `len` rows, like `less`.
     ///
@@ -447,6 +471,128 @@ mod tests {
             /* cursor */ 5, /* len */ 10, /* height */ 20,
         );
         assert_eq!(viewport, Viewport { cursor: 5, top: 0 });
+    }
+
+    #[test]
+    fn move_down_only_moves_the_cursor_outside_the_margins() {
+        let mut viewport = Viewport { cursor: 20, top: 10 };
+        viewport.move_down(
+            /* rows_count */ 1, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 21, top: 10 });
+    }
+
+    #[test]
+    fn move_down_moves_the_screen_with_a_cursor_reaching_the_bottom_margin() {
+        // The cursor is the 15th row of the screen: the next one is inside the margin.
+        let mut viewport = Viewport { cursor: 24, top: 10 };
+        viewport.move_down(
+            /* rows_count */ 1, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 25, top: 11 });
+    }
+
+    #[test]
+    fn move_down_moves_the_screen_with_a_cursor_inside_the_bottom_margin() {
+        // The cursor is the 19th row of the screen.
+        let mut viewport = Viewport { cursor: 28, top: 10 };
+        viewport.move_down(
+            /* rows_count */ 1, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 29, top: 11 });
+    }
+
+    #[test]
+    fn move_down_only_moves_a_cursor_inside_the_top_margin() {
+        // The cursor is the 3rd row of the screen.
+        let mut viewport = Viewport { cursor: 12, top: 10 };
+        viewport.move_down(
+            /* rows_count */ 1, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 13, top: 10 });
+    }
+
+    #[test]
+    fn move_down_only_moves_the_cursor_when_the_last_row_is_displayed() {
+        let mut viewport = Viewport { cursor: 90, top: 80 };
+        viewport.move_down(
+            /* rows_count */ 1, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 91, top: 80 });
+    }
+
+    #[test]
+    fn move_down_moves_the_screen_once_the_cursor_reaches_the_bottom_margin() {
+        // The cursor is the 13th row of the screen: it moves alone to the 15th, then with the
+        // screen.
+        let mut viewport = Viewport { cursor: 22, top: 10 };
+        viewport.move_down(
+            /* rows_count */ 5, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 27, top: 13 });
+    }
+
+    #[test]
+    fn move_down_by_more_rows_than_available_stops_on_the_last_row() {
+        let mut viewport = Viewport { cursor: 50, top: 40 };
+        viewport.move_down(
+            /* rows_count */ 1000, /* len */ 100, /* height */ 20,
+        );
+        assert_eq!(viewport, Viewport { cursor: 99, top: 80 });
+    }
+
+    #[test]
+    fn move_up_only_moves_the_cursor_outside_the_margins() {
+        let mut viewport = Viewport { cursor: 20, top: 10 };
+        viewport.move_up(/* rows_count */ 1, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 19, top: 10 });
+    }
+
+    #[test]
+    fn move_up_moves_the_screen_with_a_cursor_reaching_the_top_margin() {
+        // The cursor is the 6th row of the screen: the previous one is inside the margin.
+        let mut viewport = Viewport { cursor: 15, top: 10 };
+        viewport.move_up(/* rows_count */ 1, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 14, top: 9 });
+    }
+
+    #[test]
+    fn move_up_moves_the_screen_with_a_cursor_inside_the_top_margin() {
+        // The cursor is the 3rd row of the screen.
+        let mut viewport = Viewport { cursor: 12, top: 10 };
+        viewport.move_up(/* rows_count */ 1, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 11, top: 9 });
+    }
+
+    #[test]
+    fn move_up_only_moves_a_cursor_inside_the_bottom_margin() {
+        // The cursor is the 19th row of the screen.
+        let mut viewport = Viewport { cursor: 28, top: 10 };
+        viewport.move_up(/* rows_count */ 1, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 27, top: 10 });
+    }
+
+    #[test]
+    fn move_up_only_moves_the_cursor_when_the_first_row_is_displayed() {
+        let mut viewport = Viewport { cursor: 10, top: 0 };
+        viewport.move_up(/* rows_count */ 1, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 9, top: 0 });
+    }
+
+    #[test]
+    fn move_up_moves_the_screen_once_the_cursor_reaches_the_top_margin() {
+        // The cursor is the 8th row of the screen: it moves alone to the 6th, then with the
+        // screen.
+        let mut viewport = Viewport { cursor: 17, top: 10 };
+        viewport.move_up(/* rows_count */ 5, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 12, top: 7 });
+    }
+
+    #[test]
+    fn move_up_by_more_rows_than_available_stops_on_the_first_row() {
+        let mut viewport = Viewport { cursor: 50, top: 40 };
+        viewport.move_up(/* rows_count */ 1000, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 0, top: 0 });
     }
 
     #[test]

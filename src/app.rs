@@ -144,14 +144,8 @@ fn navigate(
     let len = rows.len();
     let repeat_count = count.unwrap_or(1);
     match action {
-        Action::Down => {
-            viewport.down_by(repeat_count, len);
-            viewport.scroll(len, height);
-        }
-        Action::Up => {
-            viewport.up_by(repeat_count);
-            viewport.scroll(len, height);
-        }
+        Action::Down => viewport.move_down(repeat_count, len, height),
+        Action::Up => viewport.move_up(repeat_count, height),
         Action::ScrollDown => viewport.scroll_down(repeat_count, len, height),
         Action::ScrollUp => viewport.scroll_up(repeat_count, height),
         Action::HalfPageDown => viewport.half_page_down(repeat_count, len, height),

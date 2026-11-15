@@ -483,7 +483,7 @@ version 0.0.12: improved display
 
 - [x] Fix `ctrl+e`/`ctrl+y`
 - [x] Click set the cursor
-- [ ] Fix `j`/`k` and `down`/`up`
+- [x] Fix `j`/`k` and `down`/`up`
 - [ ] Fix `d`/`u` and `ctrl+d`/`ctrl+u`
 - [ ] Fix resizing
 
