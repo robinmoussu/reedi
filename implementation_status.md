@@ -485,7 +485,7 @@ version 0.0.12: improved display
 - [x] Click set the cursor
 - [x] Fix `j`/`k` and `down`/`up`
 - [x] Fix `d`/`u` and `ctrl+d`/`ctrl+u`
-- [ ] Fix resizing
+- [x] Fix resizing
 
 - [ ] The name of a file should stay at the top of the screen until the last line of that file is
   scrolled away. When scrolling, if the filename didn’t fit in a single row, it is progressively

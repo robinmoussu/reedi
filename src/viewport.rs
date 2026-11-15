@@ -84,6 +84,16 @@ impl Viewport {
             .min(len.saturating_sub(height));
     }
 
+    /// Keep the cursor on the screen, `height` rows tall, after it is resized or the `len` rows are
+    /// replaced: a cursor below the screen moves up to its last row, and the screen scrolls up if
+    /// there are empty rows after the last row. Otherwise nothing moves, even inside the scrolloff
+    /// margin.
+    pub fn resize(&mut self, len: usize, height: usize) {
+        let height = height.max(1);
+        self.top = self.top.min(len.saturating_sub(height));
+        self.cursor = self.cursor.min(self.top + height - 1);
+    }
+
     /// Move the cursor `rows_count` rows down (`j`), one row at a time. When the cursor would move
     /// into (or further into) the bottom scrolloff margin of the screen, `height` rows tall, the
     /// screen moves with it instead, unless the last of `len` rows is displayed.
@@ -335,6 +345,37 @@ mod tests {
         let mut viewport = Viewport { cursor: 0, top: 0 };
         viewport.down_by(/* rows_count */ 3, /* len */ 0);
         assert_eq!(viewport.cursor, 0);
+    }
+
+    #[test]
+    fn resize_moves_nothing_when_the_cursor_stays_on_the_screen() {
+        // The cursor is the 19th row of the screen, inside the scrolloff margin.
+        let mut viewport = Viewport { cursor: 28, top: 10 };
+        viewport.resize(/* len */ 100, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 28, top: 10 });
+    }
+
+    #[test]
+    fn resize_moves_a_cursor_below_the_screen_to_its_last_row() {
+        // The cursor was the 31st row of a screen at least 31 rows tall.
+        let mut viewport = Viewport { cursor: 40, top: 10 };
+        viewport.resize(/* len */ 100, /* height */ 20);
+        assert_eq!(viewport, Viewport { cursor: 29, top: 10 });
+    }
+
+    #[test]
+    fn resize_scrolls_up_to_fill_the_empty_rows_after_the_last_row() {
+        // The screen displayed the last 20 rows.
+        let mut viewport = Viewport { cursor: 90, top: 80 };
+        viewport.resize(/* len */ 100, /* height */ 30);
+        assert_eq!(viewport, Viewport { cursor: 90, top: 70 });
+    }
+
+    #[test]
+    fn resize_with_a_zero_height_does_not_panic() {
+        let mut viewport = Viewport { cursor: 10, top: 10 };
+        viewport.resize(/* len */ 100, /* height */ 0);
+        assert_eq!(viewport, Viewport { cursor: 10, top: 10 });
     }
 
     #[test]

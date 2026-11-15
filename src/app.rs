@@ -221,7 +221,7 @@ pub fn run(
                     mouse.forget_released_drag();
                 }
                 if rows_replaced || size != Some(screen) {
-                    viewport.scroll(rows.len(), height);
+                    viewport.resize(rows.len(), height);
                     size = Some(screen);
                 }
                 terminal.draw(|frame| {
