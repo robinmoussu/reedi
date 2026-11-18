@@ -64,9 +64,7 @@ impl Commit {
 /// The changes staged for the next commit (`git diff --cached`), and its message.
 #[derive(Debug, Clone)]
 pub struct Index {
-    /// The branch HEAD is attached to (during a rebase, the rebased branch), `None` if HEAD is
-    /// detached.
-    pub branch: Option<FullName>,
+    pub next_commit: NextCommit,
     /// The subject of the next commit message, empty if there is none.
     pub subject: String,
     /// The next commit message without the subject line.
@@ -74,14 +72,18 @@ pub struct Index {
     pub files: Vec<FileDiff>,
 }
 
-impl Index {
-    /// The branch, as displayed (`main` for `refs/heads/main`).
-    pub fn short_branch(&self) -> Option<String> {
-        self.branch
-            .as_ref()
-            .map(|branch| branch.shorten().to_str_lossy().into_owned())
-    }
+/// How the next commit is made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NextCommit {
+    /// By `git commit`, on the branch HEAD is attached to.
+    Branch(FullName),
+    /// By `git commit`, on a detached HEAD.
+    DetachedHead,
+    /// By `git rebase --continue`, a rebase being in progress.
+    RebaseContinue,
+}
 
+impl Index {
     /// Whether the file at `path` is unmerged.
     pub fn is_unmerged(&self, path: &gix::bstr::BStr) -> bool {
         self.files
@@ -149,7 +151,7 @@ mod tests {
     /// The index where the files at `unmerged_paths` are unmerged.
     fn index_with_unmerged(unmerged_paths: &[&str]) -> Index {
         Index {
-            branch: None,
+            next_commit: NextCommit::DetachedHead,
             subject: String::new(),
             body: String::new(),
             files: unmerged_paths.iter().copied().map(unmerged).collect(),

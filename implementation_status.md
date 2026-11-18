@@ -500,9 +500,8 @@ version 0.0.12: improved display
   Details:
   - it is also displayed while a number is pending, and not displayed if there are no rows
 
-- [ ] when the message of the index comes from `.git/rebase-merge/message` (used by `git rebase
-  --continue`, not by `git commit`), the header says `index for git rebase --continue` instead of
-  `index for $branch`
+- [x] During rebase, the header says `index for git rebase --continue` instead of `index for
+  $branch`
 
 version 0.0.x: line-diff, word-diff and syntax highlighting
 -----------------------------------------------------------

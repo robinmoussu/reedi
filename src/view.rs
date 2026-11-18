@@ -39,6 +39,7 @@ use crate::invisible::Kind;
 use crate::model::Commit;
 use crate::model::Decoration;
 use crate::model::Index;
+use crate::model::NextCommit;
 use crate::model::Revision;
 use crate::model::WorkingDirectory;
 use crate::settings::MAX_PAIRING_DISTANCE;
@@ -423,6 +424,18 @@ fn decoration_parts(decorations: &[Decoration], theme: &Theme) -> Vec<Part> {
         .chain(decorations)
         .chain(iter::once(Part::markup(")", theme.decoration_punctuation)))
         .collect()
+}
+
+/// What the index is for, displayed after `index for `: the branch of the next commit, or the
+/// command making it during a rebase. `None` if HEAD is detached.
+fn next_commit_target(next_commit: &NextCommit, theme: &Theme) -> Option<Part> {
+    match next_commit {
+        NextCommit::Branch(branch) => {
+            Some(Part::content(&branch.shorten().to_str_lossy(), theme.hash))
+        }
+        NextCommit::DetachedHead => None,
+        NextCommit::RebaseContinue => Some(Part::markup("git rebase --continue", theme.hash)),
+    }
 }
 
 /// `$hash $commit_subject $author $date ($tags, $branches)`
@@ -1133,12 +1146,12 @@ impl<'a> Rows<'a> {
         self.diff(&commit.files)
     }
 
-    /// `index for $branch $subject`
+    /// `index for $branch $subject`, or `index for git rebase --continue $subject`
     fn index(&mut self, index: &Index) -> Result<(), RowsError> {
         let mut header = vec![Part::markup("index", self.theme.hash)];
-        if let Some(branch) = index.short_branch() {
+        if let Some(target) = next_commit_target(&index.next_commit, self.theme) {
             header.push(Part::markup(" for ", self.theme.hash));
-            header.push(Part::content(&branch, self.theme.hash));
+            header.push(target);
         }
         if !index.subject.is_empty() {
             header.push(Part::markup(" ", Style::new()));
@@ -1533,8 +1546,8 @@ pub fn revision_status(revisions: &[Revision], index: usize, theme: &Theme) -> L
             commit.subject
         ),
         Revision::Index(index) => {
-            let mut text = match index.short_branch() {
-                Some(branch) => format!("index for {branch}"),
+            let mut text = match next_commit_target(&index.next_commit, theme) {
+                Some(target) => format!("index for {}", target.text),
                 None => "index".to_string(),
             };
             if !index.subject.is_empty() {
@@ -2101,14 +2114,15 @@ mod tests {
         assert_eq!(text, " (feature, HEAD)");
     }
 
-    /// The branch of the index in the tests of the index.
-    const MAIN_BRANCH: &str = "refs/heads/main";
+    /// The next commit on the branch `main`, for the tests of the index.
+    fn on_main() -> NextCommit {
+        NextCommit::Branch(FullName::try_from("refs/heads/main").unwrap())
+    }
 
-    /// The index of the next commit on `branch` (`None` if HEAD is detached), whose message is
-    /// `subject` and `body`, without files.
-    fn index(branch: Option<&str>, subject: &str, body: &str) -> Index {
+    /// The index of `next_commit`, whose message is `subject` and `body`, without files.
+    fn index(next_commit: NextCommit, subject: &str, body: &str) -> Index {
         Index {
-            branch: branch.map(|branch| FullName::try_from(branch).unwrap()),
+            next_commit,
             subject: subject.to_string(),
             body: body.to_string(),
             files: Vec::new(),
@@ -2134,7 +2148,7 @@ mod tests {
 
     #[test]
     fn index_header_is_for_the_branch_then_the_subject_in_the_color_of_the_hash() {
-        let revision = Revision::Index(index(Some(MAIN_BRANCH), "Subject", ""));
+        let revision = Revision::Index(index(on_main(), "Subject", ""));
         for theme in &themes() {
             let header = header_line(&revision, theme);
             assert_eq!(text(&header), "index for main Subject");
@@ -2148,19 +2162,33 @@ mod tests {
 
     #[test]
     fn index_header_of_a_detached_head_has_no_branch() {
-        let revision = Revision::Index(index(/* branch */ None, "Subject", ""));
+        let revision = Revision::Index(index(NextCommit::DetachedHead, "Subject", ""));
         assert_eq!(revision_texts(&revision)[0], "index Subject");
     }
 
     #[test]
+    fn index_header_during_a_rebase_is_for_git_rebase_continue_in_the_color_of_the_hash() {
+        let revision = Revision::Index(index(NextCommit::RebaseContinue, "Subject", ""));
+        for theme in &themes() {
+            let header = header_line(&revision, theme);
+            assert_eq!(text(&header), "index for git rebase --continue Subject");
+            assert!(
+                styles_of(&header, "index for git rebase --continue")
+                    .iter()
+                    .all(|style| *style == theme.hash)
+            );
+        }
+    }
+
+    #[test]
     fn index_header_without_next_commit_message_has_no_subject() {
-        let revision = Revision::Index(index(Some(MAIN_BRANCH), "", ""));
+        let revision = Revision::Index(index(on_main(), "", ""));
         assert_eq!(revision_texts(&revision)[0], "index for main");
     }
 
     #[test]
     fn index_body_is_displayed_below_the_header_like_a_commit_body() {
-        let revision = Revision::Index(index(Some(MAIN_BRANCH), "Subject", "Line 1.\nLine 2.\n"));
+        let revision = Revision::Index(index(on_main(), "Subject", "Line 1.\nLine 2.\n"));
         assert_eq!(
             revision_texts(&revision)[..4],
             ["index for main Subject", "", "Line 1.", "Line 2."]
@@ -2208,7 +2236,7 @@ mod tests {
     #[test]
     fn revisions_without_files_display_no_changes_where_the_first_file_would_be() {
         let revisions = [
-            Revision::Index(index(Some(MAIN_BRANCH), "Subject", "Body.\n")),
+            Revision::Index(index(on_main(), "Subject", "Body.\n")),
             Revision::WorkingDirectory(WorkingDirectory { files: Vec::new() }),
             Revision::Commit(commit_without_files(/* parents_count */ 1)),
             Revision::Commit(commit_without_files(/* parents_count */ 0)),
@@ -3452,7 +3480,7 @@ mod tests {
 
     #[test]
     fn status_bar_of_the_index_is_for_the_branch_then_the_subject() {
-        let revisions = index_and_working_directory(index(Some(MAIN_BRANCH), "Subject", ""));
+        let revisions = index_and_working_directory(index(on_main(), "Subject", ""));
         assert_eq!(
             status_text(&revisions, /* index */ 0),
             format!("index for main: {LEFT_TO_RIGHT_MARK}Subject")
@@ -3460,8 +3488,18 @@ mod tests {
     }
 
     #[test]
+    fn status_bar_of_the_index_during_a_rebase_is_for_git_rebase_continue() {
+        let revisions =
+            index_and_working_directory(index(NextCommit::RebaseContinue, "Subject", ""));
+        assert_eq!(
+            status_text(&revisions, /* index */ 0),
+            format!("index for git rebase --continue: {LEFT_TO_RIGHT_MARK}Subject")
+        );
+    }
+
+    #[test]
     fn status_bar_of_the_index_of_a_detached_head_has_no_branch() {
-        let revisions = index_and_working_directory(index(/* branch */ None, "Subject", ""));
+        let revisions = index_and_working_directory(index(NextCommit::DetachedHead, "Subject", ""));
         assert_eq!(
             status_text(&revisions, /* index */ 0),
             format!("index: {LEFT_TO_RIGHT_MARK}Subject")
@@ -3470,20 +3508,20 @@ mod tests {
 
     #[test]
     fn status_bar_of_the_index_without_next_commit_message_has_no_subject() {
-        let revisions = index_and_working_directory(index(Some(MAIN_BRANCH), "", ""));
+        let revisions = index_and_working_directory(index(on_main(), "", ""));
         assert_eq!(status_text(&revisions, /* index */ 0), "index for main");
     }
 
     #[test]
     fn status_bar_of_the_working_directory_without_conflicts_is_working_directory() {
-        let revisions = index_and_working_directory(index(Some(MAIN_BRANCH), "Subject", ""));
+        let revisions = index_and_working_directory(index(on_main(), "Subject", ""));
         assert_eq!(status_text(&revisions, /* index */ 1), "working directory");
     }
 
     /// The index where `a.txt` is unmerged, and the working directory where `conflicts_count`
     /// conflict markers are added to it.
     fn revisions_with_conflicts(conflicts_count: usize) -> [Revision; 2] {
-        let mut index = index(Some(MAIN_BRANCH), "Subject", "");
+        let mut index = index(on_main(), "Subject", "");
         index.files.push(unmerged("a.txt"));
         let markers = vec![line(LineKind::Added, "<<<<<<< HEAD"); conflicts_count];
         let working_directory = WorkingDirectory { files: vec![modified("a.txt", markers)] };

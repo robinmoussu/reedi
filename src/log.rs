@@ -49,6 +49,7 @@ use crate::fake;
 use crate::model::Commit;
 use crate::model::Decoration;
 use crate::model::Index;
+use crate::model::NextCommit;
 use crate::model::Revision;
 use crate::model::WorkingDirectory;
 use crate::settings::CONTEXT;
@@ -243,22 +244,22 @@ fn uncommitted_changes_of(
     if index_files.is_empty() && working_directory_files.is_empty() {
         return Ok(None);
     }
-    let branch = match rebase::rebased_branch(repository.git_dir()).map_err(unreadable)? {
-        Some(branch) => Some(branch),
-        None if rebase::onto(repository.git_dir())
-            .map_err(unreadable)?
-            .is_some() =>
-        {
-            None
-        }
-        None => branch_of(&repository.head().map_err(unreadable)?.kind).cloned(),
+    let next_commit = if rebase::onto(repository.git_dir())
+        .map_err(unreadable)?
+        .is_some()
+    {
+        NextCommit::RebaseContinue
+    } else {
+        branch_of(&repository.head().map_err(unreadable)?.kind)
+            .cloned()
+            .map_or(NextCommit::DetachedHead, NextCommit::Branch)
     };
     let message = next_commit_message(repository)?;
     let (subject, body) = message.map_or_else(Default::default, |message| {
         subject_and_body(MessageRef::from_bytes(&message))
     });
     let index = Index {
-        branch,
+        next_commit,
         subject,
         body,
         files: index_files,
@@ -1525,33 +1526,34 @@ mod tests {
         );
     }
 
-    /// `refs/heads/$branch`.
-    fn local_branch(branch: &str) -> Option<FullName> {
-        Some(Category::LocalBranch.to_full_name(branch).unwrap())
-    }
-
     #[test]
-    fn index_is_for_the_branch_head_is_attached_to() {
+    fn next_commit_is_on_the_branch_head_is_attached_to() {
         let git = with_committed_file();
         git.write("a.txt", WORKING_DIRECTORY_CONTENT);
-        assert_eq!(uncommitted_changes(&git).0.branch, local_branch(BRANCH));
+        assert_eq!(
+            uncommitted_changes(&git).0.next_commit,
+            NextCommit::Branch(Category::LocalBranch.to_full_name(BRANCH).unwrap())
+        );
     }
 
     #[test]
-    fn index_of_a_detached_head_has_no_branch() {
+    fn next_commit_of_a_detached_head_is_on_no_branch() {
         let git = with_committed_file();
         git.detach_head();
         git.write("a.txt", WORKING_DIRECTORY_CONTENT);
-        assert_eq!(uncommitted_changes(&git).0.branch, None);
+        assert_eq!(
+            uncommitted_changes(&git).0.next_commit,
+            NextCommit::DetachedHead
+        );
     }
 
     #[test]
-    fn during_a_rebase_the_index_is_for_the_rebased_branch() {
+    fn during_a_rebase_the_next_commit_is_made_by_git_rebase_continue() {
         for backend in [RebaseBackend::Merge, RebaseBackend::Apply] {
             let git = Git::with_upstream();
             git.start_rebase_stopped_by_conflict(backend, /* replayed_commits_count */ 1);
             let (index, _) = uncommitted_changes(&git);
-            assert_eq!(index.branch, local_branch(BRANCH), "{backend:?}");
+            assert_eq!(index.next_commit, NextCommit::RebaseContinue, "{backend:?}");
         }
     }
 

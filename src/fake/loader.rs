@@ -25,6 +25,7 @@ use crate::model::CONFLICT_MARKER;
 use crate::model::Commit;
 use crate::model::Decoration;
 use crate::model::Index;
+use crate::model::NextCommit;
 use crate::model::WorkingDirectory;
 use crate::settings::CONTEXT;
 
@@ -405,14 +406,15 @@ pub fn index_and_working_directory(
     {
         return Err(FakeDataError::UnexpectedMetadata);
     }
-    let branch = metadata
+    let next_commit = metadata
         .branch
         .map(|branch| {
             Category::LocalBranch
                 .to_full_name(branch.as_str())
                 .map_err(|error| FakeDataError::InvalidMetadata(error.to_string()))
         })
-        .transpose()?;
+        .transpose()?
+        .map_or(NextCommit::DetachedHead, NextCommit::Branch);
     let working_directory = WorkingDirectory {
         files: file_diffs(working_directory_files, &BTreeMap::new())?,
     };
@@ -426,7 +428,7 @@ pub fn index_and_working_directory(
     );
     files.sort_by(|left, right| left.path.cmp(&right.path));
     let index = Index {
-        branch,
+        next_commit,
         subject: metadata.subject,
         body: metadata.body,
         files,
@@ -821,8 +823,8 @@ mod tests {
     fn index_metadata_is_the_branch_and_the_next_commit_message() {
         let (index, _) = index_and_working_directory(&[INDEX_METADATA], &[]).unwrap();
         assert_eq!(
-            index.branch,
-            Some(gix::refs::FullName::try_from("refs/heads/main").unwrap())
+            index.next_commit,
+            NextCommit::Branch(gix::refs::FullName::try_from("refs/heads/main").unwrap())
         );
         assert_eq!(index.subject, "Subject");
         assert_eq!(index.body, "Body.");
@@ -835,7 +837,7 @@ mod tests {
             content: b"subject = \"Subject\"\n",
         };
         let (index, _) = index_and_working_directory(&[metadata], &[]).unwrap();
-        assert_eq!(index.branch, None);
+        assert_eq!(index.next_commit, NextCommit::DetachedHead);
         assert_eq!(index.body, "");
     }
 

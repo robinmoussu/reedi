@@ -115,8 +115,8 @@ Areas
     - while a number is pending: `The next command will be repeated <n> times`
     - commits: `commit $x/$y: $short_hash $summary` (`x`: index of the commit the cursor is on, `y`:
     number of commits displayed)
-    - index and working directory: `index for $branch: $summary` and `working directory` (see
-    "Commit creation")
+    - index and working directory: `index for $branch: $summary` (`index for git rebase --continue:
+    $summary` during a rebase) and `working directory` (see "Commit creation")
 - The right end of the status bar displays in gray the position of the cursor, in percent of the
   rows
 - In light mode, the background of the status bar (but the mode) is light gray
@@ -129,8 +129,8 @@ or the working directory), then instead of displaying unpushed commits, `reedi` 
 index, then the working directory (both are always displayed).
 
 In the index and working directory revisions:
-- The hash is replaced by `index for $branch` (`index` if HEAD is detached) and `working directory`
-  (same color)
+- The hash is replaced by `index for $branch` (`index` if HEAD is detached, `index for git rebase
+  --continue` during a rebase) and `working directory` (same color)
 - If there is a prepared commit message (like the one of a merge, or of `git cherry-pick
   --no-commit`), it’s displayed in the index
 - Other metadata are not displayed
