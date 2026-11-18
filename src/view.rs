@@ -635,7 +635,7 @@ fn file_parts(file: &FileDiff, theme: &Theme) -> Vec<Part> {
         FileChange::Deleted => label("removed: ").chain(path).collect(),
         FileChange::Renamed { from } => label("renamed: ")
             .chain(path_component_parts(&from.to_str_lossy(), theme.file))
-            .chain(iter::once(Part::markup(" ⟶   ", theme.file)))
+            .chain(iter::once(Part::markup(" ⟶ ", theme.file)))
             .chain(path)
             .collect(),
     };
@@ -2428,7 +2428,7 @@ mod tests {
             name(FileChange::Deleted, FileContentType::Text),
             "removed: b"
         );
-        assert_eq!(name(renamed, FileContentType::Text), "renamed: a ⟶   b");
+        assert_eq!(name(renamed, FileContentType::Text), "renamed: a ⟶ b");
         assert_eq!(
             name(FileChange::Modified, FileContentType::Binary),
             "b (binary file)"
@@ -2448,7 +2448,7 @@ mod tests {
             hunks: Vec::new(),
         };
         let name = text_of_row(&file_rows(&file, /* width */ 110, &Theme::monochrome())[1]).0;
-        assert_eq!(name, "renamed: \u{fffd}.txt ⟶   caf\u{fffd}.txt");
+        assert_eq!(name, "renamed: \u{fffd}.txt ⟶ caf\u{fffd}.txt");
     }
 
     #[test]
@@ -2537,7 +2537,7 @@ mod tests {
         // Neither between words nor at `/`, and the space before the break is replaced.
         assert_eq!(
             file_name_rows(&file, /* width */ 11),
-            ["renamed: a∙", "b/c ⟶   src", "/config.rs"]
+            ["renamed: a∙", "b/c ⟶ src/c", "onfig.rs"]
         );
     }
 
@@ -2554,7 +2554,7 @@ mod tests {
                 panic!("the file name is not split");
             };
             // The spaces of the label and of the arrow are not replaced, nor the one inside `a b`.
-            assert_eq!(text(name), "renamed: ∙old/∙name ⟶   new∙/a b");
+            assert_eq!(text(name), "renamed: ∙old/∙name ⟶ new∙/a b");
             let highlighted = theme.file.patch(theme.highlighted_whitespace);
             assert_eq!(styles_of(name, "∙"), [highlighted]);
             assert_eq!(styles_of(name, "/∙"), [theme.file, highlighted]);
