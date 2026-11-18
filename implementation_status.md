@@ -506,7 +506,7 @@ version 0.0.12: improved display
 version 0.0.13: performance measurement
 ---------------------------------------
 
-- [ ] The dependencies are optimized in debug builds
+- [x] The dependencies are optimized in debug builds
 - [ ] A generated repository matching the performance target of the README (10 revisions of about
   1000 changed lines), with several file types, mismatched removed/added lines counts, new,
   deleted, renamed and binary files. It is the same each time it is generated
