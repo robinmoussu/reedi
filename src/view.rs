@@ -648,18 +648,16 @@ fn file_parts(file: &FileDiff, theme: &Theme) -> Vec<Part> {
     name.into_iter().chain(suffix).collect()
 }
 
-const PATH_SEPARATOR: &str = "/";
-
 /// The folders and the file name of `path`, each in its own part (with the `/` between them in
 /// their own parts), so that the whitespace at both ends of each of them is highlighted.
 fn path_component_parts(path: &str, style: Style) -> Vec<Part> {
-    path.split(PATH_SEPARATOR)
+    path.split('/')
         .enumerate()
         .flat_map(|(i, component)| {
             let separator = if i == 0 {
                 None
             } else {
-                Some(Part::content(PATH_SEPARATOR, style))
+                Some(Part::content("/", style))
             };
             separator
                 .into_iter()
