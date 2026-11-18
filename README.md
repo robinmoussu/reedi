@@ -35,7 +35,9 @@ Performance:
 - should target for 10 revisions with 1000 lines diff (insertion + deletions) each as reported by
   `git log --stat`:
   - 500 MB max memory usage
-  - 3-5 second max to open, ideally <1s
+  - 1 second max to open, ideally the first full screen drawn in less than 200ms
+  - 500ms max to refresh the screen (including when scrolling or after complex actions), ideally
+    less than 200ms
 - line-diff (move excluded, so only removed/added) doesn’t have timeout, but is expected to be fast
   and is computed first
 - move detection + word diff have a common timeout of 1s max per revision

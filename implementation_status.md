@@ -503,6 +503,23 @@ version 0.0.12: improved display
 - [x] During rebase, the header says `index for git rebase --continue` instead of `index for
   $branch`
 
+version 0.0.13: performance measurement
+---------------------------------------
+
+- [ ] The dependencies are optimized in debug builds
+- [ ] A generated repository matching the performance target of the README (10 revisions of about
+  1000 changed lines), with several file types, mismatched removed/added lines counts, new,
+  deleted, renamed and binary files. It is the same each time it is generated
+- [ ] A hidden `--fake-keys` option replays a sequence of keys written like in vim (`3jG<C-d>q`),
+  once the rows are displayed
+- [ ] With the `profiling` feature, the duration of the startup, of the loading of the revisions,
+  of each file diff, of each rewrap and of each frame is written to a trace file
+- [ ] Benchmarks of the loading of the revisions, of the rewrap (80 and 200 columns) and of the
+  drawing of a frame, on the generated repository, with their allocations count
+- [ ] `.justfile` targets to generate the repository, trace, benchmark, and profile the CPU and the
+  memory
+- [ ] `etc/profiling.md` explains how to measure the performance
+
 version 0.0.x: line-diff, word-diff and syntax highlighting
 -----------------------------------------------------------
 
