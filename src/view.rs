@@ -1322,11 +1322,17 @@ pub fn sticky_header(rows: &[Row], viewport: Viewport, height: usize) -> Option<
     })
 }
 
+/// Width of the percentage displayed at the end of the status bar, like `100%`.
+const PERCENTAGE_WIDTH: usize = 4;
+
 pub struct StatusBar<'a> {
     pub mode: Mode,
     /// Displayed after the mode, and a blank column. It is cropped, and its last column displays
-    /// `…`, if it doesn't fit.
+    /// `…`, if it doesn't fit before a blank column and the percentage.
     pub content: Line<'static>,
+    /// Position of the cursor among the rows, in percent, displayed right-aligned on the last
+    /// [`PERCENTAGE_WIDTH`] columns. Hidden if it doesn't fit after the mode and a blank column.
+    pub percentage: Option<usize>,
     pub theme: &'a Theme,
 }
 
@@ -1336,13 +1342,38 @@ impl Widget for StatusBar<'_> {
             Mode::Review => self.theme.review_mode,
         };
         let mode = Span::styled(format!(" {} ", self.mode.name()), style);
-        let content_width = usize::from(area.width).saturating_sub(mode.width() + 1);
+        let after_mode_width = usize::from(area.width).saturating_sub(mode.width() + 1);
+        let percentage = self
+            .percentage
+            .filter(|_| after_mode_width >= PERCENTAGE_WIDTH);
+        let content_width = if percentage.is_some() {
+            // A blank column between the content and the percentage.
+            after_mode_width.saturating_sub(PERCENTAGE_WIDTH + 1)
+        } else {
+            after_mode_width
+        };
         let mut spans = vec![mode, Span::raw(" ")];
         spans.extend(cropped(self.content, content_width).spans);
         Line::from(spans)
             .style(self.theme.status_bar)
             .render(area, buf);
+        if let Some(percentage) = percentage {
+            let width = u16::try_from(PERCENTAGE_WIDTH).expect("PERCENTAGE_WIDTH fits in u16");
+            Span::styled(
+                format!("{:>PERCENTAGE_WIDTH$}", format!("{percentage}%")),
+                self.theme.status_bar_content,
+            )
+            .render(Rect { x: area.right() - width, width, ..area }, buf);
+        }
     }
+}
+
+/// Return the position of the row `cursor_row_index` among `rows_count` rows, in percent rounded
+/// down: 100 on the last row. `None` if there are no rows.
+fn cursor_percentage(cursor_row_index: usize, rows_count: usize) -> Option<usize> {
+    (cursor_row_index + 1)
+        .saturating_mul(100)
+        .checked_div(rows_count)
 }
 
 /// `line`, if it is at most `width` columns wide, otherwise its first `width - 1` columns followed
@@ -1608,7 +1639,7 @@ pub fn previous_revision(rows: &[Row], row_index: usize, count: usize) -> usize 
 
 /// Draw `rows` (displaying `revisions`, their split rows having a left half `left_width` columns
 /// wide), with the status bar on the last line of the screen, and `error_modal` over them. The status bar displays the revision the cursor is on, or the number
-/// `pending_count` while there is one.
+/// `pending_count` while there is one, then the position of the cursor in percent.
 ///
 /// `viewport` is first scrolled, if needed, to display the cursor on the screen.
 #[allow(clippy::too_many_arguments)]
@@ -1645,7 +1676,15 @@ pub fn draw(
     } else {
         revision_status(revisions, revision_index(rows, viewport.cursor), theme)
     };
-    frame.render_widget(StatusBar { mode, content, theme }, status_bar);
+    frame.render_widget(
+        StatusBar {
+            mode,
+            content,
+            percentage: cursor_percentage(viewport.cursor, rows.len()),
+            theme,
+        },
+        status_bar,
+    );
     if let Some(error_modal) = error_modal {
         frame.render_widget(ErrorModalView { error_modal, theme }, frame.area());
     }
@@ -3131,11 +3170,25 @@ mod tests {
 
     /// The last row of `backend`, as text.
     fn status_bar(backend: &TestBackend) -> String {
+        status_bar_until(backend, backend.buffer().area.width)
+    }
+
+    /// The blank column and the percentage at the end of the status bar.
+    const STATUS_BAR_PERCENTAGE_COLUMNS_COUNT: u16 = 5;
+
+    /// The last row of `backend` without the blank column and the percentage at its end, as text.
+    fn status_bar_without_percentage(backend: &TestBackend) -> String {
+        status_bar_until(
+            backend,
+            backend.buffer().area.width - STATUS_BAR_PERCENTAGE_COLUMNS_COUNT,
+        )
+    }
+
+    /// The columns of the last row of `backend` before the column `end_x`, as text.
+    fn status_bar_until(backend: &TestBackend, end_x: u16) -> String {
         let buffer = backend.buffer();
         let y = buffer.area.height - 1;
-        (0..buffer.area.width)
-            .map(|x| buffer[(x, y)].symbol())
-            .collect()
+        (0..end_x).map(|x| buffer[(x, y)].symbol()).collect()
     }
 
     /// The cells of the last row of `backend`, after the mode and the blank column.
@@ -3257,7 +3310,7 @@ mod tests {
                         // Nothing but blanks follows the summary, which may end with a space.
                         let expected =
                             format!(" Review  {}", expected_revision_status(&commits, commit));
-                        let status_bar = status_bar(&backend);
+                        let status_bar = status_bar_without_percentage(&backend);
                         let after = status_bar.strip_prefix(&expected).expect(&status_bar);
                         assert!(after.chars().all(|c| c == ' '), "{status_bar:?}");
                     });
@@ -3276,7 +3329,7 @@ mod tests {
             top: headers[0],
         };
         assert_eq!(
-            status_bar(&render(
+            status_bar_without_percentage(&render(
                 &commits,
                 /* width */ 200,
                 /* height */ 30,
@@ -3291,7 +3344,7 @@ mod tests {
         );
         let viewport = Viewport { cursor: headers[1] - 1, top: headers[0] };
         assert_eq!(
-            status_bar(&render(
+            status_bar_without_percentage(&render(
                 &commits,
                 /* width */ 200,
                 /* height */ 30,
@@ -3351,7 +3404,9 @@ mod tests {
                 /* error_modal */ None,
                 &Theme::monochrome(),
             );
-            let status_bar: String = (0..200).map(|x| buffer[(x, 29)].symbol()).collect();
+            let status_bar: String = (0..200 - STATUS_BAR_PERCENTAGE_COLUMNS_COUNT)
+                .map(|x| buffer[(x, 29)].symbol())
+                .collect();
             let expected = format!(
                 " Review  commit 1/1: {} {LEFT_TO_RIGHT_MARK}{}",
                 commit.short_hash(),
@@ -3523,7 +3578,7 @@ mod tests {
             viewport_on(/* row_index */ 0),
             &Theme::light(),
         );
-        let ellipsis = &backend.buffer()[(39, 29)];
+        let ellipsis = &backend.buffer()[(39 - STATUS_BAR_PERCENTAGE_COLUMNS_COUNT, 29)];
         assert_eq!(ellipsis.symbol(), "…");
         assert_eq!(ellipsis.bg, Color::Indexed(252));
     }
@@ -3576,12 +3631,9 @@ mod tests {
                 viewport_on(/* row_index */ 0),
                 &Theme::monochrome(),
             );
-            let expected: String = full
-                .chars()
-                .take(usize::from(width) - 1)
-                .chain(['…'])
-                .collect();
-            assert_eq!(status_bar(&backend), expected);
+            let content_end = usize::from(width - STATUS_BAR_PERCENTAGE_COLUMNS_COUNT);
+            let expected: String = full.chars().take(content_end - 1).chain(['…']).collect();
+            assert_eq!(status_bar_without_percentage(&backend), expected);
         }
     }
 
@@ -3592,7 +3644,7 @@ mod tests {
             " Review  {}",
             expected_revision_status(&commits, /* index */ 0)
         );
-        let width = full.chars().count() as u16;
+        let width = full.chars().count() as u16 + STATUS_BAR_PERCENTAGE_COLUMNS_COUNT;
         let backend = render(
             &commits,
             width,
@@ -3600,7 +3652,7 @@ mod tests {
             viewport_on(/* row_index */ 0),
             &Theme::monochrome(),
         );
-        assert_eq!(status_bar(&backend), full);
+        assert_eq!(status_bar_without_percentage(&backend), full);
         // One column less crops it.
         let backend = render(
             &commits,
@@ -3610,9 +3662,9 @@ mod tests {
             &Theme::monochrome(),
         );
         assert_eq!(
-            status_bar(&backend),
+            status_bar_without_percentage(&backend),
             full.chars()
-                .take(usize::from(width) - 2)
+                .take(full.chars().count() - 2)
                 .chain(['…'])
                 .collect::<String>()
         );
@@ -3628,7 +3680,7 @@ mod tests {
             viewport_on(/* row_index */ 0),
             &Theme::dark(),
         );
-        let ellipsis = &backend.buffer()[(39, 29)];
+        let ellipsis = &backend.buffer()[(39 - STATUS_BAR_PERCENTAGE_COLUMNS_COUNT, 29)];
         assert_eq!(ellipsis.symbol(), "…");
         assert_eq!(ellipsis.fg, Color::Indexed(248));
     }
@@ -4179,7 +4231,7 @@ mod tests {
             /* pending_count */ 12,
             &Theme::monochrome(),
         );
-        let status_bar = status_bar(&backend);
+        let status_bar = status_bar_without_percentage(&backend);
         let after = status_bar.strip_prefix(expected).expect(&status_bar);
         assert!(after.chars().all(|c| c == ' '), "{status_bar:?}");
         assert!(!status_bar.contains("commit"), "{status_bar}");
@@ -4239,8 +4291,142 @@ mod tests {
             /* pending_count */ 12,
             &Theme::monochrome(),
         );
-        let expected: String = full.chars().take(29).chain(['…']).collect();
-        assert_eq!(status_bar(&backend), expected);
+        let content_end = usize::from(30 - STATUS_BAR_PERCENTAGE_COLUMNS_COUNT);
+        let expected: String = full.chars().take(content_end - 1).chain(['…']).collect();
+        assert_eq!(status_bar_without_percentage(&backend), expected);
+    }
+
+    #[test]
+    fn percentage_is_the_position_of_the_cursor_row_rounded_down() {
+        assert_eq!(
+            cursor_percentage(/* cursor_row_index */ 0, /* rows_count */ 3),
+            Some(33)
+        );
+        assert_eq!(
+            cursor_percentage(/* cursor_row_index */ 1, /* rows_count */ 3),
+            Some(66)
+        );
+        assert_eq!(
+            cursor_percentage(/* cursor_row_index */ 2, /* rows_count */ 3),
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn no_percentage_without_rows() {
+        assert_eq!(
+            cursor_percentage(/* cursor_row_index */ 0, /* rows_count */ 0),
+            None
+        );
+        let backend = render(
+            &[],
+            /* width */ 40,
+            /* height */ 10,
+            Viewport::default(),
+            &Theme::monochrome(),
+        );
+        assert_eq!(status_bar(&backend).trim_end(), " Review");
+    }
+
+    /// The status bar `width` columns wide displaying `content` and `percentage`.
+    fn render_status_bar(content: &str, percentage: Option<usize>, width: u16) -> String {
+        let area = Rect::new(/* x */ 0, /* y */ 0, width, /* height */ 1);
+        let mut buf = Buffer::empty(area);
+        StatusBar {
+            mode: Mode::Review,
+            content: Line::raw(content.to_string()),
+            percentage,
+            theme: &Theme::monochrome(),
+        }
+        .render(area, &mut buf);
+        buffer_row(&buf, /* y */ 0)
+    }
+
+    #[test]
+    fn percentage_is_right_aligned_on_the_last_4_columns() {
+        for (percentage, expected) in [(0, "  0%"), (42, " 42%"), (100, "100%")] {
+            let status_bar = render_status_bar("", Some(percentage), /* width */ 20);
+            assert_eq!(status_bar, format!(" Review{}{expected}", " ".repeat(9)));
+        }
+    }
+
+    #[test]
+    fn status_bar_content_is_cropped_before_a_blank_column_and_the_percentage() {
+        // It would fit in the 20 columns left after the mode and the blank column without the
+        // percentage.
+        let content = "abcdefghijklmnopqr";
+        assert_eq!(
+            render_status_bar(content, Some(42), /* width */ 29),
+            " Review  abcdefghijklmn…  42%"
+        );
+    }
+
+    #[test]
+    fn percentage_is_hidden_if_it_does_not_fit_after_the_mode_and_a_blank_column() {
+        // The narrowest status bar with the percentage, then one column narrower.
+        assert_eq!(
+            render_status_bar("abc", Some(42), /* width */ 13),
+            " Review   42%"
+        );
+        assert_eq!(
+            render_status_bar("abc", Some(42), /* width */ 12),
+            " Review  abc"
+        );
+    }
+
+    #[test]
+    fn status_bar_ends_with_the_percentage_of_the_cursor_row() {
+        let commits = [short_commit()];
+        let rows = rows_of(&commits, /* width */ 110);
+        let backend = render(
+            &commits,
+            /* width */ 110,
+            /* height */ 30,
+            viewport_on(rows.len() - 1),
+            &Theme::monochrome(),
+        );
+        assert!(status_bar(&backend).ends_with(" 100%"));
+    }
+
+    #[test]
+    fn percentage_is_displayed_while_a_number_is_pending() {
+        let commits = [short_commit()];
+        let rows = rows_of(&commits, /* width */ 110);
+        let backend = render_pending(
+            &commits,
+            /* width */ 110,
+            /* height */ 30,
+            viewport_on(rows.len() - 1),
+            /* pending_count */ 12,
+            &Theme::monochrome(),
+        );
+        assert!(status_bar(&backend).ends_with(" 100%"));
+    }
+
+    #[test]
+    fn percentage_is_gray() {
+        for (theme, gray, background) in &[
+            (Theme::dark(), Color::Indexed(248), Color::Reset),
+            (Theme::light(), Color::Indexed(240), Color::Indexed(252)),
+        ] {
+            let backend = render(
+                &[short_commit()],
+                /* width */ 110,
+                /* height */ 30,
+                viewport_on(/* row_index */ 0),
+                theme,
+            );
+            let buffer = backend.buffer();
+            let texts: Vec<_> = (110 - 4..110)
+                .map(|x| &buffer[(x, 29)])
+                .filter(|cell| cell.symbol() != " ")
+                .collect();
+            assert!(!texts.is_empty());
+            for cell in &texts {
+                assert_eq!(cell.fg, *gray, "{}", cell.symbol());
+                assert_eq!(cell.bg, *background, "{}", cell.symbol());
+            }
+        }
     }
 
     #[test]

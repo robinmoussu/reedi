@@ -117,6 +117,8 @@ Areas
     number of commits displayed)
     - index and working directory: `index for $branch: $summary` and `working directory` (see
     "Commit creation")
+- The right end of the status bar displays in gray the position of the cursor, in percent of the
+  rows
 - In light mode, the background of the status bar (but the mode) is light gray
 
 Commit creation

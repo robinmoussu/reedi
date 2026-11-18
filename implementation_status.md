@@ -496,7 +496,7 @@ version 0.0.12: improved display
   - pressing the mouse button on the sticky header never starts dragging the separation line. The
     mouse wheel works as usual
 
-- [ ] The % (in number of rows) should be displayed on the right side of the status bar.
+- [x] The % (in number of rows) should be displayed on the right side of the status bar.
   Details:
   - it is also displayed while a number is pending, and not displayed if there are no rows
 
