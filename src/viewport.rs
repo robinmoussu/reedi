@@ -4,7 +4,7 @@ use crate::settings::SCROLLOFF;
 
 /// Minimal number of rows kept between the cursor and the top/bottom of a screen `height` rows
 /// tall, which is smaller on a small screen.
-fn scrolloff(height: usize) -> usize {
+pub fn scrolloff(height: usize) -> usize {
     SCROLLOFF.min(height.saturating_sub(1) / 2)
 }
 

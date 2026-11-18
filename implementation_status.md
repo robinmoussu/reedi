@@ -487,7 +487,7 @@ version 0.0.12: improved display
 - [x] Fix `d`/`u` and `ctrl+d`/`ctrl+u`
 - [x] Fix resizing
 
-- [ ] The name of a file should stay at the top of the screen until the last line of that file is
+- [x] The name of a file should stay at the top of the screen until the last line of that file is
   scrolled away. When scrolling, if the filename didn’t fit in a single row, it is progressively
   shortened down to a single row using `…` instead of behing pushed away.
   Details:

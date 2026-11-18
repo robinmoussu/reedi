@@ -6,6 +6,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
 use gix::bstr::ByteSlice;
+use nonmax::NonMaxU32;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
@@ -27,6 +28,7 @@ use reediif::model::Hunk;
 use reediif::model::LineKind;
 use reediif::model::LineNumbers;
 use reediif::pairing;
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
@@ -43,6 +45,7 @@ use crate::settings::MAX_PAIRING_DISTANCE;
 use crate::settings::TAB_WIDTH;
 use crate::theme::Theme;
 use crate::viewport::Viewport;
+use crate::viewport::scrolloff;
 use crate::wrap;
 use crate::wrap::Breaks;
 use crate::wrap::Segment;
@@ -189,6 +192,9 @@ pub struct Row {
     /// between two revisions is the first line of the next revision (the separator below the last
     /// revision belongs to it).
     pub revision_index: usize,
+    /// Index, among the displayed files of the revision, of the file whose name or diff the row
+    /// displays. `None` for the other rows.
+    pub file_index: Option<NonMaxU32>,
 }
 
 impl Row {
@@ -216,11 +222,13 @@ impl Row {
             offset,
         }
     }
+}
 
-    /// Render the row on the first line of `area`, cropping it if too wide. If it is split, its
-    /// left half is `left_width` columns wide.
+impl Content {
+    /// Render the content on the first line of `area`, cropping it if too wide. If it is split,
+    /// its left half is `left_width` columns wide.
     fn render(&self, area: Rect, left_width: u16, buf: &mut Buffer) {
-        match &self.content {
+        match self {
             Content::Text(line) => {
                 set_line(buf, area.x, area.y, line, area.width);
                 if area.width > 0 {
@@ -626,26 +634,235 @@ fn final_cr(file: &FileDiff) -> FinalCr {
 /// `$file`, with a label if the file is not only modified (like `delta`), and a suffix if it has
 /// no hunks because of its content.
 fn file_parts(file: &FileDiff, theme: &Theme) -> Vec<Part> {
+    file_label(file, theme)
+        .into_iter()
+        .chain(path_parts(file, theme))
+        .chain(file_suffixes(file, theme).into_iter().next())
+        .collect()
+}
+
+/// The label displayed before the path of `file` if it is not only modified.
+fn file_label(file: &FileDiff, theme: &Theme) -> Option<Part> {
+    let label = match file.change {
+        FileChange::Modified => None,
+        FileChange::Added => Some("added: "),
+        FileChange::Deleted => Some("removed: "),
+        FileChange::Renamed { .. } => Some("renamed: "),
+    };
+    label.map(|label| Part::markup(label, theme.file))
+}
+
+/// The path of `file`, preceded by its old path if it is renamed.
+fn path_parts(file: &FileDiff, theme: &Theme) -> Vec<Part> {
     // Invalid UTF-8 is replaced by `�`.
-    let path = path_component_parts(&file.path.to_str_lossy(), theme.file);
-    let label = |label: &str| iter::once(Part::markup(label, theme.file));
-    let name: Vec<_> = match &file.change {
-        FileChange::Modified => path,
-        FileChange::Added => label("added: ").chain(path).collect(),
-        FileChange::Deleted => label("removed: ").chain(path).collect(),
-        FileChange::Renamed { from } => label("renamed: ")
-            .chain(path_component_parts(&from.to_str_lossy(), theme.file))
-            .chain(iter::once(Part::markup(" ⟶ ", theme.file)))
-            .chain(path)
-            .collect(),
+    let path = file.path.to_str_lossy();
+    match &file.change {
+        FileChange::Renamed { from } => renamed_path_parts(&from.to_str_lossy(), &path, theme),
+        _ => path_component_parts(&path, theme.file),
+    }
+}
+
+/// The old path `from` of a renamed file, an arrow, then its new path `path`.
+fn renamed_path_parts(from: &str, path: &str, theme: &Theme) -> Vec<Part> {
+    path_component_parts(from, theme.file)
+        .into_iter()
+        .chain(iter::once(Part::markup(" ⟶ ", theme.file)))
+        .chain(path_component_parts(path, theme.file))
+        .collect()
+}
+
+/// The suffix displayed after the path of `file` if it has no hunks because of its content, then
+/// its shorter versions, displayed in the sticky file name when the longer ones don't fit.
+fn file_suffixes(file: &FileDiff, theme: &Theme) -> Vec<Part> {
+    let (suffixes, style): (&[&str], _) = match file.content {
+        FileContentType::Text => (&[], theme.file),
+        FileContentType::Binary => (&[" (binary file)", " (binary)"], theme.file),
+        FileContentType::InvalidUtf8 => (
+            &[" (invalid utf-8 content)", " (invalid utf-8)", " (invalid)"],
+            theme.error,
+        ),
+        FileContentType::Unmerged => (&[" (unmerged path)", " (unmerged)"], theme.file),
     };
-    let suffix = match file.content {
-        FileContentType::Text => None,
-        FileContentType::Binary => Some(Part::markup(" (binary file)", theme.file)),
-        FileContentType::InvalidUtf8 => Some(Part::markup(" (invalid utf-8 content)", theme.error)),
-        FileContentType::Unmerged => Some(Part::markup(" (unmerged path)", theme.file)),
+    suffixes
+        .iter()
+        .map(|suffix| Part::markup(suffix, style))
+        .collect()
+}
+
+/// Minimal number of grapheme clusters kept from the stem of a shortened file name, then from the
+/// whole file name, before its folders are hidden.
+const MIN_KEPT_FILE_NAME_GRAPHEMES_COUNT: usize = 8;
+
+/// Maximal length of a dot-separated part of a file name belonging to its extension without being
+/// its last part (like `tar` in `.tar.gz`).
+const MAX_INNER_EXTENSION_LEN: usize = 4;
+
+/// Return whether `part`, a dot-separated part of a file name, can belong to its extension without
+/// being its last part: 1 to [`MAX_INNER_EXTENSION_LEN`] ASCII alphanumerics starting with a
+/// letter.
+fn looks_like_an_extension(part: &str) -> bool {
+    (1..=MAX_INNER_EXTENSION_LEN).contains(&part.len())
+        && part.starts_with(|c: char| c.is_ascii_alphabetic())
+        && part.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// Return the index, in the file name `name`, of the dot starting its extension: its last
+/// dot-separated part and the parts before it that look like an extension (`.tar.gz`,
+/// `.spec.ts`). `None` if `name` has no dot except a leading one.
+fn extension_dot_index(name: &str) -> Option<usize> {
+    let mut dot_indexes = name
+        .rmatch_indices('.')
+        .map(|(index, _)| index)
+        .filter(|index| *index > 0);
+    let last_dot_index = dot_indexes.next()?;
+    let mut part_end = last_dot_index;
+    let first_dot_index = dot_indexes
+        .take_while(|dot_index| {
+            let part = &name[dot_index + 1..part_end];
+            part_end = *dot_index;
+            looks_like_an_extension(part)
+        })
+        .last();
+    Some(first_dot_index.unwrap_or(last_dot_index))
+}
+
+fn graphemes_count(text: &str) -> usize {
+    text.graphemes(/* is_extended */ true).count()
+}
+
+/// Return the first `graphemes_count` grapheme clusters of `text`, or all of `text` if it has fewer.
+fn graphemes_start(text: &str, graphemes_count: usize) -> &str {
+    text.grapheme_indices(/* is_extended */ true)
+        .nth(graphemes_count)
+        .map_or(text, |(index, _)| &text[..index])
+}
+
+/// Return the shortened versions of `path`, each one narrower than the previous one, with the end
+/// of a part replaced by `…`:
+/// - the folders, down to `…/`,
+/// - the stem of the file name, down to [`MIN_KEPT_FILE_NAME_GRAPHEMES_COUNT`] grapheme clusters,
+/// - the extension, keeping its dot,
+/// - the whole file name, down to [`MIN_KEPT_FILE_NAME_GRAPHEMES_COUNT`] grapheme clusters,
+/// - the whole file name without `…/`, down to `…`.
+fn shortened_paths(path: &str) -> Vec<String> {
+    let (folder, name) = match path.rsplit_once('/') {
+        Some((folder, name)) => (Some(folder), name),
+        None => (None, path),
     };
-    name.into_iter().chain(suffix).collect()
+    let folder_prefix = if folder.is_some() { "…/" } else { "" };
+    let (stem, extension) = match extension_dot_index(name) {
+        Some(index) => (&name[..index], Some(&name[index + 1..])),
+        None => (name, None),
+    };
+    let dotted_extension = extension.map_or(String::new(), |extension| format!(".{extension}"));
+    let stem_count = graphemes_count(stem);
+    let name_count = graphemes_count(name);
+    let min_kept_count = MIN_KEPT_FILE_NAME_GRAPHEMES_COUNT.min(name_count);
+    let shortened = |text: &str, kept_count: usize| {
+        if kept_count >= graphemes_count(text) {
+            text.to_string()
+        } else {
+            format!("{}…", graphemes_start(text, kept_count))
+        }
+    };
+    let kept_stem = shortened(stem, MIN_KEPT_FILE_NAME_GRAPHEMES_COUNT);
+    let folders = folder.into_iter().flat_map(|folder| {
+        (0..graphemes_count(folder))
+            .rev()
+            .map(move |kept_count| format!("{}…/{name}", graphemes_start(folder, kept_count)))
+    });
+    let stems = (MIN_KEPT_FILE_NAME_GRAPHEMES_COUNT..stem_count)
+        .rev()
+        .map(|kept_count| {
+            format!(
+                "{folder_prefix}{}{dotted_extension}",
+                shortened(stem, kept_count)
+            )
+        });
+    let kept_stem = &kept_stem;
+    let extensions = extension.into_iter().flat_map(|extension| {
+        (1..graphemes_count(extension))
+            .rev()
+            .map(move |kept_count| {
+                format!(
+                    "{folder_prefix}{kept_stem}.{}",
+                    shortened(extension, kept_count)
+                )
+            })
+    });
+    let names = (min_kept_count..name_count)
+        .rev()
+        .map(|kept_count| format!("{folder_prefix}{}", shortened(name, kept_count)));
+    let names_without_folder_prefix = (0..=name_count)
+        .rev()
+        .map(|kept_count| shortened(name, kept_count));
+    let mut width = path.width();
+    folders
+        .chain(stems)
+        .chain(extensions)
+        .chain(names)
+        .chain(names_without_folder_prefix)
+        .filter(|candidate| {
+            let is_narrower = candidate.width() < width;
+            if is_narrower {
+                width = candidate.width();
+            }
+            is_narrower
+        })
+        .collect()
+}
+
+/// Return the versions of the file name of `file`, from the full one to `…`, each one shorter than
+/// the previous one: without its label, with its suffix shortened then hidden, with the old path
+/// of a renamed file shortened then hidden, then with its path shortened.
+fn file_name_candidates(file: &FileDiff, theme: &Theme) -> Vec<Vec<Part>> {
+    let path_parts = path_parts(file, theme);
+    let with_suffix = |suffix: Option<&Part>| -> Vec<Part> {
+        path_parts.iter().cloned().chain(suffix.cloned()).collect()
+    };
+    let shortened_froms = match &file.change {
+        FileChange::Renamed { from } => shortened_paths(&from.to_str_lossy()),
+        _ => Vec::new(),
+    };
+    let path = file.path.to_str_lossy();
+    let shortened_paths = shortened_paths(&path);
+    let path_only = |path: &str| path_component_parts(path, theme.file);
+    iter::once(file_parts(file, theme))
+        .chain(
+            file_suffixes(file, theme)
+                .iter()
+                .map(|suffix| with_suffix(Some(suffix))),
+        )
+        .chain(iter::once(with_suffix(None)))
+        .chain(
+            shortened_froms
+                .iter()
+                .map(|from| renamed_path_parts(from, &path, theme)),
+        )
+        .chain(iter::once(path_only(&path)))
+        .chain(shortened_paths.iter().map(|path| path_only(path)))
+        .collect()
+}
+
+/// Return the rows of the first version of the file name of `file` (see
+/// [`file_name_candidates()`]) fitting in `rows_count` rows `width` columns wide, or no rows if
+/// none fits.
+fn sticky_file_name(
+    file: &FileDiff,
+    width: usize,
+    rows_count: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    file_name_candidates(file, theme)
+        .into_iter()
+        .filter_map(|parts| wrapped(&parts, Breaks::Anywhere, FinalCr::Shown, width, theme).ok())
+        .find(|rows| rows.len() <= rows_count)
+        .map(|rows| {
+            rows.into_iter()
+                .map(|(_, _, spans)| Line::from(spans))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The folders and the file name of `path`, each in its own part (with the `/` between them in
@@ -688,6 +905,8 @@ struct Rows<'a> {
     /// Index of the revision being added, given to each row added. It is incremented just before
     /// adding the separator below a revision, which belongs to the next revision.
     revision_index: usize,
+    /// Index of the file being added, given to each row added. `None` outside of files.
+    file_index: Option<NonMaxU32>,
     width: u16,
     /// Width of the left half of the split rows.
     left_width: u16,
@@ -709,6 +928,7 @@ impl<'a> Rows<'a> {
             rows: Vec::new(),
             lines_count: 0,
             revision_index: 0,
+            file_index: None,
             width,
             left_width,
             theme,
@@ -724,6 +944,7 @@ impl<'a> Rows<'a> {
             line_index: self.lines_count,
             anchor_offset: AnchorOffset::Whole(0),
             revision_index: self.revision_index,
+            file_index: self.file_index,
         });
         self.lines_count += 1;
     }
@@ -742,12 +963,14 @@ impl<'a> Rows<'a> {
         let rows = wrapped(parts, breaks, FinalCr::Shown, self.width.into(), self.theme)?;
         let line_index = self.lines_count;
         let revision_index = self.revision_index;
+        let file_index = self.file_index;
         self.rows
             .extend(rows.into_iter().map(|(start, _, spans)| Row {
                 content: Content::Text(Line::from(spans)),
                 line_index,
                 anchor_offset: AnchorOffset::Whole(start),
                 revision_index,
+                file_index,
             }));
         self.lines_count += 1;
         Ok(())
@@ -843,6 +1066,7 @@ impl<'a> Rows<'a> {
                 };
                 let line_index = self.lines_count + index;
                 let revision_index = self.revision_index;
+                let file_index = self.file_index;
                 padded(left)
                     .zip(padded(right))
                     .map(move |((left_start, left), (right_start, right))| Row {
@@ -850,15 +1074,17 @@ impl<'a> Rows<'a> {
                         line_index,
                         anchor_offset: AnchorOffset::Split { left: left_start, right: right_start },
                         revision_index,
+                        file_index,
                     })
                     .collect::<Vec<_>>()
             })
             .collect())
     }
 
-    fn file(&mut self, file: &FileDiff) -> Result<(), RowsError> {
+    fn file(&mut self, file_index: usize, file: &FileDiff) -> Result<(), RowsError> {
         let final_cr = final_cr(file);
         self.blank();
+        self.file_index = u32::try_from(file_index).ok().and_then(NonMaxU32::new);
         self.text(&file_parts(file, self.theme), Breaks::Anywhere)?;
         self.rule(self.theme.file);
         file.hunks.iter().enumerate().try_for_each(|(i, hunk)| {
@@ -866,7 +1092,9 @@ impl<'a> Rows<'a> {
                 self.blank();
             }
             self.hunk(hunk, final_cr)
-        })
+        })?;
+        self.file_index = None;
+        Ok(())
     }
 
     /// Add the lines of `body` (a commit message without its subject), below a blank line.
@@ -889,7 +1117,10 @@ impl<'a> Rows<'a> {
                 Breaks::Words,
             )?;
         }
-        files.iter().try_for_each(|file| self.file(file))
+        files
+            .iter()
+            .enumerate()
+            .try_for_each(|(file_index, file)| self.file(file_index, file))
     }
 
     fn commit(&mut self, commit: &Commit) -> Result<(), RowsError> {
@@ -967,31 +1198,128 @@ pub fn rows(
     Ok(rows.rows)
 }
 
-/// Rows displayed from `viewport.top`, cropped if they don't fit, with the row of the cursor
-/// highlighted.
+/// Rows displayed from `viewport.top`, cropped if they don't fit, under the sticky file name (see
+/// [`sticky_header()`]), with the row of the cursor highlighted.
 pub struct RowsView<'a> {
     pub rows: &'a [Row],
+    /// The revisions displayed by `rows`, whose files give the sticky file name.
+    pub revisions: &'a [Revision],
     pub viewport: Viewport,
     /// Width of the left half of the split rows.
     pub left_width: u16,
     pub theme: &'a Theme,
 }
 
+impl RowsView<'_> {
+    /// Draw `header` over the top rows of `area`: its rule, and the file name shortened to fit on
+    /// the rows above it, directly above it.
+    fn render_sticky_header(&self, header: StickyHeader, area: Rect, buf: &mut Buffer) {
+        let file_index = usize::try_from(header.file_index.get()).expect("u32 fits in usize");
+        let file = &displayed_files(&self.revisions[header.revision_index])[file_index];
+        let names = sticky_file_name(file, area.width.into(), header.rule_row, self.theme);
+        let covered_rows_count = (header.rule_row + 1).min(area.height.into());
+        let covered = Rect {
+            height: u16::try_from(covered_rows_count).expect("at most the height of the area"),
+            ..area
+        };
+        Clear.render(covered, buf);
+        let first_row = header.rule_row - names.len();
+        let contents = names
+            .into_iter()
+            .map(Content::Text)
+            .chain(iter::once(Content::Rule(self.theme.file)));
+        (first_row..covered_rows_count)
+            .zip(contents)
+            .for_each(|(row, content)| {
+                let y = area.y + u16::try_from(row).expect("at most the height of the area");
+                content.render(Rect { y, height: 1, ..area }, self.left_width, buf);
+            });
+    }
+}
+
 impl Widget for RowsView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         self.rows
             .iter()
-            .enumerate()
             .skip(self.viewport.top)
             .zip(area.top()..area.bottom())
-            .for_each(|((index, row), y)| {
-                let area = Rect { y, height: 1, ..area };
-                row.render(area, self.left_width, buf);
-                if index == self.viewport.cursor {
-                    buf.set_style(area, self.theme.cursor);
-                }
+            .for_each(|(row, y)| {
+                row.content
+                    .render(Rect { y, height: 1, ..area }, self.left_width, buf);
             });
+        if let Some(header) = sticky_header(self.rows, self.viewport, area.height.into()) {
+            self.render_sticky_header(header, area, buf);
+        }
+        let cursor_y = self
+            .viewport
+            .cursor
+            .checked_sub(self.viewport.top)
+            .and_then(|row| u16::try_from(row).ok())
+            .filter(|row| *row < area.height);
+        if let Some(row) = cursor_y {
+            buf.set_style(
+                Rect { y: area.y + row, height: 1, ..area },
+                self.theme.cursor,
+            );
+        }
     }
+}
+
+/// Minimal actual scrolloff (see [`scrolloff()`]) with which the sticky rule stops on the second
+/// screen row instead of scrolling above the screen like the other rows.
+const MIN_SCROLLOFF_FOR_STICKY_RULE: usize = 2;
+
+/// The file name and the rule of the file displayed on the first screen row, drawn over the top
+/// rows of the screen once the first row of that file name is above the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StickyHeader {
+    /// Index of the revision of the file among the displayed revisions.
+    revision_index: usize,
+    /// Index of the file among the displayed files of its revision.
+    file_index: NonMaxU32,
+    /// Screen row of the rule. The file name is displayed on the rows above it.
+    pub rule_row: usize,
+}
+
+/// Return the sticky header of `rows` displayed from the row `viewport.top` on a screen `height`
+/// rows tall, if any.
+pub fn sticky_header(rows: &[Row], viewport: Viewport, height: usize) -> Option<StickyHeader> {
+    let top_row = rows.get(viewport.top)?;
+    let file_index = top_row.file_index?;
+    let is_in_file = |row: &Row| {
+        row.revision_index == top_row.revision_index && row.file_index == Some(file_index)
+    };
+    let name_row_index = rows[..viewport.top]
+        .iter()
+        .rposition(|row| !is_in_file(row))
+        .map_or(0, |index| index + 1);
+    if name_row_index == viewport.top {
+        return None;
+    }
+    let rule_row_index = name_row_index
+        + rows[name_row_index..]
+            .iter()
+            .position(|row| matches!(row.content, Content::Rule(_)))?;
+    let last_row_index = viewport.top
+        + rows[viewport.top..]
+            .iter()
+            .position(|row| !is_in_file(row))
+            .unwrap_or(rows.len() - viewport.top)
+        - 1;
+    let lowest_rule_row = last_row_index
+        .saturating_sub(1)
+        .max(rule_row_index)
+        .checked_sub(viewport.top)?;
+    let rule_row = if scrolloff(height) >= MIN_SCROLLOFF_FOR_STICKY_RULE {
+        rule_row_index.saturating_sub(viewport.top).max(1)
+    } else {
+        rule_row_index.checked_sub(viewport.top)?
+    };
+    Some(StickyHeader {
+        revision_index: top_row.revision_index,
+        file_index,
+        rule_row: rule_row.min(lowest_rule_row),
+    })
 }
 
 pub struct StatusBar<'a> {
@@ -1300,7 +1628,16 @@ pub fn draw(
             .areas(frame.area());
     viewport.fit(rows.len(), content.height.into());
     let viewport = *viewport;
-    frame.render_widget(RowsView { rows, viewport, left_width, theme }, content);
+    frame.render_widget(
+        RowsView {
+            rows,
+            revisions,
+            viewport,
+            left_width,
+            theme,
+        },
+        content,
+    );
     let content = if let Some(count) = pending_count {
         pending_count_status(count, theme)
     } else if revisions.is_empty() {
@@ -1385,7 +1722,7 @@ mod tests {
     fn file_rows(file: &FileDiff, width: u16, theme: &Theme) -> Vec<Row> {
         let dates = DateDisplay::for_snapshots();
         let mut rows = new_rows(width, theme, &dates);
-        rows.file(file).unwrap();
+        rows.file(/* file_index */ 0, file).unwrap();
         rows.rows
     }
 
@@ -1396,6 +1733,7 @@ mod tests {
             line_index: 0,
             anchor_offset: AnchorOffset::Whole(0),
             revision_index: 0,
+            file_index: None,
         }
     }
 
@@ -2017,7 +2355,8 @@ mod tests {
             /* x */ 0, /* y */ 0, /* width */ 21, /* height */ 1,
         );
         let mut buf = Buffer::empty(area);
-        row.render(area, fifty_fifty_left_width(area.width), &mut buf);
+        row.content
+            .render(area, fifty_fifty_left_width(area.width), &mut buf);
         assert_eq!(
             without_left_to_right_marks(&buf),
             Buffer::with_lines(["LLLLLLLLLLRRRRRRRRRRR"])
@@ -2031,7 +2370,9 @@ mod tests {
         );
         let symbols = |content: Content| {
             let mut buf = Buffer::empty(area);
-            row(content).render(area, fifty_fifty_left_width(area.width), &mut buf);
+            row(content)
+                .content
+                .render(area, fifty_fifty_left_width(area.width), &mut buf);
             buf.content
                 .iter()
                 .map(|cell| cell.symbol().to_string())
@@ -2061,7 +2402,8 @@ mod tests {
             left: Line::raw("LLLLLLLL日"),
             right: Line::raw("R"),
         });
-        row.render(area, fifty_fifty_left_width(area.width), &mut buf);
+        row.content
+            .render(area, fifty_fifty_left_width(area.width), &mut buf);
         assert_eq!(buf[(8, 0)].symbol(), "日\u{200e}");
         assert_eq!(buf[(9, 0)].symbol(), " ");
     }
@@ -2142,7 +2484,9 @@ mod tests {
                 /* x */ 0, /* y */ 0, /* width */ 24, /* height */ 1,
             );
             let mut buf = Buffer::empty(area);
-            rows[0].render(area, fifty_fifty_left_width(area.width), &mut buf);
+            rows[0]
+                .content
+                .render(area, fifty_fifty_left_width(area.width), &mut buf);
             let buf = without_left_to_right_marks(&buf);
             // In the last column of the left half.
             assert_eq!(buf[(11, 0)].symbol(), WRAP_MARKER);
@@ -2162,7 +2506,9 @@ mod tests {
             /* x */ 0, /* y */ 0, /* width */ 24, /* height */ 1,
         );
         let mut buf = Buffer::empty(area);
-        rows[0].render(area, fifty_fifty_left_width(area.width), &mut buf);
+        rows[0]
+            .content
+            .render(area, fifty_fifty_left_width(area.width), &mut buf);
         assert_eq!(buf[(23, 0)].symbol(), WRAP_MARKER);
     }
 
@@ -2231,7 +2577,8 @@ mod tests {
     fn backgrounds(row: &Row, width: u16) -> Vec<Color> {
         let area = Rect::new(/* x */ 0, /* y */ 0, width, /* height */ 1);
         let mut buf = Buffer::empty(area);
-        row.render(area, fifty_fifty_left_width(area.width), &mut buf);
+        row.content
+            .render(area, fifty_fifty_left_width(area.width), &mut buf);
         buf.content.iter().map(|cell| cell.bg).collect()
     }
 
@@ -3975,7 +4322,7 @@ mod tests {
             /* x */ 0, /* y */ 0, /* width */ 21, /* height */ 1,
         );
         let mut buf = Buffer::empty(area);
-        row.render(area, /* left_width */ 6, &mut buf);
+        row.content.render(area, /* left_width */ 6, &mut buf);
         assert_eq!(
             without_left_to_right_marks(&buf),
             Buffer::with_lines(["LLLLLLRRRRRRRRRRRRRRR"])
@@ -4102,5 +4449,338 @@ mod tests {
         let mut commit = commit_with_hunk(hunk("日本", "a"));
         commit.parent_ids = vec![ObjectId::null(gix::hash::Kind::Sha1); 2];
         assert_eq!(min_half_width(&[Revision::Commit(commit)]), 0);
+    }
+
+    /// A commit of `files`, for the tests of the sticky file name.
+    fn commit_of(files: Vec<FileDiff>) -> Commit {
+        let mut commit = commit_without_files(/* parents_count */ 1);
+        commit.files = files;
+        commit
+    }
+
+    /// The text file at `path`, modified by a hunk of `len` unchanged lines.
+    fn file_of_unchanged_lines(path: &str, len: usize) -> FileDiff {
+        FileDiff {
+            hunks: vec![unchanged(/* first_line */ 1, len)],
+            ..modified(path, Vec::new())
+        }
+    }
+
+    /// The indexes of the first row of the name of the `file_index`-th file of `rows`, of its
+    /// rule, and of its last row.
+    fn file_row_indexes(rows: &[Row], file_index: u32) -> (usize, usize, usize) {
+        let is_in_file = |row: &Row| row.file_index == NonMaxU32::new(file_index);
+        let name = rows.iter().position(is_in_file).unwrap();
+        let rule = name
+            + rows[name..]
+                .iter()
+                .position(|row| matches!(row.content, Content::Rule(_)))
+                .unwrap();
+        let last = rows.iter().rposition(is_in_file).unwrap();
+        (name, rule, last)
+    }
+
+    /// The screen row of the sticky rule of `rows` displayed from the row `top` on a screen
+    /// `height` rows tall, if there is a sticky file name.
+    fn sticky_rule_row(rows: &[Row], top: usize, height: usize) -> Option<usize> {
+        sticky_header(rows, viewport_on(top), height).map(|header| header.rule_row)
+    }
+
+    /// Tall enough for an actual scrolloff of `SCROLLOFF`.
+    const STICKY_SCREEN_HEIGHT: usize = 20;
+
+    /// A file name displayed on a single row of a screen 40 columns wide, followed by enough
+    /// lines to be scrolled, then by another file.
+    fn commit_with_a_short_file_name() -> Commit {
+        commit_of(vec![
+            file_of_unchanged_lines("src/main.rs", /* len */ 40),
+            file_of_unchanged_lines("src/lib.rs", /* len */ 40),
+        ])
+    }
+
+    /// A file name displayed on 3 rows of a screen 40 columns wide, followed by enough lines to
+    /// be scrolled.
+    fn commit_with_a_long_file_name() -> Commit {
+        commit_of(vec![file_of_unchanged_lines(
+            "src/a/folder/whose/path/is/so/long/that/it/is/displayed/on/three/rows/of/the/screen.rs",
+            /* len */ 40,
+        )])
+    }
+
+    #[test]
+    fn sticky_file_name_appears_once_the_first_row_of_the_file_name_is_above_the_screen() {
+        let rows = rows_of(&[commit_with_a_short_file_name()], /* width */ 40);
+        let (name, _, _) = file_row_indexes(&rows, /* file_index */ 0);
+        let rule_row = |top| sticky_rule_row(&rows, top, STICKY_SCREEN_HEIGHT);
+        assert_eq!(rule_row(name), None);
+        assert!(rule_row(name + 1).is_some());
+    }
+
+    #[test]
+    fn no_sticky_file_name_when_the_first_screen_row_belongs_to_no_file() {
+        let rows = rows_of(&[commit_with_a_short_file_name()], /* width */ 40);
+        let (_, _, last) = file_row_indexes(&rows, /* file_index */ 0);
+        // The header of the commit, and the blank row between the two files.
+        for top in [0, last + 1] {
+            assert_eq!(
+                sticky_rule_row(&rows, top, STICKY_SCREEN_HEIGHT),
+                None,
+                "{top}"
+            );
+        }
+    }
+
+    #[test]
+    fn sticky_rule_is_on_its_row_until_it_reaches_the_second_row() {
+        let rows = rows_of(&[commit_with_a_long_file_name()], /* width */ 40);
+        let (name, rule, _) = file_row_indexes(&rows, /* file_index */ 0);
+        assert_eq!(rule, name + 3);
+        let rule_row = |top| sticky_rule_row(&rows, top, STICKY_SCREEN_HEIGHT);
+        assert_eq!(rule_row(name + 1), Some(2));
+        assert_eq!(rule_row(name + 2), Some(1));
+        assert_eq!(rule_row(rule), Some(1));
+        assert_eq!(rule_row(rule + 10), Some(1));
+    }
+
+    #[test]
+    fn sticky_rule_is_pushed_up_by_the_last_row_of_the_file() {
+        let rows = rows_of(&[commit_with_a_short_file_name()], /* width */ 40);
+        let (_, _, last) = file_row_indexes(&rows, /* file_index */ 0);
+        let rule_row = |top| sticky_rule_row(&rows, top, STICKY_SCREEN_HEIGHT);
+        assert_eq!(rule_row(last - 2), Some(1));
+        // Without file name above it.
+        assert_eq!(rule_row(last - 1), Some(0));
+        assert_eq!(rule_row(last), None);
+    }
+
+    #[test]
+    fn sticky_rule_is_pushed_above_the_screen_with_an_actual_scrolloff_smaller_than_2() {
+        let rows = rows_of(&[commit_with_a_long_file_name()], /* width */ 40);
+        let (name, rule, _) = file_row_indexes(&rows, /* file_index */ 0);
+        // An actual scrolloff of 1.
+        let rule_row = |top| sticky_rule_row(&rows, top, /* height */ 4);
+        assert_eq!(rule_row(name + 1), Some(2));
+        assert_eq!(rule_row(name + 2), Some(1));
+        assert_eq!(rule_row(rule), Some(0));
+        assert_eq!(rule_row(rule + 1), None);
+    }
+
+    #[test]
+    fn sticky_rule_of_a_file_without_hunks_stays_on_its_row() {
+        let binary = FileDiff {
+            content: FileContentType::Binary,
+            hunks: Vec::new(),
+            ..modified("image.png", Vec::new())
+        };
+        let commit = commit_of(vec![
+            binary,
+            file_of_unchanged_lines("src/main.rs", /* len */ 40),
+        ]);
+        let rows = rows_of(&[commit], /* width */ 40);
+        let (_, rule, _) = file_row_indexes(&rows, /* file_index */ 0);
+        assert_eq!(sticky_rule_row(&rows, rule, STICKY_SCREEN_HEIGHT), Some(0));
+    }
+
+    /// The text of each of `candidates`.
+    fn candidate_texts(candidates: &[Vec<Part>]) -> Vec<String> {
+        candidates
+            .iter()
+            .map(|parts| parts.iter().map(|part| part.text.as_str()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn file_name_is_shortened_by_its_label_then_its_suffix_then_its_old_path_then_its_path() {
+        let file = FileDiff {
+            path: "c/d.rs".into(),
+            change: FileChange::Renamed { from: "a/b.rs".into() },
+            content: FileContentType::InvalidUtf8,
+            hunks: Vec::new(),
+        };
+        let candidates = file_name_candidates(&file, &Theme::monochrome());
+        assert_eq!(
+            candidate_texts(&candidates),
+            [
+                "renamed: a/b.rs ⟶ c/d.rs (invalid utf-8 content)",
+                "a/b.rs ⟶ c/d.rs (invalid utf-8 content)",
+                "a/b.rs ⟶ c/d.rs (invalid utf-8)",
+                "a/b.rs ⟶ c/d.rs (invalid)",
+                "a/b.rs ⟶ c/d.rs",
+                "b.rs ⟶ c/d.rs",
+                "b.… ⟶ c/d.rs",
+                "b… ⟶ c/d.rs",
+                "… ⟶ c/d.rs",
+                "c/d.rs",
+                "d.rs",
+                "d.…",
+                "d…",
+                "…",
+            ]
+        );
+    }
+
+    #[test]
+    fn path_is_shortened_one_column_at_a_time() {
+        // A folder, a stem longer than `MIN_KEPT_FILE_NAME_GRAPHEMES_COUNT` and an extension of
+        // more than 1 character, so that each step shortens something.
+        assert_eq!(
+            shortened_paths("docs/long_filename.html"),
+            [
+                // The folders.
+                "do…/long_filename.html",
+                "d…/long_filename.html",
+                "…/long_filename.html",
+                // The stem, down to 8 graphemes.
+                "…/long_filena….html",
+                "…/long_filen….html",
+                "…/long_file….html",
+                "…/long_fil….html",
+                // The extension, keeping its dot.
+                "…/long_fil….ht…",
+                "…/long_fil….h…",
+                // The file name, down to 8 graphemes.
+                "…/long_filen…",
+                "…/long_file…",
+                "…/long_fil…",
+                // Without the folders.
+                "long_file…",
+                "long_fil…",
+                "long_fi…",
+                "long_f…",
+                "long_…",
+                "long…",
+                "lon…",
+                "lo…",
+                "l…",
+                "…",
+            ]
+        );
+    }
+
+    #[test]
+    fn extension_is_the_last_part_of_the_name_and_the_short_parts_before_it() {
+        let extension = |name| extension_dot_index(name).map(|index| &name[index..]);
+        assert_eq!(extension("archive.tar.gz"), Some(".tar.gz"));
+        assert_eq!(extension("view.spec.ts"), Some(".spec.ts"));
+        // Parts of 1 to 4 ASCII alphanumerics starting with a letter.
+        assert_eq!(extension("meeting.2_notes.md"), Some(".md"));
+        assert_eq!(extension("a.release.md"), Some(".md"));
+        // Not a leading dot.
+        assert_eq!(extension(".vimrc"), None);
+        assert_eq!(extension("Makefile"), None);
+    }
+
+    /// The screen displaying the rows of `commits` from `viewport.top` on a screen `width` ×
+    /// `height` with `theme`, without the status bar.
+    fn render_rows(
+        commits: &[Commit],
+        width: u16,
+        height: u16,
+        viewport: Viewport,
+        theme: &Theme,
+    ) -> Buffer {
+        let revisions = revisions_of(commits);
+        let rows = rows_of(commits, width);
+        let area = Rect::new(/* x */ 0, /* y */ 0, width, height);
+        let mut buf = Buffer::empty(area);
+        RowsView {
+            rows: &rows,
+            revisions: &revisions,
+            viewport,
+            left_width: fifty_fifty_left_width(width),
+            theme,
+        }
+        .render(area, &mut buf);
+        without_left_to_right_marks(&buf)
+    }
+
+    /// The text of the row `y` of `buf`, without its trailing spaces.
+    fn buffer_row(buf: &Buffer, y: u16) -> String {
+        let row: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect();
+        row.trim_end().to_string()
+    }
+
+    #[test]
+    fn sticky_file_name_and_its_rule_are_drawn_over_the_top_rows() {
+        let commits = [commit_with_a_short_file_name()];
+        let rows = rows_of(&commits, /* width */ 40);
+        let (_, rule, _) = file_row_indexes(&rows, /* file_index */ 0);
+        let top = rule + 5;
+        let buf = render_rows(
+            &commits,
+            /* width */ 40,
+            /* height */ 20,
+            viewport_on(top),
+            &Theme::monochrome(),
+        );
+        assert_eq!(buffer_row(&buf, 0), "src/main.rs");
+        assert_eq!(buffer_row(&buf, 1), "─".repeat(40));
+        let (left, right) = text_of_row(&rows[top + 2]);
+        let left_width = usize::from(fifty_fifty_left_width(/* width */ 40));
+        assert_eq!(
+            buffer_row(&buf, 2),
+            format!("{left:left_width$}{right}").trim_end()
+        );
+    }
+
+    #[test]
+    fn sticky_file_name_is_shortened_to_the_rows_above_its_rule() {
+        let commits = [commit_with_a_long_file_name()];
+        let rows = rows_of(&commits, /* width */ 40);
+        let (name, _, _) = file_row_indexes(&rows, /* file_index */ 0);
+        let buf = render_rows(
+            &commits,
+            /* width */ 40,
+            /* height */ 20,
+            viewport_on(name + 2),
+            &Theme::monochrome(),
+        );
+        // The end of the folders is replaced, so that the name fits the 40 columns of its row.
+        assert_eq!(
+            buffer_row(&buf, 0),
+            "src/a/folder/whose/path/is/so…/screen.rs"
+        );
+        assert_eq!(buffer_row(&buf, 1), "─".repeat(40));
+    }
+
+    #[test]
+    fn rows_above_a_shortened_file_name_are_blank() {
+        // `removed: abcdefgh` is displayed on 3 rows, `abcdefgh` on 1.
+        let file = FileDiff {
+            change: FileChange::Deleted,
+            ..file_of_unchanged_lines("abcdefgh", /* len */ 40)
+        };
+        let commits = [commit_of(vec![file])];
+        let rows = rows_of(&commits, /* width */ 8);
+        let (name, rule, _) = file_row_indexes(&rows, /* file_index */ 0);
+        assert_eq!(rule, name + 3);
+        let buf = render_rows(
+            &commits,
+            /* width */ 8,
+            /* height */ 20,
+            viewport_on(name + 1),
+            &Theme::monochrome(),
+        );
+        assert_eq!(buffer_row(&buf, 0), "");
+        assert_eq!(buffer_row(&buf, 1), "abcdefgh");
+        assert_eq!(buffer_row(&buf, 2), "─".repeat(8));
+    }
+
+    #[test]
+    fn cursor_row_is_highlighted_over_the_sticky_file_name() {
+        let commits = [commit_with_a_long_file_name()];
+        let rows = rows_of(&commits, /* width */ 40);
+        let (name, _, _) = file_row_indexes(&rows, /* file_index */ 0);
+        let viewport = Viewport { cursor: name + 2, top: name + 1 };
+        for theme in &themes() {
+            let buf = render_rows(
+                &commits, /* width */ 40, /* height */ 20, viewport, theme,
+            );
+            // The second row of the file name, shortened to 2 rows.
+            assert_ne!(buffer_row(&buf, 1), "");
+            let cursor = theme.cursor.bg.unwrap();
+            assert!((0..40).all(|x| buf[(x, 1)].bg == cursor));
+            assert!((0..40).all(|x| buf[(x, 0)].bg != cursor));
+        }
     }
 }

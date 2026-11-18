@@ -453,7 +453,10 @@ impl Mouse {
         height: usize,
     ) -> Option<Action> {
         let row = usize::from(event.row);
+        let header_rows_count =
+            view::sticky_header(rows, viewport, height).map_or(0, |header| header.rule_row + 1);
         let is_on_separator = event.column == widths.left_width
+            && row >= header_rows_count
             && row < height
             && rows
                 .get(viewport.top + row)
@@ -910,6 +913,48 @@ mod tests {
             );
             assert_eq!(displayed_left_width(&mouse), separator, "{column}, {row}");
         }
+    }
+
+    #[test]
+    fn separator_cannot_be_dragged_over_the_sticky_file_name() {
+        let (rows, split_row) = rows_with_a_split_row();
+        // The sticky file name and its rule cover the first 2 screen rows, which display split
+        // rows, like the row below them.
+        let viewport = Viewport { cursor: 0, top: split_row.into() };
+        assert!(
+            rows[viewport.top..viewport.top + 3]
+                .iter()
+                .all(|row| matches!(row.content, Content::Split { .. }))
+        );
+        let separator = displayed_left_width(&Mouse::default());
+        let is_dragged_after_press_on = |row| {
+            let mut mouse = Mouse::default();
+            apply_at(
+                &mut mouse,
+                mouse_event(MouseEventKind::Down(LEFT), separator, row),
+                &rows,
+                viewport,
+            );
+            mouse.dragged_ratio.is_some() && mouse.pointer_shape == PointerShape::ColResize
+        };
+        assert!(!is_dragged_after_press_on(0));
+        assert!(!is_dragged_after_press_on(1));
+        assert!(is_dragged_after_press_on(2));
+    }
+
+    #[test]
+    fn mouse_wheel_scrolls_the_screen_over_the_sticky_file_name() {
+        let (rows, split_row) = rows_with_a_split_row();
+        let scroll = |kind| {
+            apply_at(
+                &mut Mouse::default(),
+                mouse_event(kind, 0, 0),
+                &rows,
+                Viewport { cursor: 0, top: split_row.into() },
+            )
+        };
+        assert_eq!(scroll(MouseEventKind::ScrollDown), Some(Action::ScrollDown));
+        assert_eq!(scroll(MouseEventKind::ScrollUp), Some(Action::ScrollUp));
     }
 
     #[test]

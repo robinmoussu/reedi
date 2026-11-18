@@ -106,6 +106,8 @@ Areas
   (`$VISUAL`, or `EDITOR as fallback`).
 - The diffs split the screen 50/50 at startup and can be changed by dragging the separation line.
   The ratio is kept if the terminal is resized
+- The name of a file stays at the top of the screen until the last line of that file is scrolled
+  away. If it doesn't fit, it is shortened with `…`
 - A status bar displays the current mode and each mode has an accent color for the background of the
   name of the current mode (`Review`: blue, `Edit`: light green, `Search`: honey, `Comment`: dark
   green, `Command`: mango, `Selection`: purple, `Move`: dark red)
