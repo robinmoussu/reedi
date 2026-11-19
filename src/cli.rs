@@ -5,6 +5,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use clap::ArgGroup;
+use clap::CommandFactory;
 use clap::Parser;
 use jiff::Timestamp;
 use jiff::Zoned;
@@ -43,9 +44,27 @@ pub struct Cli {
     /// setting, then to `human`.
     #[arg(long)]
     pub date_format: Option<DateFormat>,
-    /// Keys pressed once the rows are displayed, before those of the terminal.
+    /// Keys pressed once the rows are displayed, before those of the terminal, in Vim's key
+    /// notation (`3jG<C-d>q`).
     #[arg(long, hide = true)]
     pub send_keys: Option<Keys>,
+    /// Print the help of the hidden options.
+    #[arg(long, hide = true)]
+    pub help_hidden: bool,
+}
+
+/// The help of the hidden options only.
+pub fn hidden_help() -> String {
+    Cli::command()
+        .disable_help_flag(true)
+        .disable_version_flag(true)
+        .help_template("Hidden options:\n{options}")
+        .mut_args(|arg| {
+            let is_hidden = arg.is_hide_set();
+            arg.hide(!is_hidden)
+        })
+        .render_help()
+        .to_string()
 }
 
 /// A sequence of keys, written in Vim's key notation (`3jG<C-d>q`).
@@ -137,7 +156,6 @@ impl Error for CliError {}
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
     use clap::error::ErrorKind;
     use ratatui::crossterm::event::KeyCode;
     use ratatui::crossterm::event::KeyModifiers;
@@ -212,6 +230,26 @@ mod tests {
         assert!(help.contains("--date-format"));
         assert!(!help.contains("--fake"));
         assert!(!help.contains("--send-keys"));
+    }
+
+    #[test]
+    fn hidden_help_contains_only_the_hidden_options() {
+        let help = hidden_help();
+        Cli::command().get_arguments().for_each(|arg| {
+            let option = format!("--{}", arg.get_long().unwrap());
+            assert_eq!(
+                help.contains(&option),
+                arg.is_hide_set(),
+                "{option} in:\n{help}"
+            );
+        });
+        assert!(!help.contains("--help "));
+        assert!(!help.contains("--version"));
+    }
+
+    #[test]
+    fn hidden_help_is_only_the_list_of_hidden_options() {
+        assert!(hidden_help().starts_with("Hidden options:\n      --"));
     }
 
     #[test]

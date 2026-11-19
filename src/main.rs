@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
+use reedi::cli;
 use reedi::cli::Cli;
 use reedi::config;
 use reedi::config::UnknownSetting;
@@ -30,6 +31,10 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    if cli.help_hidden {
+        print!("{}", cli::hidden_help());
+        return Ok(());
+    }
     let revisions = log::displayed_revisions(&cli, &std::env::current_dir()?)?;
     let (settings, unknown_settings) = settings(&cli)?;
     let sent_keys = cli.send_keys.unwrap_or_default().0;
