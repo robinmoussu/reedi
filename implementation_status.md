@@ -525,10 +525,9 @@ version 0.0.13: performance measurement
     - from a doc comment to a test file, in Rust and in Python
 - [x] A hidden `--send-keys` option replays a sequence of keys written like in vim (`3jG<C-d>q`),
   once the rows are displayed
-- [ ] With the `profiling` feature, the duration of the startup, of the loading of the revisions,
-  of each file diff, of each rewrap and of each frame is written to a trace file
-- [ ] Benchmarks of the loading of the revisions, of the rewrap (80 and 200 columns) and of the
-  drawing of a frame, on the generated repository, with their allocations count
+- [x] Benchmarks of the startup (loading, wrapping and drawing the first frame), of the loading of
+  the revisions, of the rewrap (80 and 200 columns) and of the drawing of a frame (80×24 and
+  200×50), on the generated repository, with their allocations count
 - [ ] `.justfile` targets to generate the repository, trace, benchmark, and profile the CPU and the
   memory
 - [ ] `etc/profiling.md` explains how to measure the performance

@@ -49,7 +49,12 @@ test-support = ["dep:rand", "dep:rand_chacha", "dep:tempfile"]
 name = "performance_repository"
 required-features = ["test-support"]
 
+[[bench]]
+name = "performance"
+harness = false
+
 [dev-dependencies]
+divan = "0.1.21"
 insta = "1.49.0"
 # Enables `test-support` for the integration tests.
 reedi = { path = ".", features = ["test-support"] }
