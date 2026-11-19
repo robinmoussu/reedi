@@ -1,5 +1,7 @@
 [workspace]
 members = ["reedi-crossterm-compat", "reedi-gix-compat", "reediif"]
+# A workspace of its own (see `etc/modalkit-compatibility.md`).
+exclude = ["modalkit"]
 
 [workspace.package]
 version = "0.0.13"
@@ -20,6 +22,7 @@ icu_properties = "2.3.0"
 icu_segmenter = "2.3.0"
 include_dir = "0.7.4"
 jiff = "0.2.38"
+modalkit-key = { path = "modalkit/crates/modalkit-key" }
 nix = { version = "0.31.3", features = ["signal"] }
 nonmax = "0.5.5"
 # Only for `test-support`.

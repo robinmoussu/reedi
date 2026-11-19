@@ -1932,6 +1932,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "keybindings"
+version = "0.0.4"
+dependencies = [
+ "textwrap",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
 name = "lab"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2065,6 +2074,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "modalkit-key"
+version = "0.0.1"
+dependencies = [
+ "crossterm",
+ "keybindings",
+ "nom 8.0.0",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "multiversion_no_op"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2103,6 +2122,15 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
+]
+
+[[package]]
+name = "nom"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -2589,6 +2617,7 @@ dependencies = [
  "include_dir",
  "insta",
  "jiff",
+ "modalkit-key",
  "nix 0.31.3",
  "nonmax",
  "rand 0.10.4",
@@ -2845,6 +2874,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b"
 
 [[package]]
+name = "smawk"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8e2fb0f499abb4d162f2bedad68f5ef91a1682b5a03596ddb67efd37768d100"
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2999,7 +3034,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4ea810f0692f9f51b382fff5893887bb4580f5fa246fde546e0b13e7fcee662"
 dependencies = [
  "fnv",
- "nom",
+ "nom 7.1.3",
  "phf",
  "phf_codegen",
 ]
@@ -3053,6 +3088,17 @@ dependencies = [
  "wezterm-dynamic",
  "wezterm-input-types",
  "winapi",
+]
+
+[[package]]
+name = "textwrap"
+version = "0.16.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ecfad6c3abc80a577f2b91c1e412ee57e7a060d430b553c1b0c940974ebcd49"
+dependencies = [
+ "icu_segmenter",
+ "smawk",
+ "unicode-width",
 ]
 
 [[package]]

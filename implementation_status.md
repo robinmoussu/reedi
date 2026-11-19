@@ -32,6 +32,12 @@ functionality:
    `Added crossterm compatibility shim:` followed by a list of short descriptions of each
    compatibility shim added, one per line
 
+The keys written in Vim's key notation are parsed by `modalkit-key`, a crate extracted from
+`modalkit` in a fork (the `modalkit` submodule):
+ - the fork should be seen as technical debt, and when `modalkit` publishes an equivalent crate,
+   the submodule should be replaced by it
+ - the changes of the fork are documented in `etc/modalkit-compatibility.md`
+
 The diff model does not depend on the library used to access git data.
 
 version 0.0.0: general structure
@@ -517,7 +523,7 @@ version 0.0.13: performance measurement
     changed), each with and without light edits, for example:
     - from an inline script of an HTML file to a dedicated JavaScript file
     - from a doc comment to a test file, in Rust and in Python
-- [ ] A hidden `--fake-keys` option replays a sequence of keys written like in vim (`3jG<C-d>q`),
+- [x] A hidden `--send-keys` option replays a sequence of keys written like in vim (`3jG<C-d>q`),
   once the rows are displayed
 - [ ] With the `profiling` feature, the duration of the startup, of the loading of the revisions,
   of each file diff, of each rewrap and of each frame is written to a trace file

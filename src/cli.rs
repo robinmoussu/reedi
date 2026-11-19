@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::str::FromStr;
 
 use clap::ArgGroup;
 use clap::Parser;
@@ -9,6 +10,8 @@ use jiff::Timestamp;
 use jiff::Zoned;
 use jiff::fmt::strtime;
 use jiff::tz::TimeZone;
+use modalkit_key::parse::parse_macro_str;
+use ratatui::crossterm::event::KeyEvent;
 
 use crate::date;
 
@@ -40,7 +43,42 @@ pub struct Cli {
     /// setting, then to `human`.
     #[arg(long)]
     pub date_format: Option<DateFormat>,
+    /// Keys pressed once the rows are displayed, before those of the terminal.
+    #[arg(long, hide = true)]
+    pub send_keys: Option<Keys>,
 }
+
+/// A sequence of keys, written in Vim's key notation (`3jG<C-d>q`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Keys(pub Vec<KeyEvent>);
+
+impl FromStr for Keys {
+    type Err = InvalidKeys;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (_, keys) =
+            parse_macro_str(text).map_err(|_| InvalidKeys { input: text.to_string() })?;
+        Ok(Keys(keys.into_iter().map(KeyEvent::from).collect()))
+    }
+}
+
+/// A text is not a sequence of keys in Vim's key notation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidKeys {
+    pub input: String,
+}
+
+impl fmt::Display for InvalidKeys {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "invalid keys (expected Vim's key notation, like 3jG<C-d>q): {}",
+            self.input
+        )
+    }
+}
+
+impl Error for InvalidKeys {}
 
 /// An option of the command line is invalid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +139,8 @@ impl Error for CliError {}
 mod tests {
     use clap::CommandFactory;
     use clap::error::ErrorKind;
+    use ratatui::crossterm::event::KeyCode;
+    use ratatui::crossterm::event::KeyModifiers;
 
     use super::*;
     use crate::date::DateStyle;
@@ -116,6 +156,7 @@ mod tests {
         assert!(!cli.fake);
         assert!(!cli.fake_dirty_directory);
         assert_eq!(cli.date_format, None);
+        assert_eq!(cli.send_keys, None);
     }
 
     #[test]
@@ -170,6 +211,29 @@ mod tests {
         let help = Cli::command().render_help().to_string();
         assert!(help.contains("--date-format"));
         assert!(!help.contains("--fake"));
+        assert!(!help.contains("--send-keys"));
+    }
+
+    #[test]
+    fn send_keys_are_parsed_like_vim() {
+        let cli = parse(&["--send-keys", "3G<C-d>q"]).unwrap();
+        let key = |c, modifiers| KeyEvent::new(KeyCode::Char(c), modifiers);
+        let keys = vec![
+            key('3', KeyModifiers::NONE),
+            key('G', KeyModifiers::NONE),
+            key('d', KeyModifiers::CONTROL),
+            key('q', KeyModifiers::NONE),
+        ];
+        assert_eq!(cli.send_keys, Some(Keys(keys)));
+    }
+
+    /// Any other text is a sequence of keys: like in Vim, an unknown `<…>` is the keys of its
+    /// characters.
+    #[test]
+    fn empty_send_keys_is_an_error() {
+        let error = parse(&["--send-keys", ""]).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::ValueValidation);
+        assert!(error.to_string().contains("invalid keys"));
     }
 
     #[test]

@@ -32,7 +32,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
     let revisions = log::displayed_revisions(&cli, &std::env::current_dir()?)?;
     let (settings, unknown_settings) = settings(&cli)?;
-    reedi::run(&revisions, &settings, unknown_settings)?;
+    let sent_keys = cli.send_keys.unwrap_or_default().0;
+    reedi::run(&revisions, &settings, unknown_settings, sent_keys)?;
     Ok(())
 }
 

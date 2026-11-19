@@ -1,6 +1,7 @@
 //! Terminal handling and event loop.
 
 use std::io;
+use std::iter::Peekable;
 use std::panic;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use std::sync::mpsc::Receiver;
 use std::thread;
 use std::thread::Scope;
 use std::time::Duration;
+use std::vec;
 
 use nix::sys::signal;
 use nix::sys::signal::Signal;
@@ -20,6 +22,7 @@ use ratatui::crossterm::event::DisableMouseCapture;
 use ratatui::crossterm::event::EnableMouseCapture;
 use ratatui::crossterm::event::Event;
 use ratatui::crossterm::event::KeyCode;
+use ratatui::crossterm::event::KeyEvent;
 use ratatui::crossterm::event::KeyModifiers;
 use ratatui::crossterm::event::MouseButton;
 use ratatui::crossterm::event::MouseEvent;
@@ -174,7 +177,8 @@ fn navigate(
 
 /// Display `revisions` with `settings` until `q` or `ctrl+c` is pressed, and the
 /// `unknown_settings` of the config file (its path, and at least one setting) in an error modal
-/// over them, if any, until a key is pressed or the mouse is clicked.
+/// over them, if any, until a key is pressed or the mouse is clicked. The `sent_keys` are pressed
+/// once the rows are displayed, before the keys of the terminal.
 ///
 /// Like `less`, the alternate screen is used, and the screen is redrawn when its size changes.
 /// The rows are rewrapped in the background, the previous ones being displayed meanwhile. The
@@ -184,6 +188,7 @@ pub fn run(
     revisions: &[Revision],
     settings: &Settings,
     unknown_settings: Option<(PathBuf, Vec<UnknownSetting>)>,
+    sent_keys: Vec<KeyEvent>,
 ) -> io::Result<()> {
     let mut error_modal = unknown_settings
         .map(|(path, unknown_settings)| ErrorModal::UnknownSettings { path, unknown_settings });
@@ -194,6 +199,7 @@ pub fn run(
     let mut displayed_pointer_shape = PointerShape::Default;
     let mut viewport = Viewport::default();
     let mut count = Count::default();
+    let mut sent_keys = sent_keys.into_iter().peekable();
     let panic_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
         let _ = release_mouse();
@@ -237,10 +243,9 @@ pub fn run(
                         &settings.theme,
                     )
                 })?;
-                if rewrapper.is_running() && !event::poll(REWRAP_POLL_INTERVAL)? {
+                let Some(event) = next_event(&mut sent_keys, rewrapper.is_running())? else {
                     continue;
-                }
-                let event = event::read()?;
+                };
                 if error_modal.is_some() {
                     close_on_key_press_or_click(&event, &mut error_modal);
                     continue;
@@ -269,6 +274,25 @@ pub fn run(
     });
     release_mouse()?;
     result
+}
+
+/// The next of `sent_keys` once the rows are built (`rewrapping` is false), otherwise the next
+/// event of the terminal. Return `None` if there is none after [`REWRAP_POLL_INTERVAL`] while
+/// `rewrapping`, so that the rewrapped rows are displayed as soon as they are built.
+fn next_event(
+    sent_keys: &mut Peekable<vec::IntoIter<KeyEvent>>,
+    rewrapping: bool,
+) -> io::Result<Option<Event>> {
+    match sent_keys.peek() {
+        // The terminal is not read, so that its keys are pressed after the sent ones.
+        Some(_) if rewrapping => {
+            thread::sleep(REWRAP_POLL_INTERVAL);
+            Ok(None)
+        }
+        Some(_) => Ok(sent_keys.next().map(Event::Key)),
+        None if rewrapping && !event::poll(REWRAP_POLL_INTERVAL)? => Ok(None),
+        None => event::read().map(Some),
+    }
 }
 
 /// Stop receiving the mouse events, and give the mouse pointer its default shape back.
@@ -561,7 +585,6 @@ fn suspend(terminal: &mut DefaultTerminal) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use ratatui::crossterm::event::KeyEvent;
     use ratatui::crossterm::event::KeyEventKind;
 
     use super::*;
@@ -2116,5 +2139,35 @@ mod tests {
             navigate(action, /* count */ Some(3), &mut viewport, &[], HEIGHT);
             assert_eq!(viewport, Viewport::default(), "{action:?}");
         }
+    }
+
+    fn sent(codes: &[KeyCode]) -> Peekable<vec::IntoIter<KeyEvent>> {
+        codes
+            .iter()
+            .map(|&code| KeyEvent::new(code, KeyModifiers::NONE))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .peekable()
+    }
+
+    #[test]
+    fn sent_keys_are_pressed_in_order() {
+        let mut sent_keys = sent(&[KeyCode::Char('G'), KeyCode::Char('q')]);
+        let next = |sent_keys: &mut _| next_event(sent_keys, /* rewrapping */ false).unwrap();
+        assert_eq!(next(&mut sent_keys), Some(key(KeyCode::Char('G'))));
+        assert_eq!(next(&mut sent_keys), Some(key(KeyCode::Char('q'))));
+    }
+
+    #[test]
+    fn sent_keys_wait_for_the_rewrapped_rows() {
+        let mut sent_keys = sent(&[KeyCode::Char('G')]);
+        assert_eq!(
+            next_event(&mut sent_keys, /* rewrapping */ true).unwrap(),
+            None
+        );
+        assert_eq!(
+            next_event(&mut sent_keys, /* rewrapping */ false).unwrap(),
+            Some(key(KeyCode::Char('G')))
+        );
     }
 }

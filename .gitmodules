@@ -1,0 +1,3 @@
+[submodule "modalkit"]
+	path = modalkit
+	url = https://github.com/robinmoussu/modalkit.git
