@@ -4,6 +4,7 @@ use std::cell::Cell;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use std::process::Output;
 
@@ -57,9 +58,27 @@ pub enum RebaseBackend {
     Apply,
 }
 
+/// Where the repository of a [`Git`] is.
+#[derive(Debug)]
+pub enum Directory {
+    /// A new temporary directory, removed with the [`Git`].
+    Temporary(TempDir),
+    /// A directory (created if it doesn't exist), kept after the [`Git`] is dropped.
+    Persistent(PathBuf),
+}
+
+impl Directory {
+    fn path(&self) -> &Path {
+        match self {
+            Directory::Temporary(directory) => directory.path(),
+            Directory::Persistent(path) => path,
+        }
+    }
+}
+
 /// A new repository, and the environment `git` runs in (see [`isolated_command()`]).
 pub struct Git {
-    directory: TempDir,
+    directory: Directory,
     /// The current date (`GIT_TEST_DATE_NOW`), in the current timezone (`TZ`).
     now: Zoned,
     /// `LC_ALL`.
@@ -69,11 +88,22 @@ pub struct Git {
 }
 
 impl Git {
-    /// An empty repository, where the current date is `now` and the locale is `locale` (`C`, or
-    /// the name of an installed locale like `fr_FR.UTF-8`).
+    /// An empty repository in a temporary directory, where the current date is `now` and the
+    /// locale is `locale` (`C`, or the name of an installed locale like `fr_FR.UTF-8`).
     pub fn new(now: &Zoned, locale: &str) -> Self {
+        Self::new_in(
+            Directory::Temporary(tempfile::tempdir().unwrap()),
+            now,
+            locale,
+        )
+    }
+
+    /// An empty repository in `directory`, where the current date is `now` and the locale is
+    /// `locale` (`C`, or the name of an installed locale like `fr_FR.UTF-8`).
+    pub fn new_in(directory: Directory, now: &Zoned, locale: &str) -> Self {
+        fs::create_dir_all(directory.path()).unwrap();
         let git = Git {
-            directory: tempfile::tempdir().unwrap(),
+            directory,
             now: now.clone(),
             locale: locale.to_string(),
             commit_all_count: Cell::new(0),
@@ -82,10 +112,17 @@ impl Git {
         git
     }
 
-    /// An empty repository on `BRANCH`, for the tests that depend neither on the current date nor
-    /// on the locale.
+    /// An empty repository in a temporary directory, on `BRANCH`, for the tests that depend
+    /// neither on the current date nor on the locale.
     pub fn on_branch() -> Self {
-        let git = Self::new(
+        Self::on_branch_in(Directory::Temporary(tempfile::tempdir().unwrap()))
+    }
+
+    /// An empty repository in `directory`, on `BRANCH`, where the current date and the locale
+    /// are the same as with [`Git::on_branch()`].
+    pub fn on_branch_in(directory: Directory) -> Self {
+        let git = Self::new_in(
+            directory,
             &Timestamp::UNIX_EPOCH.to_zoned(TimeZone::get("UTC").unwrap()),
             "C",
         );
@@ -390,5 +427,29 @@ impl Git {
         } else {
             Err(String::from_utf8(output.stderr).unwrap())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persistent_repository_is_kept_after_drop() {
+        let parent = tempfile::tempdir().unwrap();
+        let path = parent.path().join("repository");
+        let git = Git::on_branch_in(Directory::Persistent(path.clone()));
+        let commit = git.commit_all(b"Kept");
+        drop(git);
+        let repository = gix::open_opts(&path, gix::open::Options::isolated()).unwrap();
+        assert_eq!(repository.head_id().unwrap().to_string(), commit);
+    }
+
+    #[test]
+    fn temporary_repository_is_removed_on_drop() {
+        let git = Git::on_branch();
+        let path = git.path().to_path_buf();
+        drop(git);
+        assert!(!path.exists());
     }
 }
