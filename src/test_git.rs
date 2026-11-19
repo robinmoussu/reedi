@@ -225,6 +225,11 @@ impl Git {
         fs::write(path, content).unwrap();
     }
 
+    /// Remove the file at `path` (relative to the working tree).
+    pub fn remove(&self, path: &str) {
+        fs::remove_file(self.path().join(path)).unwrap();
+    }
+
     /// `git add $path`.
     pub fn stage(&self, path: &str) {
         self.stdout_of(&["add", "--", path]);

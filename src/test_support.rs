@@ -1,5 +1,7 @@
 //! Helpers shared by the unit tests and the integration tests.
 
+pub mod performance_repository;
+
 use std::sync::atomic::AtomicBool;
 
 use ratatui::backend::Backend;

@@ -507,9 +507,16 @@ version 0.0.13: performance measurement
 ---------------------------------------
 
 - [x] The dependencies are optimized in debug builds
-- [ ] A generated repository matching the performance target of the README (10 revisions of about
-  1000 changed lines), with several file types, mismatched removed/added lines counts, new,
-  deleted, renamed and binary files. It is the same each time it is generated
+- [x] A generated repository matching the performance target of the README (10 revisions of about
+  1000 changed lines), whose diffs are shaped like real code, with several file types, mismatched
+  removed/added lines counts, new, deleted, renamed and binary files. It is the same each time it
+  is generated. It is guaranteed to contain:
+  - a new, a deleted and a renamed file
+  - moved blocks within a file, and between files, each with and without light edits
+  - non-trivial moved blocks, whose lines change like in a real move (prefix removed, indentation
+    changed), each with and without light edits, for example:
+    - from an inline script of an HTML file to a dedicated JavaScript file
+    - from a doc comment to a test file, in Rust and in Python
 - [ ] A hidden `--fake-keys` option replays a sequence of keys written like in vim (`3jG<C-d>q`),
   once the rows are displayed
 - [ ] With the `profiling` feature, the duration of the startup, of the loading of the revisions,
