@@ -528,9 +528,9 @@ version 0.0.13: performance measurement
 - [x] Benchmarks of the startup (loading, wrapping and drawing the first frame), of the loading of
   the revisions, of the rewrap (80 and 200 columns) and of the drawing of a frame (80×24 and
   200×50), on the generated repository, with their allocations count
-- [ ] `.justfile` targets to generate the repository, trace, benchmark, and profile the CPU and the
-  memory
-- [ ] `etc/profiling.md` explains how to measure the performance
+- [x] `.justfile` targets to generate the repository, benchmark, and profile the CPU (perf,
+  Callgrind) and the memory (heaptrack)
+- [x] `etc/profiling.md` explains how to measure the performance
 
 version 0.0.x: line-diff, word-diff and syntax highlighting
 -----------------------------------------------------------
