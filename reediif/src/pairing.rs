@@ -164,13 +164,12 @@ enum Operation {
     Insertion,
 }
 
-/// A cell of the Needleman-Wunsch / Wagner-Fischer table.
+/// A cell of the Needleman-Wunsch / Wagner-Fischer table. The cell it comes from is deduced from
+/// its operation (it is the first cell for the cells of the first row and of the first column).
 #[derive(Debug, Clone, Copy)]
 struct Cell {
-    /// Index of the cell this one comes from.
-    parent: usize,
+    cost: u32,
     operation: Operation,
-    cost: usize,
 }
 
 /// The operations transforming `x` into `y`, with the minimal cost (in which consecutive
@@ -190,75 +189,77 @@ fn operations_in<T: PartialEq>(x: &[T], y: &[T], table: &mut Vec<Cell>) -> Vec<(
     // in the column `i + 1` and the row `j + 1`.
     let columns = x.len() + 1;
     let index = |i: usize, j: usize| j * columns + i;
+    let cost = |cost: usize| u32::try_from(cost).expect("the cost fits in u32");
     table.clear();
     table.resize(
         columns * (y.len() + 1),
-        Cell {
-            parent: 0,
-            operation: Operation::NoOp,
-            cost: 0,
-        },
+        Cell { cost: 0, operation: Operation::NoOp },
     );
     for i in 1..columns {
         table[index(i, 0)] = Cell {
-            parent: 0,
+            cost: cost(i * DELETION_COST + INITIAL_MISMATCH_PENALTY),
             operation: Operation::Deletion,
-            cost: i * DELETION_COST + INITIAL_MISMATCH_PENALTY,
         };
     }
     for j in 1..=y.len() {
         table[index(0, j)] = Cell {
-            parent: 0,
+            cost: cost(j * INSERTION_COST + INITIAL_MISMATCH_PENALTY),
             operation: Operation::Insertion,
-            cost: j * INSERTION_COST + INITIAL_MISMATCH_PENALTY,
         };
     }
-    let mismatch_cost = |table: &[Cell], parent: usize, cost: usize| {
-        let penalty = if table[parent].operation == Operation::NoOp {
+    let mismatch_cost = |parent: Cell, mismatch_cost: usize| {
+        let penalty = if parent.operation == Operation::NoOp {
             INITIAL_MISMATCH_PENALTY
         } else {
             0
         };
-        table[parent].cost + cost + penalty
+        parent.cost + cost(mismatch_cost + penalty)
     };
-    x.iter().enumerate().for_each(|(i, x_i)| {
-        y.iter().enumerate().for_each(|(j, y_j)| {
-            let (left, diagonal, up) = (index(i, j + 1), index(i, j), index(i + 1, j));
+    // Row by row, so that the cells read are close to each other in memory.
+    y.iter().enumerate().for_each(|(j, y_j)| {
+        x.iter().enumerate().for_each(|(i, x_i)| {
+            let (left, diagonal, up) = (
+                table[index(i, j + 1)],
+                table[index(i, j)],
+                table[index(i + 1, j)],
+            );
             // If several candidates have the same cost, the first one is chosen. Insertions and
             // deletions are considered before matches, to group the modifications together.
-            let candidates = [
+            let insertion = mismatch_cost(up, INSERTION_COST);
+            let deletion = mismatch_cost(left, DELETION_COST);
+            let no_op = if x_i == y_j { diagonal.cost } else { u32::MAX };
+            table[index(i + 1, j + 1)] = if insertion <= deletion && insertion <= no_op {
                 Cell {
-                    parent: up,
+                    cost: insertion,
                     operation: Operation::Insertion,
-                    cost: mismatch_cost(table, up, INSERTION_COST),
-                },
+                }
+            } else if deletion <= no_op {
                 Cell {
-                    parent: left,
+                    cost: deletion,
                     operation: Operation::Deletion,
-                    cost: mismatch_cost(table, left, DELETION_COST),
-                },
-                Cell {
-                    parent: diagonal,
-                    operation: Operation::NoOp,
-                    cost: if x_i == y_j {
-                        table[diagonal].cost
-                    } else {
-                        usize::MAX
-                    },
-                },
-            ];
-            table[index(i + 1, j + 1)] = candidates
-                .into_iter()
-                .min_by_key(|cell| cell.cost)
-                .expect("there are candidates");
+                }
+            } else {
+                Cell { cost: no_op, operation: Operation::NoOp }
+            };
         });
     });
+    let parent = |cell_index: usize| {
+        let (i, j) = (cell_index % columns, cell_index / columns);
+        if i == 0 || j == 0 {
+            return 0;
+        }
+        match table[cell_index].operation {
+            Operation::Insertion => index(i, j - 1),
+            Operation::Deletion => index(i - 1, j),
+            Operation::NoOp => index(i - 1, j - 1),
+        }
+    };
     // The operations are read backwards, up to the first cell whose parent is the first one.
-    let mut cell = table[index(x.len(), y.len())];
-    let mut operations = vec![cell.operation];
-    while cell.parent != 0 {
-        cell = table[cell.parent];
-        operations.push(cell.operation);
+    let mut cell_index = index(x.len(), y.len());
+    let mut operations = vec![table[cell_index].operation];
+    while parent(cell_index) != 0 {
+        cell_index = parent(cell_index);
+        operations.push(table[cell_index].operation);
     }
     operations.reverse();
     operations
