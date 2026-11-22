@@ -2,6 +2,7 @@
 //! is displayed next to an added line only if they are similar enough.
 
 use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::iter;
 use std::sync::LazyLock;
 
@@ -300,10 +301,10 @@ struct Tokenized<'a> {
     tokens: Vec<&'a str>,
     /// The tokens, interned: equal tokens have the same id.
     ids: Vec<u32>,
-    /// Width of the tokens.
-    width: usize,
     /// Width of the tokens without whitespace, which the distance never trims.
     nonblank_width: usize,
+    /// The id and the width of each token, and whether it has whitespace, sorted by id.
+    sorted: Vec<(u32, usize, bool)>,
 }
 
 /// `text` tokenized, its tokens interned in `ids`.
@@ -315,28 +316,57 @@ fn tokenized<'a>(text: &'a str, ids: &mut HashMap<&'a str, u32>) -> Tokenized<'a
             let next_id = u32::try_from(ids.len()).expect("fewer tokens than u32::MAX");
             *ids.entry(*token).or_insert(next_id)
         })
-        .collect();
-    let width = tokens.iter().map(|token| token.width()).sum();
-    let nonblank_width = tokens
+        .collect::<Vec<_>>();
+    let mut sorted: Vec<_> = tokens
         .iter()
-        .filter(|token| !token.chars().any(char::is_whitespace))
-        .map(|token| token.width())
+        .zip(&token_ids)
+        .map(|(token, id)| (*id, token.width(), token.chars().any(char::is_whitespace)))
+        .collect();
+    sorted.sort_unstable();
+    let nonblank_width = sorted
+        .iter()
+        .filter(|(_, _, has_whitespace)| !has_whitespace)
+        .map(|(_, width, _)| width)
         .sum();
     Tokenized {
         tokens,
         ids: token_ids,
-        width,
         nonblank_width,
+        sorted,
     }
+}
+
+/// The width of the tokens `x` and `y` (see [`Tokenized::sorted`]) have in common, counted as many
+/// times as they are in both, and of those without whitespace.
+fn common_widths(x: &[(u32, usize, bool)], y: &[(u32, usize, bool)]) -> (usize, usize) {
+    let (mut i, mut j, mut common, mut common_nonblank) = (0, 0, 0, 0);
+    while i < x.len() && j < y.len() {
+        match x[i].0.cmp(&y[j].0) {
+            Ordering::Less => i += 1,
+            Ordering::Greater => j += 1,
+            Ordering::Equal => {
+                let (_, width, has_whitespace) = x[i];
+                common += width;
+                if !has_whitespace {
+                    common_nonblank += width;
+                }
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    (common, common_nonblank)
 }
 
 /// Whether the [`distance()`] between the lines tokenized as `x` and `y` is at most
 /// `max_distance`.
 fn is_similar(x: &Tokenized, y: &Tokenized, max_distance: f64) -> bool {
-    // A lower bound of the distance, much cheaper to compute: at least the difference of the
-    // widths without whitespace is changed, and at most the narrower line is kept.
-    let changed = x.nonblank_width.abs_diff(y.nonblank_width);
-    let kept = x.width.min(y.width);
+    // A lower bound of the distance, much cheaper to compute: the kept tokens are common to both
+    // lines, so at least the tokens without whitespace that aren't common are changed, and at most
+    // the common tokens are kept.
+    let (common, common_nonblank) = common_widths(&x.sorted, &y.sorted);
+    let changed = x.nonblank_width + y.nonblank_width - 2 * common_nonblank;
+    let kept = common;
     if changed > 0 && changed as f64 / (changed + 2 * kept) as f64 > max_distance {
         return false;
     }
@@ -430,11 +460,12 @@ mod tests {
 
     #[test]
     fn lines_are_similar_if_their_distance_is_at_most_the_maximum() {
-        // Lines of close widths, and of widths different enough for the distance to be above the
-        // maximum whatever their content.
+        // Lines of close widths, with few tokens in common, and of widths different enough for the
+        // distance to be above the maximum whatever their content.
         let lines = [
             "let a = b;",
             "let c = d;",
+            "fn main() {}",
             "x",
             "let a = b; // a comment much longer than the code before it",
             "\tlet a = b;",
