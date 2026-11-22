@@ -28,6 +28,7 @@ use reediif::model::Hunk;
 use reediif::model::LineKind;
 use reediif::model::LineNumbers;
 use reediif::pairing;
+use reediif::pairing::Pair;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
@@ -999,9 +1000,9 @@ impl<'a> Rows<'a> {
         }
         // Each pair of lines displayed side by side is a line (see `Row::line_index`), and so is
         // `MISSING_NEWLINE`.
-        let len = pairing::pairs(hunk, MAX_PAIRING_DISTANCE, TAB_WIDTH).len()
-            + usize::from(missing_newline_kind(hunk).is_some());
-        match self.hunk_rows(hunk, final_cr) {
+        let pairs = pairing::pairs(hunk, MAX_PAIRING_DISTANCE, TAB_WIDTH);
+        let len = pairs.len() + usize::from(missing_newline_kind(hunk).is_some());
+        match self.paired_hunk_rows(hunk, pairs, final_cr) {
             Ok(rows) => {
                 self.rows.extend(rows);
                 self.lines_count += len;
@@ -1019,12 +1020,25 @@ impl<'a> Rows<'a> {
     }
 
     /// The rows displaying the lines of `hunk`, the removed and added lines being paired like
-    /// `delta` does. If one half of a pair has more rows than the other, or has no line, the other
-    /// one is padded with rows displaying only the line number column.
+    /// `delta` does (see [`Self::paired_hunk_rows()`]).
+    #[cfg(test)]
+    fn hunk_rows(&self, hunk: &Hunk, final_cr: FinalCr) -> Result<Vec<Row>, TooNarrow> {
+        let pairs = pairing::pairs(hunk, MAX_PAIRING_DISTANCE, TAB_WIDTH);
+        self.paired_hunk_rows(hunk, pairs, final_cr)
+    }
+
+    /// The rows displaying the lines of `hunk`, paired as `pairs` says. If one half of a pair has
+    /// more rows than the other, or has no line, the other one is padded with rows displaying only
+    /// the line number column.
     ///
     /// If a version of the file doesn't end with a newline, but the other one does, they are
     /// followed by `MISSING_NEWLINE`, in the half of this version.
-    fn hunk_rows(&self, hunk: &Hunk, final_cr: FinalCr) -> Result<Vec<Row>, TooNarrow> {
+    fn paired_hunk_rows(
+        &self,
+        hunk: &Hunk,
+        pairs: Vec<Pair>,
+        final_cr: FinalCr,
+    ) -> Result<Vec<Row>, TooNarrow> {
         let number_width = line_number_width(hunk);
         let numbers = hunk.line_numbers();
         let left_width = usize::from(self.left_width);
@@ -1041,7 +1055,7 @@ impl<'a> Rows<'a> {
                 )
             })
         };
-        let mut lines = pairing::pairs(hunk, MAX_PAIRING_DISTANCE, TAB_WIDTH)
+        let mut lines = pairs
             .into_iter()
             .map(|pair| {
                 let left = half(pair.before, |numbers| numbers.before, left_width)?;
