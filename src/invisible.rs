@@ -91,6 +91,8 @@ pub enum Wrap {
 /// How a grapheme cluster is displayed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Content {
+    /// A printable ASCII character, displayed as is.
+    PrintableAscii(u8),
     /// Displayed the same way wherever it is.
     Fixed(Vec<Piece>),
     /// Displayed depending on its column and on the breaks around it.
@@ -134,6 +136,7 @@ impl Cluster {
     /// choosing the breaks before knowing where the clusters are relative to them.
     pub fn width(&self, column: usize) -> usize {
         match &self.content {
+            Content::PrintableAscii(_) => 1,
             Content::Fixed(pieces) => pieces.iter().map(|piece| piece.text.width()).sum(),
             Content::Contextual(Contextual::Space | Contextual::BrailleBlank) => 1,
             Content::Contextual(Contextual::Tab) => TAB_WIDTH - column % TAB_WIDTH,
@@ -147,6 +150,10 @@ impl Cluster {
     /// area, and displayed alone (without the spaces up to the next tab stop) before a break.
     pub fn push(&self, pieces: &mut Pieces, wrap: Wrap, room: usize) {
         let whitespace = match &self.content {
+            Content::PrintableAscii(byte) => {
+                pieces.push_char(Kind::Text, char::from(*byte));
+                return;
+            }
             Content::Fixed(fixed) => {
                 for piece in fixed {
                     pieces.push(piece.kind, &piece.text);
@@ -321,8 +328,15 @@ pub fn clusters(text: &str, final_cr: FinalCr, highlighted: HighlightedWhitespac
         None => (text, false),
     };
     // Grapheme clusters (what is displayed as a single character), with their position in the
-    // text.
-    let graphemes: Vec<(usize, &str)> = content.grapheme_indices(/* is_extended */ true).collect();
+    // text. Each ASCII character is a grapheme cluster, except a carriage return followed by a line
+    // feed.
+    let graphemes: Vec<(usize, &str)> = if content.is_ascii() && !content.contains('\r') {
+        (0..content.len())
+            .map(|start| (start, &content[start..=start]))
+            .collect()
+    } else {
+        content.grapheme_indices(/* is_extended */ true).collect()
+    };
     let is_whitespace_cluster =
         |(_, grapheme): &&(usize, &str)| grapheme.chars().all(is_whitespace);
     let leading_len = match highlighted {
@@ -343,7 +357,10 @@ pub fn clusters(text: &str, final_cr: FinalCr, highlighted: HighlightedWhitespac
             " " => Content::Contextual(Contextual::Space),
             BRAILLE_BLANK => Content::Contextual(Contextual::BrailleBlank),
             "\t" => Content::Contextual(Contextual::Tab),
-            _ => Content::Fixed(fixed(grapheme, highlighted_whitespace)),
+            _ => match *grapheme.as_bytes() {
+                [byte] if byte.is_ascii_graphic() => Content::PrintableAscii(byte),
+                _ => Content::Fixed(fixed(grapheme, highlighted_whitespace)),
+            },
         };
         Cluster {
             range: start..start + grapheme.len(),
@@ -699,6 +716,16 @@ mod tests {
                 piece("b", Kind::Text),
             ]
         );
+    }
+
+    #[test]
+    fn carriage_return_and_line_feed_inside_an_ascii_line_are_one_cluster() {
+        let clusters = clusters("a\r\nb", FinalCr::Hidden, HighlightedWhitespace::Trailing);
+        let ranges: Vec<_> = clusters
+            .iter()
+            .map(|cluster| cluster.range.clone())
+            .collect();
+        assert_eq!(ranges, [0..1, 1..3, 3..4]);
     }
 
     #[test]
