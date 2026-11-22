@@ -74,12 +74,23 @@ fn pair_modified(
     max_distance: f64,
     tab_width: usize,
 ) -> Vec<Pair> {
+    // Each line is compared with several others: it is prepared and tokenized once.
+    let prepare = |indexes: &[usize]| {
+        indexes
+            .iter()
+            .map(|&index| prepared(&lines[index].text, tab_width))
+            .collect::<Vec<_>>()
+    };
+    let (removed_texts, added_texts) = (prepare(removed), prepare(added));
+    let removed_tokens: Vec<_> = removed_texts.iter().map(|text| tokenize(text)).collect();
+    let added_tokens: Vec<_> = added_texts.iter().map(|text| tokenize(text)).collect();
     let mut next = 0;
     let mut pairs: Vec<_> = removed
         .iter()
-        .flat_map(|&before| {
-            let similar = added[next..].iter().position(|&after| {
-                distance(&lines[before].text, &lines[after].text, tab_width) <= max_distance
+        .zip(&removed_tokens)
+        .flat_map(|(&before, before_tokens)| {
+            let similar = added_tokens[next..].iter().position(|after_tokens| {
+                tokens_distance(before_tokens, after_tokens) <= max_distance
             });
             let rows: Vec<_> = match similar {
                 Some(skipped) => added[next..next + skipped]
@@ -240,12 +251,22 @@ fn operations(x: &[&str], y: &[&str]) -> Vec<(Operation, usize)> {
 /// It is the width of the deleted and inserted text, divided by the width of all the text of both
 /// lines (ignoring the whitespace at the edges of each group of tokens). Each tab counts as
 /// `tab_width` spaces.
+#[cfg(test)]
 fn distance(before: &str, after: &str, tab_width: usize) -> f64 {
-    let prepare = |line: &str| line.replace('\t', &" ".repeat(tab_width)) + "\n";
-    let (before, after) = (prepare(before), prepare(after));
-    let (x, y) = (tokenize(&before), tokenize(&after));
+    let (before, after) = (prepared(before, tab_width), prepared(after, tab_width));
+    tokens_distance(&tokenize(&before), &tokenize(&after))
+}
+
+/// `line` as it is tokenized: with each tab replaced by `tab_width` spaces, and followed by a
+/// newline.
+fn prepared(line: &str, tab_width: usize) -> String {
+    line.replace('\t', &" ".repeat(tab_width)) + "\n"
+}
+
+/// The [`distance()`] between the lines whose prepared texts are tokenized as `x` and `y`.
+fn tokens_distance(x: &[&str], y: &[&str]) -> f64 {
     let width = |tokens: &[&str]| tokens.concat().trim().width();
-    let (_, _, changed, total) = operations(&x, &y).into_iter().fold(
+    let (_, _, changed, total) = operations(x, y).into_iter().fold(
         (0, 0, 0, 0),
         |(x_offset, y_offset, changed, total), (operation, tokens_count)| match operation {
             Operation::Deletion => {
