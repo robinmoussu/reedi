@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Refuse a commit whose performance comparison with its parent breaks a threshold or a target,
+# unless its message has a `perf: <reason>` line, and a commit whose results or whose parent's
+# aren't saved (see `etc/profiling.md`).
+set -euo pipefail
+
+# The parent of the commit: that of `HEAD` when amending it.
+parent=HEAD
+if ps -o args= -p "$PPID" | grep --quiet -- '--amend'; then
+    parent=HEAD^
+fi
+if ! git rev-parse --verify --quiet "$parent" >/dev/null; then
+    exit 0
+fi
+root=$(git rev-parse --show-toplevel)
+status=0
+# The build directory of the scripts, shared with `just measure` and `just compare`.
+CARGO_TARGET_DIR=$root/target/scripts "$root/etc/check.rs" "$parent" "$(git write-tree)" || status=$?
+if [ "$status" = 1 ]; then
+    if grep --quiet '^perf: .' "$1"; then
+        exit 0
+    fi
+    echo "A threshold or a target is broken: say why in a \`perf: <reason>\` line." >&2
+fi
+exit "$status"

@@ -19,6 +19,7 @@ use reedi::test_git::Directory;
 use reedi::test_git::Git;
 use reedi::test_support::NOT_CANCELLED;
 use reedi::test_support::performance_repository;
+use reedi::test_support::performance_repository::Uncommitted;
 use reedi::theme::Theme;
 use reedi::view;
 use reedi::view::Mode;
@@ -29,7 +30,8 @@ use reedi::viewport::Viewport;
 #[global_allocator]
 static ALLOCATOR: AllocProfiler = AllocProfiler::system();
 
-/// The directory of the generated repository, removed at the end of [`main()`].
+/// The directory of the benchmarked repository: `$REEDI_PERFORMANCE_REPOSITORY`, or else a
+/// generated repository, removed at the end of [`main()`].
 static REPOSITORY_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 /// The revisions of the generated repository, loaded by the first benchmark needing them.
@@ -58,10 +60,18 @@ impl fmt::Display for Screen {
 }
 
 fn main() {
-    let directory = tempfile::tempdir().unwrap();
-    let git = Git::on_branch_in(Directory::Persistent(directory.path().to_path_buf()));
-    performance_repository::generate(&git);
-    REPOSITORY_PATH.set(directory.path().to_path_buf()).unwrap();
+    let generated_directory;
+    let path = match std::env::var_os("REEDI_PERFORMANCE_REPOSITORY") {
+        Some(path) => PathBuf::from(path),
+        None => {
+            generated_directory = tempfile::tempdir().unwrap();
+            let path = generated_directory.path().to_path_buf();
+            let git = Git::on_branch_in(Directory::Persistent(path.clone()));
+            performance_repository::generate(&git, Uncommitted::None);
+            path
+        }
+    };
+    REPOSITORY_PATH.set(path).unwrap();
     divan::main();
 }
 

@@ -229,9 +229,54 @@ struct Generator {
     files: BTreeMap<String, Content>,
 }
 
-/// Generate the repository in `git`: a base commit, which is the upstream of `BRANCH`, and
-/// [`REVISIONS_COUNT`] revisions on top of it.
-pub fn generate(git: &Git) {
+/// The uncommitted changes the generator leaves, each made like a revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Uncommitted {
+    None,
+    /// Staged changes.
+    Index,
+    /// Unstaged changes, including an untracked file.
+    WorkingDirectory,
+    /// Staged changes, and unstaged changes on top of them.
+    Both,
+}
+
+impl Uncommitted {
+    pub const ALL: [Uncommitted; 4] = [
+        Uncommitted::None,
+        Uncommitted::Index,
+        Uncommitted::WorkingDirectory,
+        Uncommitted::Both,
+    ];
+
+    /// The name of the option, as written on the command line.
+    pub fn name(self) -> &'static str {
+        match self {
+            Uncommitted::None => "none",
+            Uncommitted::Index => "index",
+            Uncommitted::WorkingDirectory => "working-directory",
+            Uncommitted::Both => "both",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Uncommitted> {
+        Uncommitted::ALL
+            .into_iter()
+            .find(|uncommitted| uncommitted.name() == name)
+    }
+
+    fn has_index(self) -> bool {
+        matches!(self, Uncommitted::Index | Uncommitted::Both)
+    }
+
+    fn has_working_directory(self) -> bool {
+        matches!(self, Uncommitted::WorkingDirectory | Uncommitted::Both)
+    }
+}
+
+/// Generate the repository in `git`: a base commit, which is the upstream of `BRANCH`,
+/// [`REVISIONS_COUNT`] revisions on top of it, and the `uncommitted` changes.
+pub fn generate(git: &Git, uncommitted: Uncommitted) {
     let mut rng = ChaCha8Rng::seed_from_u64(SEED);
     let vocabulary = vocabulary(&mut rng);
     let mut generator = Generator { rng, vocabulary, files: BTreeMap::new() };
@@ -246,14 +291,7 @@ pub fn generate(git: &Git) {
     }
     for (revision_index, guaranteed_changes) in guaranteed_changes.iter().enumerate() {
         let changes = generator.revision(guaranteed_changes);
-        changes
-            .removed_paths
-            .iter()
-            .for_each(|path| git.remove(path));
-        changes
-            .written_paths
-            .iter()
-            .for_each(|path| generator.write(git, path));
+        generator.apply(git, &changes);
         let words = generator.vocabulary.clone();
         let message = format!(
             "Revision {revision_index}: {}\n\n{}\n",
@@ -261,6 +299,20 @@ pub fn generate(git: &Git) {
             generator.sentence(&words)
         );
         git.commit_all(message.as_bytes());
+    }
+    if uncommitted.has_index() {
+        let changes = generator.revision(&[]);
+        generator.apply(git, &changes);
+        changes
+            .removed_paths
+            .iter()
+            .chain(&changes.written_paths)
+            .for_each(|path| git.stage(path));
+    }
+    if uncommitted.has_working_directory() {
+        // Unstaged, the new file is untracked.
+        let changes = generator.revision(&[GuaranteedChange::NewFile]);
+        generator.apply(git, &changes);
     }
 }
 
@@ -1060,6 +1112,18 @@ impl Generator {
         }
     }
 
+    /// Write the files that `changes` write, and remove those they remove, in the working tree.
+    fn apply(&self, git: &Git, changes: &Changes) {
+        changes
+            .removed_paths
+            .iter()
+            .for_each(|path| git.remove(path));
+        changes
+            .written_paths
+            .iter()
+            .for_each(|path| self.write(git, path));
+    }
+
     fn write_all(&self, git: &Git) {
         self.files.keys().for_each(|path| self.write(git, path));
     }
@@ -1156,9 +1220,61 @@ mod tests {
     }
 
     fn generated() -> Git {
+        generated_with(Uncommitted::None)
+    }
+
+    fn generated_with(uncommitted: Uncommitted) -> Git {
         let git = Git::on_branch();
-        generate(&git);
+        generate(&git, uncommitted);
         git
+    }
+
+    /// The insertions + deletions of `git diff $args --numstat`.
+    fn changed_lines_count(git: &Git, args: &[&str]) -> usize {
+        let args = ["diff", "--numstat"]
+            .iter()
+            .chain(args)
+            .copied()
+            .collect::<Vec<_>>();
+        git.stdout_of(&args)
+            .lines()
+            .filter_map(|line| {
+                let mut columns = line.split('\t');
+                let insertions = columns.next()?.parse::<usize>().ok()?;
+                let deletions = columns.next()?.parse::<usize>().ok()?;
+                Some(insertions + deletions)
+            })
+            .sum()
+    }
+
+    #[test]
+    fn uncommitted_changes_are_staged_unstaged_and_untracked_as_asked() {
+        Uncommitted::ALL.iter().for_each(|uncommitted| {
+            let git = generated_with(*uncommitted);
+            let staged_count = changed_lines_count(&git, &["--cached"]);
+            let unstaged_count = changed_lines_count(&git, &[]);
+            let untracked_paths = git.stdout_of(&["ls-files", "--others", "--exclude-standard"]);
+            let expected_count = |is_expected| {
+                if is_expected {
+                    CHANGED_LINES_COUNTS
+                } else {
+                    0..=0
+                }
+            };
+            assert!(
+                expected_count(uncommitted.has_index()).contains(&staged_count),
+                "{uncommitted:?}: {staged_count} staged changed lines"
+            );
+            assert!(
+                expected_count(uncommitted.has_working_directory()).contains(&unstaged_count),
+                "{uncommitted:?}: {unstaged_count} unstaged changed lines"
+            );
+            assert_eq!(
+                !untracked_paths.is_empty(),
+                uncommitted.has_working_directory(),
+                "{uncommitted:?}: untracked files: {untracked_paths:?}"
+            );
+        });
     }
 
     #[test]

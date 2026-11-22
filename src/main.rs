@@ -1,8 +1,10 @@
 #![forbid(unsafe_code)]
 
 use std::error::Error;
+use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Instant;
 
 use clap::Parser;
 use reedi::cli;
@@ -30,6 +32,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
+    let start = Instant::now();
     let cli = Cli::parse();
     if cli.help_hidden {
         print!("{}", cli::hidden_help());
@@ -38,7 +41,10 @@ fn run() -> Result<(), Box<dyn Error>> {
     let revisions = log::displayed_revisions(&cli, &std::env::current_dir()?)?;
     let (settings, unknown_settings) = settings(&cli)?;
     let sent_keys = cli.send_keys.unwrap_or_default().0;
-    reedi::run(&revisions, &settings, unknown_settings, sent_keys)?;
+    let timing = reedi::run(&revisions, &settings, unknown_settings, sent_keys, start)?;
+    if let Some(path) = cli.timing {
+        fs::write(path, timing.to_json())?;
+    }
     Ok(())
 }
 

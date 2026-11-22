@@ -22,4 +22,5 @@ pub mod view;
 pub mod viewport;
 pub mod wrap;
 
+pub use app::Timing;
 pub use app::run;

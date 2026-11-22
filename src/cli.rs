@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use clap::ArgGroup;
@@ -51,6 +52,14 @@ pub struct Cli {
     /// Print the help of the hidden options.
     #[arg(long, hide = true)]
     pub help_hidden: bool,
+    /// Write to this file, in milliseconds, the time from the start to the first full screen, and
+    /// the duration of each refresh after a key.
+    #[arg(long, hide = true)]
+    pub timing: Option<PathBuf>,
+    /// Draw after every key, even when the next key is already waiting, so that `--timing`
+    /// measures every refresh. Every key is drawn for now: this option has no effect yet.
+    #[arg(long, hide = true)]
+    pub draw_every_key: bool,
 }
 
 /// The help of the hidden options only.
@@ -175,6 +184,14 @@ mod tests {
         assert!(!cli.fake_dirty_directory);
         assert_eq!(cli.date_format, None);
         assert_eq!(cli.send_keys, None);
+        assert_eq!(cli.timing, None);
+        assert!(!cli.draw_every_key);
+    }
+
+    #[test]
+    fn timing_is_the_path_of_a_file() {
+        let cli = parse(&["--timing", "timing.json"]).unwrap();
+        assert_eq!(cli.timing, Some(PathBuf::from("timing.json")));
     }
 
     #[test]

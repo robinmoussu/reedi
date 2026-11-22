@@ -12,6 +12,7 @@ use std::sync::mpsc::Receiver;
 use std::thread;
 use std::thread::Scope;
 use std::time::Duration;
+use std::time::Instant;
 use std::vec;
 
 use nix::sys::signal;
@@ -175,6 +176,36 @@ fn navigate(
     }
 }
 
+/// How fast `reedi` displays and refreshes the screen.
+#[derive(Debug, Default, PartialEq)]
+pub struct Timing {
+    /// From the start of `reedi` until the first frame displaying rows is drawn.
+    pub first_full_screen: Option<Duration>,
+    /// From reading each key until the next frame is drawn.
+    pub refreshes: Vec<Duration>,
+}
+
+impl Timing {
+    /// The durations in milliseconds, as JSON: `{"first_full_screen_ms": …, "refresh_ms": […]}`
+    /// (`null` if no frame displayed rows).
+    pub fn to_json(&self) -> String {
+        let milliseconds = |duration: &Duration| format!("{:.3}", duration.as_secs_f64() * 1000.0);
+        let first_full_screen = self
+            .first_full_screen
+            .as_ref()
+            .map_or("null".to_string(), milliseconds);
+        let refreshes = self
+            .refreshes
+            .iter()
+            .map(milliseconds)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "{{\"first_full_screen_ms\": {first_full_screen}, \"refresh_ms\": [{refreshes}]}}\n"
+        )
+    }
+}
+
 /// Display `revisions` with `settings` until `q` or `ctrl+c` is pressed, and the
 /// `unknown_settings` of the config file (its path, and at least one setting) in an error modal
 /// over them, if any, until a key is pressed or the mouse is clicked. The `sent_keys` are pressed
@@ -183,13 +214,18 @@ fn navigate(
 /// Like `less`, the alternate screen is used, and the screen is redrawn when its size changes.
 /// The rows are rewrapped in the background, the previous ones being displayed meanwhile. The
 /// mouse events are captured while running. Fails if a text area outside of the hunks is too
-/// narrow to display a grapheme cluster of its line.
+/// narrow to display a grapheme cluster of its line. Return how fast the screen was displayed
+/// since `start`, and refreshed.
 pub fn run(
     revisions: &[Revision],
     settings: &Settings,
     unknown_settings: Option<(PathBuf, Vec<UnknownSetting>)>,
     sent_keys: Vec<KeyEvent>,
-) -> io::Result<()> {
+    start: Instant,
+) -> io::Result<Timing> {
+    let mut timing = Timing::default();
+    // When the key whose refresh is not drawn yet was read.
+    let mut key_read = None;
     let mut error_modal = unknown_settings
         .map(|(path, unknown_settings)| ErrorModal::UnknownSettings { path, unknown_settings });
     let mut rows = Vec::new();
@@ -243,9 +279,19 @@ pub fn run(
                         &settings.theme,
                     )
                 })?;
+                let drawn = Instant::now();
+                if timing.first_full_screen.is_none() && !rows.is_empty() {
+                    timing.first_full_screen = Some(drawn - start);
+                }
+                if let Some(read) = key_read.take() {
+                    timing.refreshes.push(drawn - read);
+                }
                 let Some(event) = next_event(&mut sent_keys, rewrapper.is_running())? else {
                     continue;
                 };
+                if let Event::Key(_) = event {
+                    key_read = Some(Instant::now());
+                }
                 if error_modal.is_some() {
                     close_on_key_press_or_click(&event, &mut error_modal);
                     continue;
@@ -273,7 +319,7 @@ pub fn run(
         })
     });
     release_mouse()?;
-    result
+    result.map(|()| timing)
 }
 
 /// The next of `sent_keys` once the rows are built (`rewrapping` is false), otherwise the next
@@ -2148,6 +2194,26 @@ mod tests {
             .collect::<Vec<_>>()
             .into_iter()
             .peekable()
+    }
+
+    #[test]
+    fn timing_is_written_in_milliseconds() {
+        let timing = Timing {
+            first_full_screen: Some(Duration::from_micros(123_456)),
+            refreshes: vec![Duration::from_micros(1_500), Duration::from_millis(2)],
+        };
+        assert_eq!(
+            timing.to_json(),
+            "{\"first_full_screen_ms\": 123.456, \"refresh_ms\": [1.500, 2.000]}\n"
+        );
+    }
+
+    #[test]
+    fn timing_without_full_screen_is_null() {
+        assert_eq!(
+            Timing::default().to_json(),
+            "{\"first_full_screen_ms\": null, \"refresh_ms\": []}\n"
+        );
     }
 
     #[test]

@@ -13,6 +13,8 @@ flamegraph_perf_config := justfile_directory() / "target/flamegraph.perfconfig"
 callgrind_report := justfile_directory() / "target/callgrind.out"
 # heaptrack appends `.zst`, the extension of its compression, to the name it is given.
 heaptrack_report := justfile_directory() / "target/heaptrack"
+# The build directory of the scripts of `etc/` (cargo scripts, built with nightly), shared by them.
+scripts_target := justfile_directory() / "target/scripts"
 
 # The keys replayed by the profilers: go to the last row, then quit.
 default_keys := "99999jq"
@@ -29,6 +31,18 @@ generate directory=repository:
 # Run the benchmarks.
 bench:
     cargo bench --bench performance
+
+# Measure the performance of `revision` (default: the working tree) and save the results.
+measure revision="":
+    CARGO_TARGET_DIR={{ scripts_target }} etc/measure.rs {{ revision }}
+
+# Display the performance differences between the working tree and `base`.
+compare base="HEAD":
+    CARGO_TARGET_DIR={{ scripts_target }} etc/compare.rs {{ base }}
+
+# Make git use the hooks of `etc/hooks` (the `commit-msg` hook checks the performance).
+install-hooks:
+    git config core.hooksPath etc/hooks
 
 # Profile the CPU time with perf, then open Hotspot (empty `keys`: use reedi by hand).
 perf keys=default_keys: check-perf-event-paranoid (run-under perf_record keys)
