@@ -129,6 +129,15 @@ fn pair_modified(
 /// The tokens of `line`, aligned by [`operations()`]: its words, and each grapheme cluster between
 /// them, after one (or two, if the line doesn't start with a word) empty tokens.
 fn tokenize(line: &str) -> Vec<&str> {
+    if line.is_ascii() && !line.contains('\r') {
+        ascii_tokens(line)
+    } else {
+        unicode_tokens(line)
+    }
+}
+
+/// [`tokenize()`] for any line.
+fn unicode_tokens(line: &str) -> Vec<&str> {
     let words: Vec<_> = WORD.find_iter(line).collect();
     let second_empty = if words.first().is_some_and(|word| word.start() == 0) || line.is_empty() {
         None
@@ -152,6 +161,34 @@ fn tokenize(line: &str) -> Vec<&str> {
                 .graphemes(/* is_extended */ true)
                 .chain(word)
         });
+    iter::once("").chain(second_empty).chain(tokens).collect()
+}
+
+/// [`tokenize()`] for an ASCII line without carriage return, in which the words are made of
+/// `[A-Za-z0-9_]`, and each other character is a grapheme cluster.
+fn ascii_tokens(line: &str) -> Vec<&str> {
+    let bytes = line.as_bytes();
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    let second_empty = if bytes.first().is_none_or(|&byte| is_word(byte)) {
+        None
+    } else {
+        Some("")
+    };
+    let mut start = 0;
+    let tokens = iter::from_fn(|| {
+        let first = *bytes.get(start)?;
+        let len = if is_word(first) {
+            bytes[start..]
+                .iter()
+                .take_while(|&&byte| is_word(byte))
+                .count()
+        } else {
+            1
+        };
+        let token = &line[start..start + len];
+        start += len;
+        Some(token)
+    });
     iter::once("").chain(second_empty).chain(tokens).collect()
 }
 
@@ -479,6 +516,23 @@ mod tests {
                 let distance = distance(before, after, TAB_WIDTH);
                 assert_eq!(similar, distance <= MAX_DISTANCE, "{before:?}, {after:?}");
             }
+        }
+    }
+
+    #[test]
+    fn ascii_lines_are_tokenized_like_any_line() {
+        let all_but_carriage_return: String = (0..=127_u8)
+            .map(char::from)
+            .filter(|&c| c != '\r')
+            .collect();
+        for line in [
+            "",
+            "a",
+            " a",
+            "let a_1 = b2(c);\n",
+            all_but_carriage_return.as_str(),
+        ] {
+            assert_eq!(ascii_tokens(line), unicode_tokens(line), "{line:?}");
         }
     }
 
