@@ -316,6 +316,11 @@ fn text_row(
 /// Width of the narrowest text area in which `line` can be wrapped: the widest of its clusters (a
 /// tab fits in a single column), and at least 1.
 pub fn min_width(line: &str, final_cr: FinalCr) -> usize {
+    // Each ASCII character other than a tab is displayed on a single column (a control character
+    // by its control picture).
+    if line.is_ascii() {
+        return 1;
+    }
     invisible::clusters(line, final_cr, HighlightedWhitespace::Trailing)
         .iter()
         .map(|cluster| {
@@ -863,5 +868,11 @@ mod tests {
     #[test]
     fn min_width_of_an_empty_line_is_one_column() {
         assert_eq!(min_width("", FinalCr::Shown), 1);
+    }
+
+    #[test]
+    fn min_width_of_ascii_text_is_one_column() {
+        let ascii: String = (0..=127_u8).map(char::from).collect();
+        assert_eq!(min_width(&ascii, FinalCr::Shown), 1);
     }
 }

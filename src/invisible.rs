@@ -710,6 +710,27 @@ mod tests {
     }
 
     #[test]
+    fn ascii_characters_other_than_tab_are_displayed_on_one_column() {
+        let wide: Vec<_> = (0..=127_u8)
+            .map(char::from)
+            .filter(|&c| c != '\t')
+            .filter(|c| {
+                clusters(
+                    &c.to_string(),
+                    FinalCr::Shown,
+                    HighlightedWhitespace::Trailing,
+                )
+                .iter()
+                .any(|cluster| cluster.width(/* column */ 0) != 1)
+            })
+            .collect();
+        assert!(
+            wide.is_empty(),
+            "wider or narrower than one column: {wide:?}"
+        );
+    }
+
+    #[test]
     fn control_characters_are_replaced_by_their_control_picture() {
         assert_eq!(text("\0\u{1b}[31mred\u{7}\u{1f}x"), "␀␛[31mred␇␟x");
         assert_eq!(text("a\u{7f}"), "a␡");
