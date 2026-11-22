@@ -1,8 +1,11 @@
 //! Pairing of the removed and added lines of a hunk, similar to what `delta` does: a removed line
 //! is displayed next to an added line only if they are similar enough.
 
+use std::cell::RefCell;
 use std::iter;
 use std::sync::LazyLock;
+
+use foldhash::HashMap;
 
 use regex::Regex;
 use unicode_segmentation::UnicodeSegmentation;
@@ -82,16 +85,23 @@ fn pair_modified(
             .collect::<Vec<_>>()
     };
     let (removed_texts, added_texts) = (prepare(removed), prepare(added));
-    let removed_tokens: Vec<_> = removed_texts.iter().map(|text| tokenize(text)).collect();
-    let added_tokens: Vec<_> = added_texts.iter().map(|text| tokenize(text)).collect();
+    let mut ids = HashMap::default();
+    let removed_tokens: Vec<_> = removed_texts
+        .iter()
+        .map(|text| tokenized(text, &mut ids))
+        .collect();
+    let added_tokens: Vec<_> = added_texts
+        .iter()
+        .map(|text| tokenized(text, &mut ids))
+        .collect();
     let mut next = 0;
     let mut pairs: Vec<_> = removed
         .iter()
         .zip(&removed_tokens)
         .flat_map(|(&before, before_tokens)| {
-            let similar = added_tokens[next..].iter().position(|after_tokens| {
-                tokens_distance(before_tokens, after_tokens) <= max_distance
-            });
+            let similar = added_tokens[next..]
+                .iter()
+                .position(|after_tokens| is_similar(before_tokens, after_tokens, max_distance));
             let rows: Vec<_> = match similar {
                 Some(skipped) => added[next..next + skipped]
                     .iter()
@@ -165,19 +175,29 @@ struct Cell {
 /// The operations transforming `x` into `y`, with the minimal cost (in which consecutive
 /// deletions or insertions cost less), each one with the number of consecutive tokens it applies
 /// to.
-fn operations(x: &[&str], y: &[&str]) -> Vec<(Operation, usize)> {
+fn operations<T: PartialEq>(x: &[T], y: &[T]) -> Vec<(Operation, usize)> {
+    thread_local! {
+        /// The table of the last call, kept to reuse its allocation.
+        static TABLE: RefCell<Vec<Cell>> = const { RefCell::new(Vec::new()) };
+    }
+    TABLE.with_borrow_mut(|table| operations_in(x, y, table))
+}
+
+/// [`operations()`], computed in `table`, whose previous content is ignored.
+fn operations_in<T: PartialEq>(x: &[T], y: &[T], table: &mut Vec<Cell>) -> Vec<(Operation, usize)> {
     // `x` is along the top of the table, `y` along the left side. The cell of `x[i]` and `y[j]` is
     // in the column `i + 1` and the row `j + 1`.
     let columns = x.len() + 1;
     let index = |i: usize, j: usize| j * columns + i;
-    let mut table = vec![
+    table.clear();
+    table.resize(
+        columns * (y.len() + 1),
         Cell {
             parent: 0,
             operation: Operation::NoOp,
             cost: 0,
-        };
-        columns * (y.len() + 1)
-    ];
+        },
+    );
     for i in 1..columns {
         table[index(i, 0)] = Cell {
             parent: 0,
@@ -209,12 +229,12 @@ fn operations(x: &[&str], y: &[&str]) -> Vec<(Operation, usize)> {
                 Cell {
                     parent: up,
                     operation: Operation::Insertion,
-                    cost: mismatch_cost(&table, up, INSERTION_COST),
+                    cost: mismatch_cost(table, up, INSERTION_COST),
                 },
                 Cell {
                     parent: left,
                     operation: Operation::Deletion,
-                    cost: mismatch_cost(&table, left, DELETION_COST),
+                    cost: mismatch_cost(table, left, DELETION_COST),
                 },
                 Cell {
                     parent: diagonal,
@@ -253,8 +273,20 @@ fn operations(x: &[&str], y: &[&str]) -> Vec<(Operation, usize)> {
 /// `tab_width` spaces.
 #[cfg(test)]
 fn distance(before: &str, after: &str, tab_width: usize) -> f64 {
+    compare(before, after, tab_width, tokens_distance)
+}
+
+/// The result of `comparison` on `before` and `after`, prepared and tokenized with `tab_width`.
+#[cfg(test)]
+fn compare<T>(
+    before: &str,
+    after: &str,
+    tab_width: usize,
+    comparison: impl Fn(&Tokenized, &Tokenized) -> T,
+) -> T {
     let (before, after) = (prepared(before, tab_width), prepared(after, tab_width));
-    tokens_distance(&tokenize(&before), &tokenize(&after))
+    let mut ids = HashMap::default();
+    comparison(&tokenized(&before, &mut ids), &tokenized(&after, &mut ids))
 }
 
 /// `line` as it is tokenized: with each tab replaced by `tab_width` spaces, and followed by a
@@ -263,10 +295,60 @@ fn prepared(line: &str, tab_width: usize) -> String {
     line.replace('\t', &" ".repeat(tab_width)) + "\n"
 }
 
-/// The [`distance()`] between the lines whose prepared texts are tokenized as `x` and `y`.
-fn tokens_distance(x: &[&str], y: &[&str]) -> f64 {
+/// A prepared line (see [`prepared()`]), tokenized for its comparisons with other lines.
+struct Tokenized<'a> {
+    tokens: Vec<&'a str>,
+    /// The tokens, interned: equal tokens have the same id.
+    ids: Vec<u32>,
+    /// Width of the tokens.
+    width: usize,
+    /// Width of the tokens without whitespace, which the distance never trims.
+    nonblank_width: usize,
+}
+
+/// `text` tokenized, its tokens interned in `ids`.
+fn tokenized<'a>(text: &'a str, ids: &mut HashMap<&'a str, u32>) -> Tokenized<'a> {
+    let tokens = tokenize(text);
+    let token_ids = tokens
+        .iter()
+        .map(|token| {
+            let next_id = u32::try_from(ids.len()).expect("fewer tokens than u32::MAX");
+            *ids.entry(*token).or_insert(next_id)
+        })
+        .collect();
+    let width = tokens.iter().map(|token| token.width()).sum();
+    let nonblank_width = tokens
+        .iter()
+        .filter(|token| !token.chars().any(char::is_whitespace))
+        .map(|token| token.width())
+        .sum();
+    Tokenized {
+        tokens,
+        ids: token_ids,
+        width,
+        nonblank_width,
+    }
+}
+
+/// Whether the [`distance()`] between the lines tokenized as `x` and `y` is at most
+/// `max_distance`.
+fn is_similar(x: &Tokenized, y: &Tokenized, max_distance: f64) -> bool {
+    // A lower bound of the distance, much cheaper to compute: at least the difference of the
+    // widths without whitespace is changed, and at most the narrower line is kept.
+    let changed = x.nonblank_width.abs_diff(y.nonblank_width);
+    let kept = x.width.min(y.width);
+    if changed > 0 && changed as f64 / (changed + 2 * kept) as f64 > max_distance {
+        return false;
+    }
+    tokens_distance(x, y) <= max_distance
+}
+
+/// The [`distance()`] between the lines tokenized as `x` and `y`.
+fn tokens_distance(x: &Tokenized, y: &Tokenized) -> f64 {
     let width = |tokens: &[&str]| tokens.concat().trim().width();
-    let (_, _, changed, total) = operations(x, y).into_iter().fold(
+    let operations = operations(&x.ids, &y.ids);
+    let (x, y) = (&x.tokens, &y.tokens);
+    let (_, _, changed, total) = operations.into_iter().fold(
         (0, 0, 0, 0),
         |(x_offset, y_offset, changed, total), (operation, tokens_count)| match operation {
             Operation::Deletion => {
@@ -344,6 +426,28 @@ mod tests {
         assert_eq!(tokenize("ab cd\n"), ["", "ab", " ", "cd", "\n"]);
         assert_eq!(tokenize("  a.é\n"), ["", "", " ", " ", "a", ".", "é", "\n"]);
         assert_eq!(tokenize("!\n"), ["", "", "!", "\n"]);
+    }
+
+    #[test]
+    fn lines_are_similar_if_their_distance_is_at_most_the_maximum() {
+        // Lines of close widths, and of widths different enough for the distance to be above the
+        // maximum whatever their content.
+        let lines = [
+            "let a = b;",
+            "let c = d;",
+            "x",
+            "let a = b; // a comment much longer than the code before it",
+            "\tlet a = b;",
+        ];
+        for before in lines {
+            for after in lines {
+                let similar = compare(before, after, TAB_WIDTH, |x, y| {
+                    is_similar(x, y, MAX_DISTANCE)
+                });
+                let distance = distance(before, after, TAB_WIDTH);
+                assert_eq!(similar, distance <= MAX_DISTANCE, "{before:?}, {after:?}");
+            }
+        }
     }
 
     #[test]

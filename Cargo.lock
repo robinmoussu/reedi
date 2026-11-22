@@ -2693,6 +2693,7 @@ name = "reediif"
 version = "0.0.13"
 dependencies = [
  "bstr",
+ "foldhash",
  "gix-imara-diff",
  "regex",
  "unicode-segmentation",
