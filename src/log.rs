@@ -2,6 +2,7 @@
 //! directory is dirty, otherwise the commits `git log $base..HEAD -p --reverse` displays, where
 //! `$base` is described by [`Base`].
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
@@ -10,7 +11,10 @@ use std::io;
 use std::io::Read;
 use std::panic;
 use std::path::Path;
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
 use std::thread;
+use std::thread::JoinHandle;
 
 use gix::ObjectId;
 use gix::attrs::StateRef;
@@ -197,15 +201,91 @@ fn unreadable(error: impl fmt::Display) -> LogError {
 /// The revisions to display: the fake commits with `--fake`, otherwise the commits of the
 /// repository containing `directory` (see the [module documentation](self)).
 pub fn displayed_revisions(cli: &Cli, directory: &Path) -> Result<Vec<Revision>, LogError> {
+    revisions_stream(cli, directory)?.collect()
+}
+
+/// The revisions of [`displayed_revisions()`], in order, as they are loaded by threads.
+///
+/// It ends after the first revision that can't be loaded. A panic of a thread loading the
+/// revisions is propagated.
+pub struct RevisionStream {
+    len: usize,
+    /// The revisions loaded by the threads, with their index.
+    receiver: Option<Receiver<(usize, Result<Revision, LogError>)>>,
+    threads: Vec<JoinHandle<()>>,
+    /// The revisions received before a revision preceding them, by index.
+    pending: BTreeMap<usize, Result<Revision, LogError>>,
+    next_index: usize,
+}
+
+impl RevisionStream {
+    /// The stream of `revisions`, already loaded.
+    fn loaded(revisions: Vec<Revision>) -> Self {
+        Self {
+            len: revisions.len(),
+            receiver: None,
+            threads: Vec::new(),
+            pending: revisions.into_iter().map(Ok).enumerate().collect(),
+            next_index: 0,
+        }
+    }
+
+    /// The number of revisions, including those not loaded yet.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+impl Iterator for RevisionStream {
+    type Item = Result<Revision, LogError>;
+
+    /// Wait for the next revision.
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.next_index < self.len {
+            if let Some(revision) = self.pending.remove(&self.next_index) {
+                self.next_index = if revision.is_ok() {
+                    self.next_index + 1
+                } else {
+                    self.len
+                };
+                return Some(revision);
+            }
+            match self.receiver.as_ref().map(Receiver::recv) {
+                Some(Ok((index, revision))) => {
+                    self.pending.insert(index, revision);
+                }
+                // The threads stopped before sending the next revision: one of them panicked.
+                _ => {
+                    for thread in self.threads.drain(..) {
+                        thread
+                            .join()
+                            .unwrap_or_else(|panic| panic::resume_unwind(panic));
+                    }
+                    unreachable!("the threads stopped without sending all the revisions");
+                }
+            }
+        }
+        None
+    }
+}
+
+/// The revisions of [`displayed_revisions()`], loaded in the background.
+pub fn revisions_stream(cli: &Cli, directory: &Path) -> Result<RevisionStream, LogError> {
     if cli.fake {
-        return Ok(fake::all().into_iter().map(Revision::Commit).collect());
+        return Ok(RevisionStream::loaded(
+            fake::all().into_iter().map(Revision::Commit).collect(),
+        ));
     }
     if cli.fake_dirty_directory {
         let (index, working_directory) = fake::dirty_directory();
-        return Ok(vec![
+        return Ok(RevisionStream::loaded(vec![
             Revision::Index(index),
             Revision::WorkingDirectory(working_directory),
-        ]);
+        ]));
     }
     let repository = gix::discover(directory).map_err(|error| {
         if error.is_not_found() {
@@ -215,15 +295,12 @@ pub fn displayed_revisions(cli: &Cli, directory: &Path) -> Result<Vec<Revision>,
         }
     })?;
     if let Some((index, working_directory)) = uncommitted_changes_of(&repository)? {
-        return Ok(vec![
+        return Ok(RevisionStream::loaded(vec![
             Revision::Index(index),
             Revision::WorkingDirectory(working_directory),
-        ]);
+        ]));
     }
-    Ok(commits_of(&repository)?
-        .into_iter()
-        .map(Revision::Commit)
-        .collect())
+    commits_stream_of(&repository)
 }
 
 /// The index and the working directory of `repository`, if the working directory is dirty (a
@@ -539,7 +616,20 @@ fn worktree_version(
 }
 
 /// The commits of `repository` (see the [module documentation](self)).
+#[cfg(test)]
 fn commits_of(repository: &gix::Repository) -> Result<Vec<Commit>, LogError> {
+    commits_stream_of(repository)?
+        .map(|revision| match revision? {
+            Revision::Commit(commit) => Ok(commit),
+            Revision::Index(_) | Revision::WorkingDirectory(_) => {
+                unreachable!("only commits are loaded")
+            }
+        })
+        .collect()
+}
+
+/// The commits of [`commits_of()`], loaded in the background.
+fn commits_stream_of(repository: &gix::Repository) -> Result<RevisionStream, LogError> {
     let head = repository.head().map_err(unreadable)?;
     let Some(head_id) = head.id().map(|id| id.detach()) else {
         let head::Kind::Unborn(branch) = head.kind else {
@@ -566,41 +656,50 @@ fn commits_of(repository: &gix::Repository) -> Result<Vec<Commit>, LogError> {
         .into_iter()
         .rev()
         .map(|id| (id, decorations.remove(&id).unwrap_or_default()))
+        .enumerate()
         .collect();
     // The commits are loaded by contiguous chunks, one per thread, so that the blobs shared by
     // consecutive commits are read by the same thread.
     let chunk_len = decorated.len().div_ceil(threads_count());
     let sync_repository = repository.clone().into_sync();
-    thread::scope(|scope| {
-        let threads: Vec<_> = decorated
-            .chunks(chunk_len)
-            .map(|chunk| {
-                let sync_repository = &sync_repository;
-                scope.spawn(move || {
-                    let mut repository = sync_repository.to_thread_local();
-                    // The version of a file after a commit is the version before the next one:
-                    // its blob is decompressed once.
-                    repository.object_cache_size_if_unset(OBJECT_CACHE_SIZE);
-                    let mut attributes = DiffAttributes::new(&repository)?;
-                    chunk
-                        .iter()
-                        .map(|(id, decorations)| {
-                            commit(&repository, *id, decorations.clone(), &mut attributes)
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                })
+    let (sender, receiver) = mpsc::channel();
+    let threads = decorated
+        .chunks(chunk_len)
+        .map(|chunk| {
+            let chunk = chunk.to_vec();
+            let sync_repository = sync_repository.clone();
+            let sender = sender.clone();
+            thread::spawn(move || {
+                let mut repository = sync_repository.to_thread_local();
+                // The version of a file after a commit is the version before the next one: its
+                // blob is decompressed once.
+                repository.object_cache_size_if_unset(OBJECT_CACHE_SIZE);
+                let mut attributes = match DiffAttributes::new(&repository) {
+                    Ok(attributes) => attributes,
+                    Err(error) => {
+                        let (first_index, _) = chunk[0];
+                        // The stream may have been dropped.
+                        let _ = sender.send((first_index, Err(error)));
+                        return;
+                    }
+                };
+                for (index, (id, decorations)) in chunk {
+                    let commit = commit(&repository, id, decorations, &mut attributes);
+                    let is_error = commit.is_err();
+                    // The stream may have been dropped.
+                    if sender.send((index, commit.map(Revision::Commit))).is_err() || is_error {
+                        return;
+                    }
+                }
             })
-            .collect();
-        // The first error is the one of the first commit that can't be loaded.
-        let chunks = threads
-            .into_iter()
-            .map(|thread| {
-                thread
-                    .join()
-                    .unwrap_or_else(|panic| panic::resume_unwind(panic))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(chunks.into_iter().flatten().collect())
+        })
+        .collect();
+    Ok(RevisionStream {
+        len: decorated.len(),
+        receiver: Some(receiver),
+        threads,
+        pending: BTreeMap::new(),
+        next_index: 0,
     })
 }
 
@@ -1051,6 +1150,42 @@ mod tests {
         ]);
         let commits = commits_of(&git.repository()).unwrap();
         assert_eq!(hashes(&commits), git.log_reverse("origin/topic..HEAD"));
+    }
+
+    #[test]
+    fn revision_stream_ends_after_the_first_revision_that_cant_be_loaded() {
+        let revision = || Revision::Commit(fake::all().remove(0));
+        let stream = RevisionStream {
+            len: 3,
+            receiver: None,
+            threads: Vec::new(),
+            pending: BTreeMap::from([
+                (0, Ok(revision())),
+                (1, Err(LogError::NotARepository)),
+                (2, Ok(revision())),
+            ]),
+            next_index: 0,
+        };
+        let loaded: Vec<_> = stream.map(|revision| revision.is_ok()).collect();
+        assert_eq!(loaded, [true, false]);
+    }
+
+    #[test]
+    #[should_panic(expected = "loading failed")]
+    fn revision_stream_propagates_the_panic_of_a_thread_loading_the_revisions() {
+        let (sender, receiver) = mpsc::channel();
+        let thread = thread::spawn(move || {
+            let _sender = sender;
+            panic!("loading failed");
+        });
+        let stream = RevisionStream {
+            len: 1,
+            receiver: Some(receiver),
+            threads: vec![thread],
+            pending: BTreeMap::new(),
+            next_index: 0,
+        };
+        stream.count();
     }
 
     #[test]

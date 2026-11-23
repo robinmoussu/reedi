@@ -36,6 +36,7 @@ use reedi_crossterm_compat::SetPointerShape;
 
 use crate::config::UnknownSetting;
 use crate::date::DateDisplay;
+use crate::log::RevisionStream;
 use crate::model::Revision;
 use crate::settings::Settings;
 use crate::theme::Theme;
@@ -207,10 +208,13 @@ impl Timing {
     }
 }
 
-/// Display `revisions` with `settings` until `q` or `ctrl+c` is pressed, and the
+/// Display the revisions of `stream` with `settings` until `q` or `ctrl+c` is pressed, and the
 /// `unknown_settings` of the config file (its path, and at least one setting) in an error modal
 /// over them, if any, until a key is pressed or the mouse is clicked. The `sent_keys` are pressed
 /// once the rows are displayed, before the keys of the terminal.
+///
+/// The first screen is drawn as soon as the revisions received fill it, the keys being read once
+/// all the revisions are received. Fails if a revision can't be loaded.
 ///
 /// Like `less`, the alternate screen is used, and the screen is redrawn when its size changes.
 /// The rows are rewrapped in the background, the previous ones being displayed meanwhile. The
@@ -218,7 +222,7 @@ impl Timing {
 /// narrow to display a grapheme cluster of its line. Return how fast the screen was displayed
 /// since `start`, and refreshed.
 pub fn run(
-    revisions: &[Revision],
+    stream: RevisionStream,
     settings: &Settings,
     unknown_settings: Option<(PathBuf, Vec<UnknownSetting>)>,
     sent_keys: Vec<KeyEvent>,
@@ -231,7 +235,6 @@ pub fn run(
         .map(|(path, unknown_settings)| ErrorModal::UnknownSettings { path, unknown_settings });
     let mut rows = Vec::new();
     let mut size = None;
-    let min_half_width = view::min_half_width(revisions);
     let mut mouse = Mouse::default();
     let mut displayed_pointer_shape = PointerShape::Default;
     let mut viewport = Viewport::default();
@@ -243,8 +246,17 @@ pub fn run(
         panic_hook(info);
     }));
     execute!(io::stdout(), EnableMouseCapture)?;
-    let pairs_cache = PairsCache::new(revisions);
     let result = ratatui::run(|terminal| {
+        let (revisions, pairs_cache, first_full_screen) = receive_revisions(
+            terminal,
+            stream,
+            mouse.displayed_ratio(),
+            error_modal.as_ref(),
+            settings,
+        )?;
+        let revisions = &revisions;
+        timing.first_full_screen = first_full_screen.map(|drawn| drawn - start);
+        let min_half_width = view::min_half_width(revisions);
         thread::scope(|scope| {
             let mut rewrapper = Rewrapper::new(
                 scope,
@@ -365,6 +377,65 @@ struct Widths {
     width: u16,
     /// Width of the left half of the split rows.
     left_width: u16,
+}
+
+/// The revisions of `stream`, received while drawing the first screen, with the `ratio` of the
+/// split rows and `error_modal` over them, as soon as the rows of the revisions received fill it,
+/// with the pairs computed to draw it, and when it was drawn, if it was.
+fn receive_revisions(
+    terminal: &mut DefaultTerminal,
+    stream: RevisionStream,
+    ratio: SplitRatio,
+    error_modal: Option<&ErrorModal>,
+    settings: &Settings,
+) -> io::Result<(Vec<Revision>, PairsCache, Option<Instant>)> {
+    let mut revisions = Vec::with_capacity(stream.len());
+    let mut pairs_cache = PairsCache::default();
+    let mut first_full_screen = None;
+    for revision in stream {
+        let revision = revision.map_err(io::Error::other)?;
+        pairs_cache.push(&revision);
+        revisions.push(revision);
+        if first_full_screen.is_some() {
+            continue;
+        }
+        let screen = terminal.size()?;
+        let height = usize::from(screen.height.saturating_sub(view::STATUS_BAR_HEIGHT));
+        let left_width = ratio.left_width(screen.width, view::min_half_width(&revisions));
+        let not_cancelled = AtomicBool::new(false);
+        // A text area too narrow is reported by the wrap of all the revisions.
+        let Ok(rows) = view::rows(
+            &revisions,
+            &pairs_cache,
+            screen.width,
+            left_width,
+            &settings.theme,
+            &settings.dates,
+            &not_cancelled,
+        ) else {
+            continue;
+        };
+        if rows.len() < height {
+            continue;
+        }
+        let mut viewport = Viewport::default();
+        viewport.resize(rows.len(), height);
+        terminal.draw(|frame| {
+            view::draw(
+                frame,
+                &revisions,
+                &rows,
+                &mut viewport,
+                left_width,
+                Mode::Review,
+                /* pending_count */ None,
+                error_modal,
+                &settings.theme,
+            )
+        })?;
+        first_full_screen = Some(Instant::now());
+    }
+    Ok((revisions, pairs_cache, first_full_screen))
 }
 
 /// Rows being built in the background. Dropping it cancels it.

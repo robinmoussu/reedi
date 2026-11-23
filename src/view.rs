@@ -1215,22 +1215,27 @@ impl<'a> Rows<'a> {
 
 /// The pairs of the lines of each hunk of the displayed revisions (by revision, displayed file and
 /// hunk), computed by the first wrap that needs them: they don't depend on the widths.
+#[derive(Default)]
 pub struct PairsCache(Vec<Vec<Vec<OnceLock<Vec<Pair>>>>>);
 
 impl PairsCache {
     /// No pairs computed yet for the hunks of `revisions`.
     pub fn new(revisions: &[Revision]) -> Self {
-        Self(
-            revisions
+        let mut pairs_cache = Self::default();
+        for revision in revisions {
+            pairs_cache.push(revision);
+        }
+        pairs_cache
+    }
+
+    /// Make room for the pairs of the hunks of `revision`, displayed after the previous ones.
+    pub fn push(&mut self, revision: &Revision) {
+        self.0.push(
+            displayed_files(revision)
                 .iter()
-                .map(|revision| {
-                    displayed_files(revision)
-                        .iter()
-                        .map(|file| file.hunks.iter().map(|_| OnceLock::new()).collect())
-                        .collect()
-                })
+                .map(|file| file.hunks.iter().map(|_| OnceLock::new()).collect())
                 .collect(),
-        )
+        );
     }
 }
 
