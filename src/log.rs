@@ -577,7 +577,10 @@ fn commits_of(repository: &gix::Repository) -> Result<Vec<Commit>, LogError> {
             .map(|chunk| {
                 let sync_repository = &sync_repository;
                 scope.spawn(move || {
-                    let repository = sync_repository.to_thread_local();
+                    let mut repository = sync_repository.to_thread_local();
+                    // The version of a file after a commit is the version before the next one:
+                    // its blob is decompressed once.
+                    repository.object_cache_size_if_unset(OBJECT_CACHE_SIZE);
                     let mut attributes = DiffAttributes::new(&repository)?;
                     chunk
                         .iter()
@@ -600,6 +603,9 @@ fn commits_of(repository: &gix::Repository) -> Result<Vec<Commit>, LogError> {
         Ok(chunks.into_iter().flatten().collect())
     })
 }
+
+/// The size of the cache of the objects of each thread loading the commits, in bytes.
+const OBJECT_CACHE_SIZE: usize = 64 * 1024 * 1024;
 
 /// The number of threads loading the commits: the available parallelism.
 fn threads_count() -> usize {
