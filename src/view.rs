@@ -239,8 +239,10 @@ impl Content {
                 }
             }
             Content::Rule(style) => {
-                let rule = "─".repeat(area.width.into());
-                buf.set_string(area.x, area.y, rule, *style);
+                let area = area.intersection(buf.area);
+                for x in area.left()..area.right() {
+                    buf[(x, area.y)].set_symbol("─").set_style(*style);
+                }
             }
             Content::Split { left, right } => {
                 let left_width = left_width.min(area.width);
@@ -263,8 +265,52 @@ impl Content {
 
 /// Render `line` at `x`, `y`, cropped to `width` columns. The columns after its end (up to `width`)
 /// have the background of the style of `line`, if any.
+///
+/// Like [`Buffer::set_line()`], but the printable ASCII characters are written one per cell, without
+/// the grapheme segmentation.
 fn set_line(buf: &mut Buffer, x: u16, y: u16, line: &Line, width: u16) {
-    let (end, _) = buf.set_line(x, y, line, width);
+    let right = (x + width).min(buf.area.right());
+    let mut end = x;
+    let is_printable_ascii = |byte: u8| (b' '..=b'~').contains(&byte);
+    for span in line {
+        let style = line.style.patch(span.style);
+        let mut rest = span.content.as_ref();
+        while !rest.is_empty() && end < right {
+            // The last printable ASCII character before another character may start a grapheme
+            // cluster with it (like `e` and a combining accent): it is left to the segmentation.
+            let ascii_len = match rest.bytes().position(|byte| !is_printable_ascii(byte)) {
+                None => rest.len(),
+                Some(len) => len.saturating_sub(1),
+            };
+            for &byte in rest.as_bytes()[..ascii_len]
+                .iter()
+                .take(usize::from(right - end))
+            {
+                buf[(end, y)].set_char(char::from(byte)).set_style(style);
+                end += 1;
+            }
+            rest = &rest[ascii_len..];
+            if rest.is_empty() || end >= right {
+                break;
+            }
+            // The segmented part ends between two printable ASCII characters, which are always
+            // in different grapheme clusters (a character before them may be in the cluster of
+            // the first one, like a prepended concatenation mark).
+            let segmented_len = rest
+                .as_bytes()
+                .windows(2)
+                .position(|pair| is_printable_ascii(pair[0]) && is_printable_ascii(pair[1]))
+                .map_or(rest.len(), |position| position + 1);
+            (end, _) = buf.set_stringn(
+                end,
+                y,
+                &rest[..segmented_len],
+                usize::from(right - end),
+                style,
+            );
+            rest = &rest[segmented_len..];
+        }
+    }
     if let Some(background) = line.style.bg {
         let rest = Rect::new(end, y, (x + width).saturating_sub(end), /* height */ 1);
         buf.set_style(rest.intersection(buf.area), Style::new().bg(background));
@@ -4663,6 +4709,32 @@ mod tests {
             wrapped(&pairs_cache, /* width */ 80),
             wrapped(&PairsCache::new(&revisions), /* width */ 80)
         );
+    }
+
+    #[test]
+    fn lines_are_drawn_like_ratatui_draws_them() {
+        // Printable ASCII, a combining accent and a prepended concatenation mark (in a grapheme
+        // cluster with the character after them), wide characters, an emoji sequence, and a line
+        // cropped in the middle of a wide character.
+        for text in [
+            "let a = b;",
+            "e\u{301}tait",
+            "ab\u{600}12",
+            "a日本b",
+            "x👍🏽y",
+            "abcdefghi日",
+        ] {
+            let line = Line::from(vec![
+                Span::raw(text),
+                Span::styled("z", Style::new().bold()),
+            ]);
+            let area = Rect::new(0, 0, /* width */ 10, /* height */ 1);
+            let mut expected = Buffer::empty(area);
+            expected.set_line(0, 0, &line, area.width);
+            let mut drawn = Buffer::empty(area);
+            set_line(&mut drawn, 0, 0, &line, area.width);
+            assert_eq!(drawn, expected, "{text:?}");
+        }
     }
 
     #[test]
