@@ -8,7 +8,9 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::io::Read;
+use std::panic;
 use std::path::Path;
+use std::thread;
 
 use gix::ObjectId;
 use gix::attrs::StateRef;
@@ -560,14 +562,48 @@ fn commits_of(repository: &gix::Repository) -> Result<Vec<Commit>, LogError> {
     if ids.is_empty() {
         return Err(LogError::NoCommits(base));
     }
-    let mut attributes = DiffAttributes::new(repository)?;
-    ids.into_iter()
+    let decorated: Vec<_> = ids
+        .into_iter()
         .rev()
-        .map(|id| {
-            let decorations = decorations.remove(&id).unwrap_or_default();
-            commit(repository, id, decorations, &mut attributes)
-        })
-        .collect()
+        .map(|id| (id, decorations.remove(&id).unwrap_or_default()))
+        .collect();
+    // The commits are loaded by contiguous chunks, one per thread, so that the blobs shared by
+    // consecutive commits are read by the same thread.
+    let chunk_len = decorated.len().div_ceil(threads_count());
+    let sync_repository = repository.clone().into_sync();
+    thread::scope(|scope| {
+        let threads: Vec<_> = decorated
+            .chunks(chunk_len)
+            .map(|chunk| {
+                let sync_repository = &sync_repository;
+                scope.spawn(move || {
+                    let repository = sync_repository.to_thread_local();
+                    let mut attributes = DiffAttributes::new(&repository)?;
+                    chunk
+                        .iter()
+                        .map(|(id, decorations)| {
+                            commit(&repository, *id, decorations.clone(), &mut attributes)
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                })
+            })
+            .collect();
+        // The first error is the one of the first commit that can't be loaded.
+        let chunks = threads
+            .into_iter()
+            .map(|thread| {
+                thread
+                    .join()
+                    .unwrap_or_else(|panic| panic::resume_unwind(panic))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(chunks.into_iter().flatten().collect())
+    })
+}
+
+/// The number of threads loading the commits: the available parallelism.
+fn threads_count() -> usize {
+    thread::available_parallelism().map_or(1, |count| count.get())
 }
 
 /// The base of the commits of `repository` whose HEAD is `head`.
@@ -1009,6 +1045,16 @@ mod tests {
         ]);
         let commits = commits_of(&git.repository()).unwrap();
         assert_eq!(hashes(&commits), git.log_reverse("origin/topic..HEAD"));
+    }
+
+    #[test]
+    fn commits_are_in_order_when_more_numerous_than_the_threads_loading_them() {
+        let git = Git::with_origin_head();
+        for index in 0..2 * threads_count() + 1 {
+            git.commit_all(format!("Commit {index}").as_bytes());
+        }
+        let commits = commits_of(&git.repository()).unwrap();
+        assert_eq!(hashes(&commits), git.log_reverse("origin/HEAD..HEAD"));
     }
 
     /// `origin/HEAD` is at the first commit, the upstream at the second one.
