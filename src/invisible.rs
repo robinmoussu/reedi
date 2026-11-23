@@ -1,6 +1,5 @@
 //! Replacement of the invisible characters by visible ones.
 
-use std::iter;
 use std::ops::Range;
 
 use icu_properties::CodePointSetDataBorrowed;
@@ -192,10 +191,10 @@ impl Cluster {
                 } else {
                     self.width(pieces.column).min(room).max(1)
                 };
-                let tab: String = iter::once(TAB)
-                    .chain(iter::repeat_n(' ', width - 1))
-                    .collect();
-                pieces.push(replaced, &tab);
+                pieces.push_char(replaced, TAB);
+                for _ in 1..width {
+                    pieces.push_char(replaced, ' ');
+                }
             }
         }
     }
@@ -261,26 +260,63 @@ fn shown(c: char, in_emoji: bool) -> Shown {
 /// Pieces of displayed text, with the column reached after them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pieces {
-    pub pieces: Vec<Piece>,
+    /// Text of the pieces, one after the other.
+    text: String,
+    /// Kind, segment index and end in `text` of each piece.
+    ends: Vec<(Kind, usize, usize)>,
+    /// Index of the segment of the line the next pieces are part of. Pieces of different segments
+    /// are never merged.
+    pub segment_index: usize,
     pub column: usize,
 }
 
 impl Pieces {
     /// No pieces yet, the next one being displayed at `column`.
     pub fn new(column: usize) -> Self {
-        Self { pieces: Vec::new(), column }
+        Self {
+            text: String::new(),
+            ends: Vec::new(),
+            segment_index: 0,
+            column,
+        }
     }
 
     fn push(&mut self, kind: Kind, text: &str) {
         self.column += text.width();
-        match self.pieces.last_mut() {
-            Some(last) if last.kind == kind => last.text.push_str(text),
-            _ => self.pieces.push(Piece { text: text.to_string(), kind }),
+        self.text.push_str(text);
+        match self.ends.last_mut() {
+            Some((last_kind, last_segment_index, end))
+                if *last_kind == kind && *last_segment_index == self.segment_index =>
+            {
+                *end = self.text.len();
+            }
+            _ => self.ends.push((kind, self.segment_index, self.text.len())),
         }
     }
 
     fn push_char(&mut self, kind: Kind, c: char) {
         self.push(kind, c.encode_utf8(&mut [0; 4]));
+    }
+
+    /// Remove the pieces, and return them with the index of their segment.
+    pub fn take(&mut self) -> Vec<(usize, Piece)> {
+        let pieces = self
+            .ends
+            .iter()
+            .scan(0, |start, &(kind, segment_index, end)| {
+                let text = self.text[*start..end].to_string();
+                *start = end;
+                Some((segment_index, Piece { text, kind }))
+            })
+            .collect();
+        self.text.clear();
+        self.ends.clear();
+        pieces
+    }
+
+    /// The pieces, without the index of their segment.
+    pub fn into_pieces(mut self) -> Vec<Piece> {
+        self.take().into_iter().map(|(_, piece)| piece).collect()
     }
 }
 
@@ -292,7 +328,7 @@ fn fixed(cluster: &str, highlighted_whitespace: bool) -> Vec<Piece> {
     // Kept whole, so that its width is the one of the cluster, not the sum of its characters.
     if shown.iter().all(|shown| *shown == Shown::Kept) {
         pieces.push(Kind::Text, cluster);
-        return pieces.pieces;
+        return pieces.into_pieces();
     }
     let replaced = if highlighted_whitespace {
         Kind::HighlightedWhitespace
@@ -306,7 +342,7 @@ fn fixed(cluster: &str, highlighted_whitespace: bool) -> Vec<Piece> {
             Shown::Kept => pieces.push_char(Kind::Text, c),
             Shown::Replaced(replacement) => pieces.push_char(replaced, replacement),
         });
-    pieces.pieces
+    pieces.into_pieces()
 }
 
 /// Which whitespace of a text is highlighted.
@@ -396,7 +432,7 @@ mod tests {
         for cluster in &clusters(line, final_cr, HighlightedWhitespace::Trailing) {
             cluster.push(&mut pieces, Wrap::None, usize::MAX);
         }
-        pieces.pieces
+        pieces.into_pieces()
     }
 
     /// The pieces displaying the `cluster_index`-th cluster of `line`, at `column`.
@@ -411,7 +447,7 @@ mod tests {
             clusters(line, FinalCr::Shown, HighlightedWhitespace::Trailing).remove(cluster_index);
         let mut pieces = Pieces::new(column);
         cluster.push(&mut pieces, wrap, room);
-        pieces.pieces
+        pieces.into_pieces()
     }
 
     /// The displayed text of `line`, with the carriage return ending it shown.

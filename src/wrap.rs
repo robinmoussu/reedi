@@ -1,7 +1,9 @@
 //! Display of the lines too wide for their text area on several rows.
 
+use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
+use std::iter::Peekable;
 use std::ops::Range;
 
 use icu_segmenter::LineSegmenter;
@@ -269,7 +271,7 @@ impl RowBreaks {
 }
 
 /// The row displaying `items` (its items, split by [`split_into_rows()`]) in a text area of `width`
-/// columns.
+/// columns, built with `pieces`, which are left empty.
 ///
 /// `blanks_before` is the number of spaces and U+2800 around the break before the row, if it is a
 /// continuation row, and `blanks_after` around the break after it, if it is followed by a
@@ -279,37 +281,19 @@ fn text_row(
     blanks_before: Option<usize>,
     blanks_after: Option<usize>,
     width: usize,
+    pieces: &mut Pieces,
 ) -> TextRow {
     let breaks = RowBreaks::new(items, blanks_before, blanks_after);
-    let groups =
-        items
-            .iter()
-            .enumerate()
-            .fold(Vec::<(usize, Pieces)>::new(), |mut groups, (i, item)| {
-                let column = groups.last().map_or(0, |(_, pieces)| pieces.column);
-                if groups
-                    .last()
-                    .is_none_or(|(segment_index, _)| *segment_index != item.segment_index)
-                {
-                    groups.push((item.segment_index, Pieces::new(column)));
-                }
-                let (_, pieces) = groups.last_mut().expect("a group was just pushed");
-                item.cluster
-                    .push(pieces, breaks.wrap(items, i), width.saturating_sub(column));
-                groups
-            });
+    pieces.column = 0;
+    for (i, item) in items.iter().enumerate() {
+        pieces.segment_index = item.segment_index;
+        let room = width.saturating_sub(pieces.column);
+        item.cluster.push(pieces, breaks.wrap(items, i), room);
+    }
     TextRow {
         start_byte: items.first().map_or(0, |item| item.cluster.range.start),
-        columns_count: groups.last().map_or(0, |(_, pieces)| pieces.column),
-        pieces: groups
-            .into_iter()
-            .flat_map(|(segment_index, pieces)| {
-                pieces
-                    .pieces
-                    .into_iter()
-                    .map(move |piece| (segment_index, piece))
-            })
-            .collect(),
+        columns_count: pieces.column,
+        pieces: pieces.take(),
     }
 }
 
@@ -344,28 +328,30 @@ pub fn wrap(
     final_cr: FinalCr,
     width: usize,
 ) -> Result<Vec<TextRow>, TooNarrow> {
-    let texts: Vec<&str> = segments
-        .iter()
-        .map(|segment| match final_cr {
-            FinalCr::Shown => segment.text,
-            FinalCr::Hidden => segment.text.strip_suffix('\r').unwrap_or(segment.text),
-        })
-        .collect();
-    let text = texts.concat();
-    let opportunities: Vec<usize> = match breaks {
-        Breaks::Words => LineSegmenter::new_for_non_complex_scripts(LineBreakOptions::default())
-            .segment_str(&text)
+    let text: Cow<str> = match segments {
+        [segment] => Cow::Borrowed(displayed_text(segment, final_cr)),
+        _ => segments
+            .iter()
+            .map(|segment| displayed_text(segment, final_cr))
             .collect(),
-        Breaks::Anywhere => Vec::new(),
     };
-    let items: Vec<Item> = texts
+    let segmenter = LineSegmenter::new_for_non_complex_scripts(LineBreakOptions::default());
+    let mut opportunities = match breaks {
+        Breaks::Words => Some(segmenter.segment_str(&text)),
+        Breaks::Anywhere => None,
+    }
+    .into_iter()
+    .flatten()
+    .peekable();
+    let items: Vec<Item> = segments
         .iter()
         .enumerate()
-        .scan(0, |offset, (segment_index, text)| {
+        .scan(0, |offset, (segment_index, segment)| {
+            let text = displayed_text(segment, final_cr);
             let start = *offset;
             *offset += text.len();
             // The hidden carriage returns are already removed.
-            let highlighted = match segments[segment_index].kind {
+            let highlighted = match segment.kind {
                 SegmentKind::Data | SegmentKind::Markup => HighlightedWhitespace::Trailing,
                 SegmentKind::PathComponent => HighlightedWhitespace::LeadingAndTrailing,
             };
@@ -384,7 +370,7 @@ pub fn wrap(
                 segment_index,
                 kind,
                 break_after: breaks == Breaks::Anywhere
-                    || opportunities.binary_search(&range.end).is_ok(),
+                    || is_next_opportunity(&mut opportunities, range.end),
                 cluster: Cluster {
                     range,
                     highlighted_whitespace: cluster.highlighted_whitespace
@@ -398,21 +384,46 @@ pub fn wrap(
         width,
         cluster: text[items[i].cluster.range.clone()].to_string(),
     })?;
-    let rows: Vec<&[Item]> = rows.into_iter().map(|range| &items[range]).collect();
-    // Number of spaces and U+2800 around each break: ending the row before it, and starting the
-    // row after it.
-    let around_breaks: Vec<usize> = rows
-        .windows(2)
-        .map(|rows| blanks_count(rows[0].iter().rev()) + blanks_count(rows[1].iter()))
-        .collect();
+    // Number of spaces and U+2800 around the break after the `row_index`-th row: ending it, and
+    // starting the row after it.
+    let blanks_around_break = |row_index: usize| {
+        blanks_count(items[rows[row_index].clone()].iter().rev())
+            + blanks_count(items[rows[row_index + 1].clone()].iter())
+    };
+    let mut pieces = Pieces::new(/* column */ 0);
     Ok(rows
         .iter()
         .enumerate()
         .map(|(i, row)| {
-            let before = i.checked_sub(1).map(|i| around_breaks[i]);
-            text_row(row, before, around_breaks.get(i).copied(), width)
+            let before = i.checked_sub(1).map(blanks_around_break);
+            let after = if i + 1 < rows.len() {
+                Some(blanks_around_break(i))
+            } else {
+                None
+            };
+            text_row(&items[row.clone()], before, after, width, &mut pieces)
         })
         .collect())
+}
+
+/// The text of `segment` without its hidden carriage return.
+fn displayed_text<'a>(segment: &Segment<'a>, final_cr: FinalCr) -> &'a str {
+    match final_cr {
+        FinalCr::Shown => segment.text,
+        FinalCr::Hidden => segment.text.strip_suffix('\r').unwrap_or(segment.text),
+    }
+}
+
+/// Whether `position` is the next of the increasing `opportunities`, skipping the ones before it.
+fn is_next_opportunity(
+    opportunities: &mut Peekable<impl Iterator<Item = usize>>,
+    position: usize,
+) -> bool {
+    while opportunities
+        .next_if(|&opportunity| opportunity < position)
+        .is_some()
+    {}
+    opportunities.next_if_eq(&position).is_some()
 }
 
 #[cfg(test)]
