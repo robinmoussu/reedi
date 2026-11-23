@@ -18,6 +18,7 @@ use crate::theme::Theme;
 use crate::view;
 use crate::view::ErrorModal;
 use crate::view::LEFT_TO_RIGHT_MARK;
+use crate::view::PairsCache;
 use crate::view::Row;
 use crate::view::SplitRatio;
 
@@ -75,6 +76,7 @@ pub fn revisions_of(commits: &[Commit]) -> Vec<Revision> {
 pub fn rows_of_revisions(revisions: &[Revision], width: u16) -> Vec<Row> {
     view::rows(
         revisions,
+        &PairsCache::new(revisions),
         width,
         fifty_fifty_left_width(width),
         &Theme::monochrome(),

@@ -23,6 +23,7 @@ use reedi::test_support::performance_repository::Uncommitted;
 use reedi::theme::Theme;
 use reedi::view;
 use reedi::view::Mode;
+use reedi::view::PairsCache;
 use reedi::view::Row;
 use reedi::view::SplitRatio;
 use reedi::viewport::Viewport;
@@ -85,9 +86,11 @@ fn left_width(revisions: &[Revision], width: u16) -> u16 {
     SplitRatio::default().left_width(width, view::min_half_width(revisions))
 }
 
-fn rows(revisions: &[Revision], width: u16, left_width: u16) -> Vec<Row> {
+/// The rows of `revisions`, with the pairs of `pairs_cache`.
+fn rows(revisions: &[Revision], pairs_cache: &PairsCache, width: u16, left_width: u16) -> Vec<Row> {
     view::rows(
         revisions,
+        pairs_cache,
         width,
         left_width,
         &Theme::dark(),
@@ -124,7 +127,12 @@ fn draw(revisions: &[Revision], rows: &[Row], left_width: u16, screen: Screen) {
 fn startup(screen: Screen) {
     let revisions = load_revisions();
     let left_width = left_width(&revisions, screen.width);
-    let rows = rows(&revisions, screen.width, left_width);
+    let rows = rows(
+        &revisions,
+        &PairsCache::new(&revisions),
+        screen.width,
+        left_width,
+    );
     draw(&revisions, &rows, left_width, screen);
 }
 
@@ -133,16 +141,24 @@ fn displayed_revisions() -> Vec<Revision> {
     load_revisions()
 }
 
-/// The rewrap, when the terminal is resized or the separator is dragged.
+/// The rewrap, when the terminal is resized or the separator is dragged: the pairs are those of the
+/// first wrap.
 #[divan::bench(args = WIDTHS, sample_count = 10, sample_size = 1)]
 fn rewrap(bencher: Bencher, width: u16) {
     let left_width = left_width(&REVISIONS, width);
-    bencher.bench(|| rows(&REVISIONS, width, left_width));
+    let pairs_cache = PairsCache::new(&REVISIONS);
+    rows(&REVISIONS, &pairs_cache, width, left_width);
+    bencher.bench(|| rows(&REVISIONS, &pairs_cache, width, left_width));
 }
 
 #[divan::bench(args = SCREENS)]
 fn frame(bencher: Bencher, screen: Screen) {
     let left_width = left_width(&REVISIONS, screen.width);
-    let rows = rows(&REVISIONS, screen.width, left_width);
+    let rows = rows(
+        &REVISIONS,
+        &PairsCache::new(&REVISIONS),
+        screen.width,
+        left_width,
+    );
     bencher.bench(|| draw(&REVISIONS, &rows, left_width, screen));
 }

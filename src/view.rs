@@ -2,6 +2,7 @@
 
 use std::iter;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
@@ -928,6 +929,8 @@ struct Rows<'a> {
     dates: &'a DateDisplay,
     /// Set to stop building the rows.
     cancellation: &'a AtomicBool,
+    /// The pairs computed by the previous wraps, if they are kept.
+    pairs_cache: Option<&'a PairsCache>,
 }
 
 impl<'a> Rows<'a> {
@@ -948,6 +951,7 @@ impl<'a> Rows<'a> {
             theme,
             dates,
             cancellation,
+            pairs_cache: None,
         }
     }
 
@@ -990,17 +994,26 @@ impl<'a> Rows<'a> {
         Ok(())
     }
 
-    /// Add the lines of `hunk`, or an error message in their place if they cannot be wrapped.
+    /// Add the lines of `hunk`, the `hunk_index`-th of its file, or an error message in their place
+    /// if they cannot be wrapped.
     ///
     /// A carriage return ending a line is replaced if `final_cr` is [`FinalCr::Shown`], and
     /// hidden otherwise.
-    fn hunk(&mut self, hunk: &Hunk, final_cr: FinalCr) -> Result<(), RowsError> {
+    fn hunk(&mut self, hunk_index: usize, hunk: &Hunk, final_cr: FinalCr) -> Result<(), RowsError> {
         if self.cancellation.load(Ordering::Relaxed) {
             return Err(RowsError::Cancelled);
         }
         // Each pair of lines displayed side by side is a line (see `Row::line_index`), and so is
         // `MISSING_NEWLINE`.
-        let pairs = pairing::pairs(hunk, MAX_PAIRING_DISTANCE, TAB_WIDTH);
+        let pairs = match (self.pairs_cache, self.file_index) {
+            (Some(cache), Some(file_index)) => {
+                let file_index = usize::try_from(file_index.get()).expect("u32 fits in usize");
+                cache.0[self.revision_index][file_index][hunk_index]
+                    .get_or_init(|| pairing::pairs(hunk, MAX_PAIRING_DISTANCE, TAB_WIDTH))
+                    .clone()
+            }
+            _ => pairing::pairs(hunk, MAX_PAIRING_DISTANCE, TAB_WIDTH),
+        };
         let len = pairs.len() + usize::from(missing_newline_kind(hunk).is_some());
         match self.paired_hunk_rows(hunk, pairs, final_cr) {
             Ok(rows) => {
@@ -1118,7 +1131,7 @@ impl<'a> Rows<'a> {
             if i > 0 {
                 self.blank();
             }
-            self.hunk(hunk, final_cr)
+            self.hunk(i, hunk, final_cr)
         })?;
         self.file_index = None;
         Ok(())
@@ -1200,14 +1213,37 @@ impl<'a> Rows<'a> {
     }
 }
 
+/// The pairs of the lines of each hunk of the displayed revisions (by revision, displayed file and
+/// hunk), computed by the first wrap that needs them: they don't depend on the widths.
+pub struct PairsCache(Vec<Vec<Vec<OnceLock<Vec<Pair>>>>>);
+
+impl PairsCache {
+    /// No pairs computed yet for the hunks of `revisions`.
+    pub fn new(revisions: &[Revision]) -> Self {
+        Self(
+            revisions
+                .iter()
+                .map(|revision| {
+                    displayed_files(revision)
+                        .iter()
+                        .map(|file| file.hunks.iter().map(|_| OnceLock::new()).collect())
+                        .collect()
+                })
+                .collect(),
+        )
+    }
+}
+
 /// All the rows displaying `revisions` on a screen `width` columns wide, whose split rows have a
-/// left half `left_width` columns wide.
+/// left half `left_width` columns wide, with the pairs of `pairs_cache` (made for `revisions`),
+/// which are computed if missing.
 ///
 /// Fails if a text area is too narrow to display a grapheme cluster of its line, unless it is in
 /// a hunk, which is then replaced by an error message. Fails before the next hunk once
 /// `cancellation` is set.
 pub fn rows(
     revisions: &[Revision],
+    pairs_cache: &PairsCache,
     width: u16,
     left_width: u16,
     theme: &Theme,
@@ -1215,6 +1251,7 @@ pub fn rows(
     cancellation: &AtomicBool,
 ) -> Result<Vec<Row>, RowsError> {
     let mut rows = Rows::new(width, left_width, theme, dates, cancellation);
+    rows.pairs_cache = Some(pairs_cache);
     for revision in revisions {
         rows.revision(revision)?;
     }
@@ -1753,6 +1790,7 @@ mod tests {
     ) -> Result<Vec<Row>, RowsError> {
         rows(
             revisions,
+            &PairsCache::new(revisions),
             width,
             fifty_fifty_left_width(width),
             theme,
@@ -1941,6 +1979,7 @@ mod tests {
         let revisions = revisions_of(commits);
         let rows = rows(
             &revisions,
+            &PairsCache::new(&revisions),
             width,
             fifty_fifty_left_width(width),
             theme,
@@ -2816,7 +2855,8 @@ mod tests {
         let theme = Theme::monochrome();
         let dates = DateDisplay::for_snapshots();
         let mut rows = new_rows(/* width */ 12, &theme, &dates);
-        rows.hunk(&hunk, FinalCr::Hidden).unwrap();
+        rows.hunk(/* hunk_index */ 0, &hunk, FinalCr::Hidden)
+            .unwrap();
         // The pair of lines, and the line displaying `MISSING_NEWLINE`.
         assert_eq!(rows.lines_count, 2);
     }
@@ -3055,7 +3095,11 @@ mod tests {
             &Theme::monochrome(),
             &DateDisplay::for_snapshots(),
         )
-        .hunk(&file_at(&commit, "src/config.rs").hunks[0], FinalCr::Hidden)
+        .hunk(
+            /* hunk_index */ 0,
+            &file_at(&commit, "src/config.rs").hunks[0],
+            FinalCr::Hidden,
+        )
         .unwrap_err();
         assert!(matches!(
             error,
@@ -4593,10 +4637,36 @@ mod tests {
     }
 
     #[test]
+    fn rows_are_the_same_with_the_pairs_of_a_wrap_at_another_width() {
+        let revisions = revisions_of(&fake::all());
+        let theme = Theme::monochrome();
+        let wrapped = |pairs_cache: &PairsCache, width| {
+            rows(
+                &revisions,
+                pairs_cache,
+                width,
+                fifty_fifty_left_width(width),
+                &theme,
+                &DateDisplay::for_snapshots(),
+                &NOT_CANCELLED,
+            )
+            .unwrap()
+        };
+        let pairs_cache = PairsCache::new(&revisions);
+        wrapped(&pairs_cache, /* width */ 200);
+        assert_eq!(
+            wrapped(&pairs_cache, /* width */ 80),
+            wrapped(&PairsCache::new(&revisions), /* width */ 80)
+        );
+    }
+
+    #[test]
     fn cancelled_rows_are_not_built() {
         let cancellation = AtomicBool::new(true);
+        let revisions = [Revision::Commit(fake::scrolloff_rename())];
         let result = rows(
-            &[Revision::Commit(fake::scrolloff_rename())],
+            &revisions,
+            &PairsCache::new(&revisions),
             /* width */ 110,
             /* left_width */ 55,
             &Theme::monochrome(),

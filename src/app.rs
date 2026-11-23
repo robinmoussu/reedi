@@ -44,6 +44,7 @@ use crate::view::Anchor;
 use crate::view::Content;
 use crate::view::ErrorModal;
 use crate::view::Mode;
+use crate::view::PairsCache;
 use crate::view::Row;
 use crate::view::RowsError;
 use crate::view::SplitRatio;
@@ -242,9 +243,16 @@ pub fn run(
         panic_hook(info);
     }));
     execute!(io::stdout(), EnableMouseCapture)?;
+    let pairs_cache = PairsCache::new(revisions);
     let result = ratatui::run(|terminal| {
         thread::scope(|scope| {
-            let mut rewrapper = Rewrapper::new(scope, revisions, &settings.theme, &settings.dates);
+            let mut rewrapper = Rewrapper::new(
+                scope,
+                revisions,
+                &pairs_cache,
+                &settings.theme,
+                &settings.dates,
+            );
             loop {
                 let screen = terminal.size()?;
                 let height = usize::from(screen.height.saturating_sub(view::STATUS_BAR_HEIGHT));
@@ -371,6 +379,7 @@ impl RewrapJob {
     fn spawn<'scope, 'env>(
         scope: &'scope Scope<'scope, 'env>,
         revisions: &'env [Revision],
+        pairs_cache: &'env PairsCache,
         widths: Widths,
         theme: &'env Theme,
         dates: &'env DateDisplay,
@@ -381,6 +390,7 @@ impl RewrapJob {
         scope.spawn(move || {
             let rows = view::rows(
                 revisions,
+                pairs_cache,
                 widths.width,
                 widths.left_width,
                 theme,
@@ -404,6 +414,8 @@ impl Drop for RewrapJob {
 struct Rewrapper<'scope, 'env> {
     scope: &'scope Scope<'scope, 'env>,
     revisions: &'env [Revision],
+    /// The pairs of the hunks of `revisions`, kept from one rewrap to the next.
+    pairs_cache: &'env PairsCache,
     theme: &'env Theme,
     dates: &'env DateDisplay,
     /// The widths the displayed rows are wrapped for, if any.
@@ -412,16 +424,19 @@ struct Rewrapper<'scope, 'env> {
 }
 
 impl<'scope, 'env> Rewrapper<'scope, 'env> {
-    /// A rewrapper of the rows displaying `revisions`, in the threads of `scope`.
+    /// A rewrapper of the rows displaying `revisions`, in the threads of `scope`, with the pairs of
+    /// `pairs_cache` (made for `revisions`).
     fn new(
         scope: &'scope Scope<'scope, 'env>,
         revisions: &'env [Revision],
+        pairs_cache: &'env PairsCache,
         theme: &'env Theme,
         dates: &'env DateDisplay,
     ) -> Self {
         Self {
             scope,
             revisions,
+            pairs_cache,
             theme,
             dates,
             wrapped_widths: None,
@@ -460,6 +475,7 @@ impl<'scope, 'env> Rewrapper<'scope, 'env> {
             self.job = Some(RewrapJob::spawn(
                 self.scope,
                 self.revisions,
+                self.pairs_cache,
                 widths,
                 self.theme,
                 self.dates,
@@ -735,7 +751,16 @@ mod tests {
     fn with_rewrapper(revisions: &[Revision], test: impl FnOnce(&mut Rewrapper)) {
         let theme = Theme::monochrome();
         let dates = DateDisplay::for_snapshots();
-        thread::scope(|scope| test(&mut Rewrapper::new(scope, revisions, &theme, &dates)));
+        let pairs_cache = PairsCache::new(revisions);
+        thread::scope(|scope| {
+            test(&mut Rewrapper::new(
+                scope,
+                revisions,
+                &pairs_cache,
+                &theme,
+                &dates,
+            ))
+        });
     }
 
     /// Poll `rewrapper` for the rows wrapped for `widths` until its rewrap is finished (see
