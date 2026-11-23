@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
+use compact_str::format_compact;
 use gix::bstr::ByteSlice;
 use nonmax::NonMaxU32;
 use ratatui::Frame;
@@ -75,6 +76,10 @@ const HUNK_TOO_NARROW: &str = "This hunk cannot be displayed: the terminal is to
 /// and numbers next to a right-to-left text (like Persian) would be moved with it, even from
 /// another column, and a row starting with a right-to-left text may be displayed right-to-left.
 pub(crate) const LEFT_TO_RIGHT_MARK: char = '\u{200e}';
+
+/// Displayed in place of a line number in the line number column of a row without one, cut to the
+/// width of the column: as many spaces as the digits of the largest `usize`.
+const NO_LINE_NUMBER: &str = "                    ";
 
 /// Number of rows of the status bar, on the last line of the screen.
 pub const STATUS_BAR_HEIGHT: u16 = 1;
@@ -431,7 +436,8 @@ fn mark_left_to_right(buf: &mut Buffer, x: u16, y: u16) {
             .is_some_and(|cell| cell.symbol().width() > 1);
     let x = if covered { x - 1 } else { x };
     if let Some(cell) = buf.cell_mut((x, y)) {
-        let symbol = format!("{}{LEFT_TO_RIGHT_MARK}", cell.symbol());
+        // Without allocation: the symbol and the mark fit in a `CompactString`.
+        let symbol = format_compact!("{}{LEFT_TO_RIGHT_MARK}", cell.symbol());
         cell.set_symbol(&symbol);
     }
 }
@@ -512,23 +518,21 @@ fn number_column(
     number: Option<(usize, Style)>,
     width: usize,
     theme: &Theme,
-) -> Vec<Span<'static>> {
-    match number {
-        Some((number, style)) => vec![
-            Span::styled("│ ", theme.line_number),
-            Span::styled(format!("{number:>width$}"), style),
-            Span::styled(" │ ", theme.line_number),
-        ],
-        None => vec![Span::styled(
-            format!("│ {:width$} │ ", ""),
-            theme.line_number,
-        )],
-    }
+) -> [Span<'static>; 3] {
+    let number = match number {
+        Some((number, style)) => Span::styled(format!("{number:>width$}"), style),
+        None => Span::styled(&NO_LINE_NUMBER[..width], theme.line_number),
+    };
+    [
+        Span::styled("│ ", theme.line_number),
+        number,
+        Span::styled(" │ ", theme.line_number),
+    ]
 }
 
 /// A half of a row displaying only the line number column, without number.
 fn filler(number_width: usize, theme: &Theme) -> Line<'static> {
-    Line::from(number_column(None, number_width, theme))
+    Line::from_iter(number_column(None, number_width, theme))
 }
 
 /// The style of the text area of a line of `kind`: a background if it is modified.

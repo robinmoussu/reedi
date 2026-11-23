@@ -2670,6 +2670,7 @@ name = "reedi"
 version = "0.0.13"
 dependencies = [
  "clap",
+ "compact_str",
  "divan",
  "gix",
  "icu_properties",
