@@ -706,8 +706,9 @@ fn commits_stream_of(repository: &gix::Repository) -> Result<RevisionStream, Log
 /// The size of the cache of the objects of each thread loading the commits, in bytes.
 const OBJECT_CACHE_SIZE: usize = 64 * 1024 * 1024;
 
-/// The number of threads loading the commits: the available parallelism.
-fn threads_count() -> usize {
+/// The number of threads loading the commits, or wrapping the revisions: the available
+/// parallelism.
+pub(crate) fn threads_count() -> usize {
     thread::available_parallelism().map_or(1, |count| count.get())
 }
 

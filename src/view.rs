@@ -1,10 +1,13 @@
 //! Rendering of the revisions and of the status bar.
 
 use std::iter;
+use std::panic;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
+use std::thread;
 
 use compact_str::format_compact;
 use gix::bstr::ByteSlice;
@@ -39,6 +42,7 @@ use crate::config::UnknownSetting;
 use crate::date::DateDisplay;
 use crate::invisible::FinalCr;
 use crate::invisible::Kind;
+use crate::log;
 use crate::model::Commit;
 use crate::model::Decoration;
 use crate::model::Index;
@@ -1293,9 +1297,11 @@ impl PairsCache {
 /// left half `left_width` columns wide, with the pairs of `pairs_cache` (made for `revisions`),
 /// which are computed if missing.
 ///
+/// The revisions are wrapped in parallel, each thread taking the next revision not taken yet.
+///
 /// Fails if a text area is too narrow to display a grapheme cluster of its line, unless it is in
-/// a hunk, which is then replaced by an error message. Fails before the next hunk once
-/// `cancellation` is set.
+/// a hunk, which is then replaced by an error message (the error is the one of the first revision
+/// that fails). Fails before the next hunk once `cancellation` is set.
 pub fn rows(
     revisions: &[Revision],
     pairs_cache: &PairsCache,
@@ -1305,16 +1311,55 @@ pub fn rows(
     dates: &DateDisplay,
     cancellation: &AtomicBool,
 ) -> Result<Vec<Row>, RowsError> {
-    let mut rows = Rows::new(width, left_width, theme, dates, cancellation);
-    rows.pairs_cache = Some(pairs_cache);
-    for revision in revisions {
-        rows.revision(revision)?;
+    let next_revision_index = AtomicUsize::new(0);
+    // The rows of each revision, with their number of lines, their line indexes starting at 0.
+    let wrap_next_revisions = || {
+        iter::from_fn(|| {
+            let revision_index = next_revision_index.fetch_add(1, Ordering::Relaxed);
+            let revision = revisions.get(revision_index)?;
+            let mut rows = Rows::new(width, left_width, theme, dates, cancellation);
+            rows.pairs_cache = Some(pairs_cache);
+            rows.revision_index = revision_index;
+            let result = rows
+                .revision(revision)
+                .map(|()| (rows.rows, rows.lines_count));
+            Some((revision_index, result))
+        })
+        .collect::<Vec<_>>()
+    };
+    let threads_count = log::threads_count().min(revisions.len()).max(1);
+    let mut wrapped: Vec<_> = thread::scope(|scope| {
+        let threads: Vec<_> = (0..threads_count)
+            .map(|_| scope.spawn(wrap_next_revisions))
+            .collect();
+        threads
+            .into_iter()
+            .flat_map(|thread| {
+                thread
+                    .join()
+                    .unwrap_or_else(|panic| panic::resume_unwind(panic))
+            })
+            .collect()
+    });
+    wrapped.sort_unstable_by_key(|(revision_index, _)| *revision_index);
+    let wrapped = wrapped
+        .into_iter()
+        .map(|(_, result)| result)
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut rows = Vec::with_capacity(wrapped.iter().map(|(rows, _)| rows.len()).sum());
+    let mut lines_count = 0;
+    for (revision_rows, revision_lines_count) in wrapped {
+        rows.extend(revision_rows.into_iter().map(|row| Row {
+            line_index: lines_count + row.line_index,
+            ..row
+        }));
+        lines_count += revision_lines_count;
     }
     // The separator below the last revision has no next revision.
-    if let Some(last) = rows.rows.last_mut() {
+    if let Some(last) = rows.last_mut() {
         last.revision_index = revisions.len() - 1;
     }
-    Ok(rows.rows)
+    Ok(rows)
 }
 
 /// What a sticky file name is built from (see [`sticky_file_name()`]).
@@ -4775,6 +4820,31 @@ mod tests {
             set_line(&mut drawn, 0, 0, &line, area.width);
             assert_eq!(drawn, expected, "{text:?}");
         }
+    }
+
+    #[test]
+    fn rows_error_is_the_one_of_the_first_revision_too_narrow() {
+        // Revisions wrapped by several threads: a later one may fail first.
+        let revision = |subject| Revision::Index(index(on_main(), subject, ""));
+        let revisions: Vec<_> = iter::repeat_n("a", 10)
+            .chain(["日"])
+            .chain(iter::repeat_n("a", 10))
+            .chain(["本"])
+            .map(revision)
+            .collect();
+        let result = rows(
+            &revisions,
+            &PairsCache::new(&revisions),
+            /* width */ 1,
+            /* left_width */ 1,
+            &Theme::monochrome(),
+            &DateDisplay::for_snapshots(),
+            &NOT_CANCELLED,
+        );
+        assert!(
+            matches!(&result, Err(RowsError::TooNarrow(error)) if error.cluster == "日"),
+            "{result:?}"
+        );
     }
 
     #[test]
