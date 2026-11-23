@@ -26,6 +26,7 @@ use reedi::view::Mode;
 use reedi::view::PairsCache;
 use reedi::view::Row;
 use reedi::view::SplitRatio;
+use reedi::view::StickyFileNameCache;
 use reedi::viewport::Viewport;
 
 #[global_allocator]
@@ -116,6 +117,7 @@ fn draw(revisions: &[Revision], rows: &[Row], left_width: u16, screen: Screen) {
                 /* pending_count */ None,
                 /* error_modal */ None,
                 &Theme::dark(),
+                &mut StickyFileNameCache::default(),
             )
         })
         .unwrap();

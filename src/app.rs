@@ -49,6 +49,7 @@ use crate::view::PairsCache;
 use crate::view::Row;
 use crate::view::RowsError;
 use crate::view::SplitRatio;
+use crate::view::StickyFileNameCache;
 use crate::viewport::Viewport;
 use crate::wrap::TooNarrow;
 
@@ -249,6 +250,7 @@ pub fn run(
     let mut mouse = Mouse::default();
     let mut displayed_pointer_shape = PointerShape::Default;
     let mut viewport = Viewport::default();
+    let mut sticky_file_name_cache = StickyFileNameCache::default();
     let mut count = Count::default();
     let mut sent_keys = sent_keys.into_iter().peekable();
     let panic_hook = panic::take_hook();
@@ -312,6 +314,7 @@ pub fn run(
                             count.pending(),
                             error_modal.as_ref(),
                             &settings.theme,
+                            &mut sticky_file_name_cache,
                         )
                     })?;
                     let drawn = Instant::now();
@@ -458,6 +461,7 @@ fn receive_revisions(
                 /* pending_count */ None,
                 error_modal,
                 &settings.theme,
+                &mut StickyFileNameCache::default(),
             )
         })?;
         first_full_screen = Some(Instant::now());

@@ -16,6 +16,7 @@ use reedi::theme::Theme;
 use reedi::view;
 use reedi::view::ErrorModal;
 use reedi::view::Mode;
+use reedi::view::StickyFileNameCache;
 use reedi::viewport::Viewport;
 
 /// The text of the screen `width` × `height` displaying `commit` from `viewport` and
@@ -45,6 +46,7 @@ fn screen(
                 /* pending_count */ None,
                 Some(error_modal),
                 &theme,
+                &mut StickyFileNameCache::default(),
             )
         })
         .unwrap();

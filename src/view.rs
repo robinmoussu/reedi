@@ -1317,6 +1317,20 @@ pub fn rows(
     Ok(rows.rows)
 }
 
+/// What a sticky file name is built from (see [`sticky_file_name()`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct StickyFileNameKey {
+    revision_index: usize,
+    file_index: NonMaxU32,
+    width: u16,
+    rows_count: usize,
+}
+
+/// The rows of the last sticky file name drawn, then its rule, kept to be drawn again while it is
+/// unchanged. Only valid for the same revisions and theme.
+#[derive(Debug, Default)]
+pub struct StickyFileNameCache(Option<(StickyFileNameKey, Vec<Content>)>);
+
 /// Rows displayed from `viewport.top`, cropped if they don't fit, under the sticky file name (see
 /// [`sticky_header()`]), with the row of the cursor highlighted.
 pub struct RowsView<'a> {
@@ -1327,26 +1341,44 @@ pub struct RowsView<'a> {
     /// Width of the left half of the split rows.
     pub left_width: u16,
     pub theme: &'a Theme,
+    /// Used only with `revisions` and `theme`.
+    pub sticky_file_name_cache: &'a mut StickyFileNameCache,
 }
 
 impl RowsView<'_> {
     /// Draw `header` over the top rows of `area`: its rule, and the file name shortened to fit on
     /// the rows above it, directly above it.
-    fn render_sticky_header(&self, header: StickyHeader, area: Rect, buf: &mut Buffer) {
-        let file_index = usize::try_from(header.file_index.get()).expect("u32 fits in usize");
-        let file = &displayed_files(&self.revisions[header.revision_index])[file_index];
-        let names = sticky_file_name(file, area.width.into(), header.rule_row, self.theme);
+    fn render_sticky_header(&mut self, header: StickyHeader, area: Rect, buf: &mut Buffer) {
+        let key = StickyFileNameKey {
+            revision_index: header.revision_index,
+            file_index: header.file_index,
+            width: area.width,
+            rows_count: header.rule_row,
+        };
+        let cache = &mut self.sticky_file_name_cache.0;
+        if cache
+            .as_ref()
+            .is_none_or(|(cached_key, _)| *cached_key != key)
+        {
+            let file_index = usize::try_from(header.file_index.get()).expect("u32 fits in usize");
+            let file = &displayed_files(&self.revisions[header.revision_index])[file_index];
+            let names = sticky_file_name(file, area.width.into(), header.rule_row, self.theme);
+            let contents = names
+                .into_iter()
+                .map(Content::Text)
+                .chain(iter::once(Content::Rule(self.theme.file)))
+                .collect();
+            *cache = Some((key, contents));
+        }
+        let (_, contents) = cache.as_ref().expect("the cache was just filled");
         let covered_rows_count = (header.rule_row + 1).min(area.height.into());
         let covered = Rect {
             height: u16::try_from(covered_rows_count).expect("at most the height of the area"),
             ..area
         };
         Clear.render(covered, buf);
-        let first_row = header.rule_row - names.len();
-        let contents = names
-            .into_iter()
-            .map(Content::Text)
-            .chain(iter::once(Content::Rule(self.theme.file)));
+        // The contents are the rows of the file name, then the rule.
+        let first_row = header.rule_row + 1 - contents.len();
         (first_row..covered_rows_count)
             .zip(contents)
             .for_each(|(row, content)| {
@@ -1357,7 +1389,7 @@ impl RowsView<'_> {
 }
 
 impl Widget for RowsView<'_> {
-    fn render(self, area: Rect, buf: &mut Buffer) {
+    fn render(mut self, area: Rect, buf: &mut Buffer) {
         self.rows
             .iter()
             .skip(self.viewport.top)
@@ -1761,6 +1793,7 @@ pub fn previous_revision(rows: &[Row], row_index: usize, count: usize) -> usize 
 /// `pending_count` while there is one, then the position of the cursor in percent.
 ///
 /// `viewport` is first scrolled, if needed, to display the cursor on the screen.
+/// `sticky_file_name_cache` must be used only with `revisions` and `theme`.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
@@ -1772,6 +1805,7 @@ pub fn draw(
     pending_count: Option<usize>,
     error_modal: Option<&ErrorModal>,
     theme: &Theme,
+    sticky_file_name_cache: &mut StickyFileNameCache,
 ) {
     let [content, status_bar] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(STATUS_BAR_HEIGHT)])
@@ -1785,6 +1819,7 @@ pub fn draw(
             viewport,
             left_width,
             theme,
+            sticky_file_name_cache,
         },
         content,
     );
@@ -2056,6 +2091,7 @@ mod tests {
                     pending_count,
                     error_modal,
                     theme,
+                    &mut StickyFileNameCache::default(),
                 )
             })
             .unwrap();
@@ -5068,19 +5104,60 @@ mod tests {
         viewport: Viewport,
         theme: &Theme,
     ) -> Buffer {
-        let revisions = revisions_of(commits);
-        let rows = rows_of(commits, width);
-        let area = Rect::new(/* x */ 0, /* y */ 0, width, height);
+        render_rows_with(
+            &revisions_of(commits),
+            &rows_of(commits, width),
+            Rect::new(/* x */ 0, /* y */ 0, width, height),
+            viewport,
+            theme,
+            &mut StickyFileNameCache::default(),
+        )
+    }
+
+    /// The screen displaying `rows` (of `revisions`) from `viewport.top` in `area` with `theme`
+    /// and `sticky_file_name_cache`, without the status bar.
+    fn render_rows_with(
+        revisions: &[Revision],
+        rows: &[Row],
+        area: Rect,
+        viewport: Viewport,
+        theme: &Theme,
+        sticky_file_name_cache: &mut StickyFileNameCache,
+    ) -> Buffer {
         let mut buf = Buffer::empty(area);
         RowsView {
-            rows: &rows,
-            revisions: &revisions,
+            rows,
+            revisions,
             viewport,
-            left_width: fifty_fifty_left_width(width),
+            left_width: fifty_fifty_left_width(area.width),
             theme,
+            sticky_file_name_cache,
         }
         .render(area, &mut buf);
         without_left_to_right_marks(&buf)
+    }
+
+    #[test]
+    fn sticky_file_names_drawn_again_are_drawn_like_new_ones() {
+        let commits = fake::all();
+        let revisions = revisions_of(&commits);
+        let area = Rect::new(
+            /* x */ 0, /* y */ 0, /* width */ 110, /* height */ 10,
+        );
+        let rows = rows_of(&commits, area.width);
+        let theme = Theme::monochrome();
+        let mut sticky_file_name_cache = StickyFileNameCache::default();
+        for top in 0..rows.len() {
+            let viewport = Viewport { top, cursor: top };
+            let render = |cache: &mut StickyFileNameCache| {
+                render_rows_with(&revisions, &rows, area, viewport, &theme, cache)
+            };
+            assert_eq!(
+                render(&mut sticky_file_name_cache),
+                render(&mut StickyFileNameCache::default()),
+                "top row {top}"
+            );
+        }
     }
 
     /// The text of the row `y` of `buf`, without its trailing spaces.
