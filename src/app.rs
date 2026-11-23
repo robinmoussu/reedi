@@ -208,10 +208,20 @@ impl Timing {
     }
 }
 
+/// Which frames are drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Drawing {
+    /// Not the frames replaced before being seen: those followed by an event already waiting.
+    Seen,
+    /// A frame after each key (to measure every refresh).
+    EveryKey,
+}
+
 /// Display the revisions of `stream` with `settings` until `q` or `ctrl+c` is pressed, and the
 /// `unknown_settings` of the config file (its path, and at least one setting) in an error modal
 /// over them, if any, until a key is pressed or the mouse is clicked. The `sent_keys` are pressed
-/// once the rows are displayed, before the keys of the terminal.
+/// once the rows are displayed, before the keys of the terminal. The frames are drawn as `drawing`
+/// says.
 ///
 /// The first screen is drawn as soon as the revisions received fill it, the keys being read once
 /// all the revisions are received. Fails if a revision can't be loaded.
@@ -226,10 +236,11 @@ pub fn run(
     settings: &Settings,
     unknown_settings: Option<(PathBuf, Vec<UnknownSetting>)>,
     sent_keys: Vec<KeyEvent>,
+    drawing: Drawing,
     start: Instant,
 ) -> io::Result<Timing> {
     let mut timing = Timing::default();
-    // When the key whose refresh is not drawn yet was read.
+    // When the first key whose refresh is not drawn yet was read.
     let mut key_read = None;
     let mut error_modal = unknown_settings
         .map(|(path, unknown_settings)| ErrorModal::UnknownSettings { path, unknown_settings });
@@ -286,31 +297,36 @@ pub fn run(
                     viewport.resize(rows.len(), height);
                     size = Some(screen);
                 }
-                terminal.draw(|frame| {
-                    view::draw(
-                        frame,
-                        revisions,
-                        &rows,
-                        &mut viewport,
-                        widths.left_width,
-                        Mode::Review,
-                        count.pending(),
-                        error_modal.as_ref(),
-                        &settings.theme,
-                    )
-                })?;
-                let drawn = Instant::now();
-                if timing.first_full_screen.is_none() && !rows.is_empty() {
-                    timing.first_full_screen = Some(drawn - start);
-                }
-                if let Some(read) = key_read.take() {
-                    timing.refreshes.push(drawn - read);
+                // A frame replaced by the one of the next event before being seen is not drawn.
+                if drawing == Drawing::EveryKey
+                    || !event_waiting(&mut sent_keys, rewrapper.is_running())?
+                {
+                    terminal.draw(|frame| {
+                        view::draw(
+                            frame,
+                            revisions,
+                            &rows,
+                            &mut viewport,
+                            widths.left_width,
+                            Mode::Review,
+                            count.pending(),
+                            error_modal.as_ref(),
+                            &settings.theme,
+                        )
+                    })?;
+                    let drawn = Instant::now();
+                    if timing.first_full_screen.is_none() && !rows.is_empty() {
+                        timing.first_full_screen = Some(drawn - start);
+                    }
+                    if let Some(read) = key_read.take() {
+                        timing.refreshes.push(drawn - read);
+                    }
                 }
                 let Some(event) = next_event(&mut sent_keys, rewrapper.is_running())? else {
                     continue;
                 };
                 if let Event::Key(_) = event {
-                    key_read = Some(Instant::now());
+                    key_read.get_or_insert_with(Instant::now);
                 }
                 if error_modal.is_some() {
                     close_on_key_press_or_click(&event, &mut error_modal);
@@ -340,6 +356,17 @@ pub fn run(
     });
     release_mouse()?;
     result.map(|()| timing)
+}
+
+/// Whether [`next_event()`] would return an event without waiting.
+fn event_waiting(
+    sent_keys: &mut Peekable<vec::IntoIter<KeyEvent>>,
+    rewrapping: bool,
+) -> io::Result<bool> {
+    match sent_keys.peek() {
+        Some(_) => Ok(!rewrapping),
+        None => event::poll(Duration::ZERO),
+    }
 }
 
 /// The next of `sent_keys` once the rows are built (`rewrapping` is false), otherwise the next
@@ -745,6 +772,15 @@ mod tests {
 
     fn ctrl(c: char) -> Event {
         press(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn sent_key_is_waiting_once_the_rows_are_built() {
+        let mut sent_keys = vec![KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)]
+            .into_iter()
+            .peekable();
+        assert!(!event_waiting(&mut sent_keys, /* rewrapping */ true).unwrap());
+        assert!(event_waiting(&mut sent_keys, /* rewrapping */ false).unwrap());
     }
 
     #[test]

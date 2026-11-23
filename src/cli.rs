@@ -57,7 +57,7 @@ pub struct Cli {
     #[arg(long, hide = true)]
     pub timing: Option<PathBuf>,
     /// Draw after every key, even when the next key is already waiting, so that `--timing`
-    /// measures every refresh. Every key is drawn for now: this option has no effect yet.
+    /// measures every refresh.
     #[arg(long, hide = true)]
     pub draw_every_key: bool,
 }

@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use clap::Parser;
+use reedi::Drawing;
 use reedi::cli;
 use reedi::cli::Cli;
 use reedi::config;
@@ -42,7 +43,19 @@ fn run() -> Result<(), Box<dyn Error>> {
     let revisions = log::revisions_stream(&cli, &std::env::current_dir()?)?;
     let (settings, unknown_settings) = settings(&cli)?;
     let sent_keys = cli.send_keys.unwrap_or_default().0;
-    let timing = reedi::run(revisions, &settings, unknown_settings, sent_keys, start)?;
+    let drawing = if cli.draw_every_key {
+        Drawing::EveryKey
+    } else {
+        Drawing::Seen
+    };
+    let timing = reedi::run(
+        revisions,
+        &settings,
+        unknown_settings,
+        sent_keys,
+        drawing,
+        start,
+    )?;
     if let Some(path) = cli.timing {
         fs::write(path, timing.to_json())?;
     }
