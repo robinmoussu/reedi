@@ -88,6 +88,8 @@ enum Action {
     Digit(u8),
     Quit,
     Suspend,
+    /// `ctrl+l`.
+    ClearScreen,
 }
 
 /// The number typed before a command, which repeats it (or is the row `g` and `G` go to).
@@ -189,7 +191,7 @@ fn navigate(
             height,
         ),
         Action::SetCursor(row_index) => viewport.cursor = row_index,
-        Action::Digit(_) | Action::Quit | Action::Suspend => {}
+        Action::Digit(_) | Action::Quit | Action::Suspend | Action::ClearScreen => {}
     }
 }
 
@@ -365,6 +367,8 @@ pub fn run(
                         suspend(terminal)?;
                         displayed_pointer_shape = PointerShape::Default;
                     }
+                    // The next frame draws the whole screen.
+                    Some((Action::ClearScreen, _)) => terminal.clear()?,
                     Some((action, count)) => navigate(action, count, &mut viewport, &rows, height),
                     None => {}
                 }
@@ -746,6 +750,7 @@ fn action(event: &Event) -> Option<Action> {
         (KeyCode::Char('q'), KeyModifiers::NONE) => Some(Action::Quit),
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(Action::Quit),
         (KeyCode::Char('z'), KeyModifiers::CONTROL) => Some(Action::Suspend),
+        (KeyCode::Char('l'), KeyModifiers::CONTROL) => Some(Action::ClearScreen),
         _ => None,
     }
 }
@@ -827,6 +832,11 @@ mod tests {
     #[test]
     fn ctrl_z_suspends() {
         assert_eq!(action(&ctrl('z')), Some(Action::Suspend));
+    }
+
+    #[test]
+    fn ctrl_l_clears_the_screen() {
+        assert_eq!(action(&ctrl('l')), Some(Action::ClearScreen));
     }
 
     #[test]
@@ -2414,7 +2424,12 @@ mod tests {
     fn navigate_ignores_actions_that_are_not_movements() {
         let rows = rows_of_a_long_commit();
         let before = Viewport { cursor: 20, top: 10 };
-        for action in [Action::Quit, Action::Suspend, Action::Digit(3)] {
+        for action in [
+            Action::Quit,
+            Action::Suspend,
+            Action::ClearScreen,
+            Action::Digit(3),
+        ] {
             assert_eq!(navigated(&rows, action, None, before), before);
         }
     }

@@ -583,7 +583,7 @@ version 0.0.14: line-diff, word-diff and syntax highlighting
 
  - [x] Implement `f`/`F`
 
- - [ ] Implement `ctrl+l`
+ - [x] Implement `ctrl+l`
 
  - [ ] on the cursor row, each character with a background color (removed or added line) keeps
    it, and each character with the default background gets the cursor background; in the
