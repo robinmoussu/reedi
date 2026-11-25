@@ -577,7 +577,7 @@ version 0.0.14: line-diff, word-diff and syntax highlighting
 
  - a file whose syntax highlighting fails has no syntax colors
  - on the cursor row, the background colors added by the following tasks (moved and move-copy
-   lines, word-level diff) are kept, like those of the removed and added lines
+   lines, word-level diff) get a shade of their color, like those of the removed and added lines
  - styles are checked by unit tests, for the light and dark themes; snapshots stay text only, and
    the fake data is reviewed with `cargo run`
 
@@ -585,9 +585,10 @@ version 0.0.14: line-diff, word-diff and syntax highlighting
 
  - [x] Implement `ctrl+l`
 
- - [ ] on the cursor row, each character with a background color (removed or added line) keeps
-   it, and each character with the default background gets the cursor background; in the
-   monochrome theme, only the characters that are not inverted are inverted
+ - [x] on the cursor row, each character with a background color (removed or added line) gets a
+   shade of it (lighter in the dark theme, darker in the light one), and each character with the
+   default background gets the cursor background; in the monochrome theme, only the characters that
+   are not inverted are inverted
 
  - [ ] fake data update (new commits, displayed first):
    - [ ] a commit for syntax highlighting:

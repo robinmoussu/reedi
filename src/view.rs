@@ -17,6 +17,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
@@ -51,6 +52,7 @@ use crate::model::Revision;
 use crate::model::WorkingDirectory;
 use crate::settings::MAX_PAIRING_DISTANCE;
 use crate::settings::TAB_WIDTH;
+use crate::theme::Shade;
 use crate::theme::Theme;
 use crate::viewport::Viewport;
 use crate::viewport::scrolloff;
@@ -1453,12 +1455,30 @@ impl Widget for RowsView<'_> {
             .and_then(|row| u16::try_from(row).ok())
             .filter(|row| *row < area.height);
         if let Some(row) = cursor_y {
-            buf.set_style(
+            highlight_cursor_row(
+                buf,
                 Rect { y: area.y + row, height: 1, ..area },
                 self.theme.cursor,
+                self.theme.cursor_shade,
             );
         }
     }
+}
+
+/// Apply the style `cursor` to the cells of `area`, except its background to the cells having a
+/// background color of their own (like those of the removed and added lines), which get the
+/// `shade` of their color instead. Reverse video is not undone on the cells already in reverse
+/// video.
+fn highlight_cursor_row(buf: &mut Buffer, area: Rect, cursor: Style, shade: Shade) {
+    area.positions().for_each(|position| {
+        let cell = &mut buf[position];
+        let style = if cell.bg == Color::Reset {
+            cursor
+        } else {
+            Style { bg: shade.of(cell.bg), ..cursor }
+        };
+        cell.set_style(style);
+    });
 }
 
 /// Minimal actual scrolloff (see [`scrolloff()`]) with which the sticky rule stops on the second
@@ -2263,6 +2283,68 @@ mod tests {
             assert!((0..110).all(|x| buffer[(x, 1)].bg == Color::Reset));
             assert!((0..110).all(|x| buffer[(x, 3)].bg == Color::Reset));
         }
+    }
+
+    /// The screen displaying `rows`, without revisions, `width` columns wide, with the cursor on
+    /// the first row.
+    fn render_cursor_on_the_first_of(rows: &[Row], width: u16, theme: &Theme) -> Buffer {
+        render_rows_with(
+            &[],
+            rows,
+            Rect::new(/* x */ 0, /* y */ 0, width, /* height */ 4),
+            Viewport { cursor: 0, top: 0 },
+            theme,
+            &mut StickyFileNameCache::default(),
+        )
+    }
+
+    #[test]
+    fn cursor_row_shades_the_backgrounds_of_the_modified_lines() {
+        for theme in &themes() {
+            let cursor = theme.cursor.bg.unwrap();
+            // Each half is 20 columns wide: 6 for the line number column, 13 for the text, and 1
+            // for the marker.
+            let rows = new_rows(/* width */ 40, theme, &DateDisplay::for_snapshots())
+                .hunk_rows(&hunk("aaaa bbbb cccc dddd", "aaaa bbbb"), FinalCr::Hidden)
+                .unwrap();
+            let buf = render_cursor_on_the_first_of(&rows, /* width */ 40, theme);
+            // The first row, with the cursor on the second one.
+            let without_cursor = render_rows_with(
+                &[],
+                &rows,
+                Rect::new(
+                    /* x */ 0, /* y */ 0, /* width */ 40, /* height */ 4,
+                ),
+                Viewport { cursor: 1, top: 0 },
+                theme,
+                &mut StickyFileNameCache::default(),
+            );
+            (0..40).for_each(|x| {
+                let bg = without_cursor[(x, 0)].bg;
+                let expected = match bg {
+                    Color::Reset => cursor,
+                    _ => theme.cursor_shade.of(bg).unwrap(),
+                };
+                assert_eq!(buf[(x, 0)].bg, expected, "{x}");
+            });
+            // Below the cursor, the padding of the added line keeps the default background.
+            assert!((20..40).all(|x| buf[(x, 1)].bg == Color::Reset));
+        }
+    }
+
+    #[test]
+    fn cursor_row_does_not_undo_reverse_video_without_colors() {
+        let theme = Theme::monochrome();
+        let mut rows = new_rows(/* width */ 40, &theme, &DateDisplay::for_snapshots())
+            .hunk_rows(&hunk("aaaa", "bbbb"), FinalCr::Hidden)
+            .unwrap();
+        let Content::Split { left, .. } = &mut rows[0].content else {
+            panic!("hunk rows are split");
+        };
+        // An inverted span, like the emphasis of a later task could be.
+        left.spans.push(Span::styled("x", Style::new().reversed()));
+        let buf = render_cursor_on_the_first_of(&rows, /* width */ 40, &theme);
+        assert!((0..40).all(|x| buf[(x, 0)].modifier.contains(Modifier::REVERSED)));
     }
 
     #[test]

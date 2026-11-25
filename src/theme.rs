@@ -14,6 +14,30 @@ pub enum Background {
     Dark,
 }
 
+/// How much a shade changes each channel of a color.
+const SHADE_STEP: u8 = 0x20;
+
+/// Another shade of a color: lighter on a dark background, darker on a light one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shade {
+    Lighter,
+    Darker,
+}
+
+impl Shade {
+    /// This shade of `color`, if it is an RGB color.
+    pub fn of(self, color: Color) -> Option<Color> {
+        let shade = |channel: u8| match self {
+            Shade::Lighter => channel.saturating_add(SHADE_STEP),
+            Shade::Darker => channel.saturating_sub(SHADE_STEP),
+        };
+        match color {
+            Color::Rgb(r, g, b) => Some(Color::Rgb(shade(r), shade(g), shade(b))),
+            _ => None,
+        }
+    }
+}
+
 /// All the styles used by the rendering.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Theme {
@@ -52,6 +76,8 @@ pub struct Theme {
     pub invisible: Style,
     /// The row of the cursor.
     pub cursor: Style,
+    /// The shade the cursor gives to the background colors of the cells of its row that have one.
+    pub cursor_shade: Shade,
     /// The name of the review mode, in the status bar.
     pub review_mode: Style,
     /// The status bar, behind the mode, the blank column after it and the content.
@@ -92,6 +118,7 @@ impl Theme {
             highlighted_whitespace: Style::new().fg(Color::Red).bold(),
             invisible: Style::new().fg(Color::Red).bold(),
             cursor: Style::new().bg(Color::Indexed(235)),
+            cursor_shade: Shade::Lighter,
             review_mode: Style::new().fg(Color::Black).bg(Color::Blue).bold(),
             status_bar: Style::new(),
             status_bar_content: Style::new().fg(Color::Indexed(248)),
@@ -112,6 +139,7 @@ impl Theme {
             dimmed_whitespace: Style::new().fg(Color::Indexed(250)),
             placeholder: Style::new().fg(Color::Indexed(250)),
             cursor: Style::new().bg(Color::Indexed(254)),
+            cursor_shade: Shade::Darker,
             status_bar: Style::new().bg(Color::Indexed(252)),
             status_bar_content: Style::new().fg(Color::Indexed(240)),
             // The colors of git are the same.
@@ -146,6 +174,8 @@ impl Theme {
             highlighted_whitespace: Style::new().bold(),
             invisible: Style::new().bold(),
             cursor: Style::new().reversed(),
+            // Without background colors, the shade is never used.
+            cursor_shade: Shade::Lighter,
             review_mode: Style::new().reversed().bold(),
             status_bar: Style::new(),
             status_bar_content: Style::new(),
@@ -181,6 +211,14 @@ pub fn detect() -> Option<Background> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shades_are_lighter_or_darker_by_the_same_step_on_each_channel() {
+        let color = Color::Rgb(0x10, 0x80, 0xf0);
+        assert_eq!(Shade::Lighter.of(color), Some(Color::Rgb(0x30, 0xa0, 0xff)));
+        assert_eq!(Shade::Darker.of(color), Some(Color::Rgb(0x00, 0x60, 0xd0)));
+        assert_eq!(Shade::Lighter.of(Color::Indexed(1)), None);
+    }
 
     #[test]
     fn colorscheme_is_used_without_detecting_the_background() {
