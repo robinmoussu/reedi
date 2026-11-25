@@ -104,6 +104,11 @@ pub fn header_row_indexes(commits: &[Commit], width: u16) -> Vec<usize> {
         .collect()
 }
 
+/// Index of the first row of the name of each file of `rows`, in all the revisions.
+pub fn file_name_row_indexes(rows: &[Row]) -> Vec<usize> {
+    view::first_file_name_rows(rows).collect()
+}
+
 /// An error modal displaying 2 unrecognized settings of the config file.
 pub fn unknown_settings_error_modal() -> ErrorModal {
     let unknown_setting = |key: &str, value: &str, line_number| UnknownSetting {

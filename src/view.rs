@@ -1833,6 +1833,43 @@ pub fn previous_revision(rows: &[Row], row_index: usize, count: usize) -> usize 
     header_row(rows, revision.saturating_sub(revisions_back_count)).unwrap_or(row_index)
 }
 
+/// Indexes of the first row of the name of each file of `rows`, in all the displayed revisions.
+pub fn first_file_name_rows(rows: &[Row]) -> impl Iterator<Item = usize> {
+    let file_of = |row: &Row| (row.revision_index, row.file_index);
+    rows.iter()
+        .enumerate()
+        .filter(move |&(row_index, row)| {
+            row.file_index.is_some()
+                && (row_index == 0 || file_of(&rows[row_index - 1]) != file_of(row))
+        })
+        .map(|(row_index, _)| row_index)
+}
+
+/// Row of the name (its first row) of the file `count` files after the row `row_index` of `rows`,
+/// counting the files of all the displayed revisions, or of the last file if there are not enough
+/// of them. It is `row_index` if no file name starts below it.
+pub fn next_file(rows: &[Row], row_index: usize, count: usize) -> usize {
+    first_file_name_rows(rows)
+        .skip_while(|&name_row_index| name_row_index <= row_index)
+        .take(count)
+        .last()
+        .unwrap_or(row_index)
+}
+
+/// Row of the name (its first row) of the file `count` files before the row `row_index` of
+/// `rows`, counting the files of all the displayed revisions, where the file displayed by
+/// `row_index` itself counts as the first one if `row_index` is below the first row of its name.
+/// It is the name of the first file if there are not enough of them, and `row_index` if no file
+/// name starts above it.
+pub fn previous_file(rows: &[Row], row_index: usize, count: usize) -> usize {
+    let name_rows_above =
+        first_file_name_rows(&rows[..row_index.min(rows.len())]).collect::<Vec<_>>();
+    name_rows_above
+        .get(name_rows_above.len().saturating_sub(count))
+        .copied()
+        .unwrap_or(row_index)
+}
+
 /// Draw `rows` (displaying `revisions`, their split rows having a left half `left_width` columns
 /// wide), with the status bar on the last line of the screen, and `error_modal` over them. The status bar displays the revision the cursor is on, or the number
 /// `pending_count` while there is one, then the position of the cursor in percent.
@@ -1909,6 +1946,7 @@ mod tests {
     use crate::test_support::fifty_fifty_left_width;
     use crate::test_support::file_at;
     use crate::test_support::file_at_mut;
+    use crate::test_support::file_name_row_indexes;
     use crate::test_support::header_row_indexes;
     use crate::test_support::revisions_of;
     use crate::test_support::rows_of;
@@ -4416,6 +4454,217 @@ mod tests {
         assert_eq!(
             previous_revision(&rows, /* row_index */ 3, /* count */ 5),
             0
+        );
+    }
+
+    /// A commit of 2 files, a commit without files, and a commit of 1 file, for the tests moving
+    /// between the files of several revisions. Each file has enough lines for a row 3 rows below
+    /// its name to be inside its hunk.
+    fn commits_with_and_without_files() -> [Commit; 3] {
+        [
+            commit_of(vec![
+                file_of_unchanged_lines("src/main.rs", /* len */ 5),
+                file_of_unchanged_lines("src/lib.rs", /* len */ 5),
+            ]),
+            commit_of(Vec::new()),
+            commit_of(vec![file_of_unchanged_lines(
+                "src/app.rs",
+                /* len */ 5,
+            )]),
+        ]
+    }
+
+    #[test]
+    fn first_file_name_rows_display_the_file_names() {
+        let rows = rows_of(&commits_with_and_without_files(), /* width */ 110);
+        let names = first_file_name_rows(&rows)
+            .map(|row_index| match &rows[row_index].content {
+                Content::Text(line) => text(line),
+                content => panic!("{content:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names.len(), 3);
+        for (name, path) in names
+            .iter()
+            .zip(["src/main.rs", "src/lib.rs", "src/app.rs"])
+        {
+            assert!(name.contains(path), "{name}");
+        }
+    }
+
+    #[test]
+    fn next_file_goes_to_the_name_of_the_next_file() {
+        let rows = rows_of(&commits_with_and_without_files(), /* width */ 110);
+        let name_rows = file_name_row_indexes(&rows);
+        // From the header, above the first file.
+        assert_eq!(
+            next_file(&rows, /* row_index */ 0, /* count */ 1),
+            name_rows[0]
+        );
+        // On the name of the first file, then inside its hunk.
+        for row_index in [name_rows[0], name_rows[0] + 3] {
+            assert_eq!(
+                next_file(&rows, row_index, /* count */ 1),
+                name_rows[1],
+                "{row_index}"
+            );
+        }
+    }
+
+    #[test]
+    fn next_file_goes_to_the_next_revision_with_files() {
+        let commits = commits_with_and_without_files();
+        let rows = rows_of(&commits, /* width */ 110);
+        let name_rows = file_name_row_indexes(&rows);
+        let headers = header_row_indexes(&commits, /* width */ 110);
+        // From the last file of the 1st commit, and from the header of the 2nd one, which has no
+        // files: both go to the file of the 3rd commit.
+        for row_index in [name_rows[1], headers[1]] {
+            assert_eq!(
+                next_file(&rows, row_index, /* count */ 1),
+                name_rows[2],
+                "{row_index}"
+            );
+        }
+    }
+
+    #[test]
+    fn next_file_repeats_and_stops_on_the_last_file() {
+        let rows = rows_of(&commits_with_and_without_files(), /* width */ 110);
+        let name_rows = file_name_row_indexes(&rows);
+        assert_eq!(
+            next_file(&rows, /* row_index */ 0, /* count */ 2),
+            name_rows[1]
+        );
+        assert_eq!(
+            next_file(&rows, name_rows[0] + 3, /* count */ 2),
+            name_rows[2]
+        );
+        assert_eq!(
+            next_file(&rows, /* row_index */ 0, /* count */ 10),
+            name_rows[2]
+        );
+        assert_eq!(
+            next_file(&rows, /* row_index */ 0, usize::MAX),
+            name_rows[2]
+        );
+    }
+
+    #[test]
+    fn next_file_does_nothing_on_and_below_the_name_of_the_last_file() {
+        let rows = rows_of(&commits_with_and_without_files(), /* width */ 110);
+        let last_name_row_index = *file_name_row_indexes(&rows).last().unwrap();
+        // The name of the last file, a row inside its hunk, and the separator below the last
+        // commit.
+        for row_index in [last_name_row_index, last_name_row_index + 3, rows.len() - 1] {
+            assert_eq!(
+                next_file(&rows, row_index, /* count */ 1),
+                row_index,
+                "{row_index}"
+            );
+        }
+        assert_eq!(
+            next_file(&rows, last_name_row_index, /* count */ 5),
+            last_name_row_index
+        );
+    }
+
+    #[test]
+    fn previous_file_inside_a_file_goes_to_its_name() {
+        let rows = rows_of(&commits_with_and_without_files(), /* width */ 110);
+        file_name_row_indexes(&rows)
+            .into_iter()
+            .for_each(|name_row_index| {
+                assert_eq!(
+                    previous_file(&rows, name_row_index + 3, /* count */ 1),
+                    name_row_index
+                );
+            });
+    }
+
+    #[test]
+    fn previous_file_on_a_name_goes_to_the_previous_name() {
+        // The file of the 3rd commit goes to the last file of the 1st one, the 2nd commit having
+        // no files.
+        let rows = rows_of(&commits_with_and_without_files(), /* width */ 110);
+        file_name_row_indexes(&rows).windows(2).for_each(|pair| {
+            assert_eq!(previous_file(&rows, pair[1], /* count */ 1), pair[0]);
+        });
+    }
+
+    #[test]
+    fn previous_file_from_a_revision_without_files_goes_to_the_last_file_above() {
+        let commits = commits_with_and_without_files();
+        let rows = rows_of(&commits, /* width */ 110);
+        let name_rows = file_name_row_indexes(&rows);
+        let headers = header_row_indexes(&commits, /* width */ 110);
+        assert_eq!(
+            previous_file(&rows, headers[1], /* count */ 1),
+            name_rows[1]
+        );
+    }
+
+    #[test]
+    fn previous_file_repeats_and_stops_on_the_first_file() {
+        let rows = rows_of(&commits_with_and_without_files(), /* width */ 110);
+        let name_rows = file_name_row_indexes(&rows);
+        // The first one goes to the name of the file, the next ones to the previous files.
+        assert_eq!(
+            previous_file(&rows, name_rows[2] + 3, /* count */ 2),
+            name_rows[1]
+        );
+        assert_eq!(
+            previous_file(&rows, name_rows[2], /* count */ 2),
+            name_rows[0]
+        );
+        assert_eq!(
+            previous_file(&rows, name_rows[2] + 3, /* count */ 10),
+            name_rows[0]
+        );
+        assert_eq!(
+            previous_file(&rows, name_rows[2] + 3, usize::MAX),
+            name_rows[0]
+        );
+    }
+
+    #[test]
+    fn previous_file_does_nothing_on_and_above_the_name_of_the_first_file() {
+        let rows = rows_of(&commits_with_and_without_files(), /* width */ 110);
+        let first_name_row_index = file_name_row_indexes(&rows)[0];
+        // The header of the first commit, the blank row above the first file, and its name.
+        for row_index in [0, first_name_row_index - 1, first_name_row_index] {
+            assert_eq!(
+                previous_file(&rows, row_index, /* count */ 1),
+                row_index,
+                "{row_index}"
+            );
+        }
+        assert_eq!(
+            previous_file(&rows, first_name_row_index, /* count */ 5),
+            first_name_row_index
+        );
+    }
+
+    #[test]
+    fn next_and_previous_file_go_to_the_first_row_of_a_wrapped_file_name() {
+        // The name of the file of the 1st commit is displayed on 3 rows.
+        let commits = [
+            commit_with_a_long_file_name(),
+            commit_with_a_short_file_name(),
+        ];
+        let rows = rows_of(&commits, /* width */ 40);
+        let name_rows = file_name_row_indexes(&rows);
+        assert_eq!(
+            next_file(&rows, name_rows[0] + 1, /* count */ 1),
+            name_rows[1]
+        );
+        assert_eq!(
+            previous_file(&rows, name_rows[0] + 2, /* count */ 1),
+            name_rows[0]
+        );
+        assert_eq!(
+            previous_file(&rows, name_rows[1], /* count */ 1),
+            name_rows[0]
         );
     }
 

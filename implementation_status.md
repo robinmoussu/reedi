@@ -581,7 +581,7 @@ version 0.0.14: line-diff, word-diff and syntax highlighting
  - styles are checked by unit tests, for the light and dark themes; snapshots stay text only, and
    the fake data is reviewed with `cargo run`
 
- - [ ] Implement `f`/`F`
+ - [x] Implement `f`/`F`
 
  - [ ] Implement `ctrl+l`
 

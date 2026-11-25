@@ -78,6 +78,10 @@ enum Action {
     NextRevision,
     /// `K` or `ctrl+up`.
     PreviousRevision,
+    /// `f`.
+    NextFile,
+    /// `F`.
+    PreviousFile,
     /// A left click on the row of this index.
     SetCursor(usize),
     /// A digit of the number repeating the next command.
@@ -171,6 +175,16 @@ fn navigate(
         ),
         Action::PreviousRevision => viewport.jump_and_scroll_to_top_margin(
             view::previous_revision(rows, viewport.cursor, repeat_count),
+            len,
+            height,
+        ),
+        Action::NextFile => viewport.jump_and_scroll_to_top_margin(
+            view::next_file(rows, viewport.cursor, repeat_count),
+            len,
+            height,
+        ),
+        Action::PreviousFile => viewport.jump_and_scroll_to_top_margin(
+            view::previous_file(rows, viewport.cursor, repeat_count),
             len,
             height,
         ),
@@ -724,6 +738,10 @@ fn action(event: &Event) -> Option<Action> {
         | (KeyCode::Down, KeyModifiers::CONTROL) => Some(Action::NextRevision),
         (KeyCode::Char('K'), KeyModifiers::NONE | KeyModifiers::SHIFT)
         | (KeyCode::Up, KeyModifiers::CONTROL) => Some(Action::PreviousRevision),
+        (KeyCode::Char('f'), KeyModifiers::NONE) => Some(Action::NextFile),
+        (KeyCode::Char('F'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+            Some(Action::PreviousFile)
+        }
         (KeyCode::Char(c @ '0'..='9'), KeyModifiers::NONE) => Some(Action::Digit(c as u8 - b'0')),
         (KeyCode::Char('q'), KeyModifiers::NONE) => Some(Action::Quit),
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(Action::Quit),
@@ -756,6 +774,7 @@ mod tests {
     use crate::model::Commit;
     use crate::settings::SCROLLOFF;
     use crate::test_support::fifty_fifty_left_width;
+    use crate::test_support::file_name_row_indexes;
     use crate::test_support::header_row_indexes;
     use crate::test_support::rows_of;
     use crate::test_support::rows_of_revisions;
@@ -1400,6 +1419,20 @@ mod tests {
     }
 
     #[test]
+    fn f_goes_to_the_next_file() {
+        assert_eq!(action(&key(KeyCode::Char('f'))), Some(Action::NextFile));
+    }
+
+    #[test]
+    fn shift_f_goes_to_the_previous_file() {
+        assert_eq!(
+            action(&press(KeyCode::Char('F'), KeyModifiers::SHIFT)),
+            Some(Action::PreviousFile)
+        );
+        assert_eq!(action(&key(KeyCode::Char('F'))), Some(Action::PreviousFile));
+    }
+
+    #[test]
     fn digits_are_actions() {
         for c in '0'..='9' {
             let digit = c.to_digit(10).unwrap() as u8;
@@ -1518,6 +1551,8 @@ mod tests {
             (shift('G'), Action::Last),
             (shift('J'), Action::NextRevision),
             (shift('K'), Action::PreviousRevision),
+            (key(KeyCode::Char('f')), Action::NextFile),
+            (shift('F'), Action::PreviousFile),
             (
                 press(KeyCode::Down, KeyModifiers::CONTROL),
                 Action::NextRevision,
@@ -1571,7 +1606,9 @@ mod tests {
     const HEIGHT: usize = 20;
 
     /// The rows of a fake commit displayed on at least 70 rows, for the tests moving inside a
-    /// commit (the furthest one displays the rows 30 to 69, on a screen of 40 rows).
+    /// commit (the furthest one displays the rows 30 to 69, on a screen of 40 rows), and between
+    /// its files (at least 3, the 2nd one starting at least `SCROLLOFF` rows below the top and
+    /// `HEIGHT` rows above the end).
     fn rows_of_a_long_commit() -> Vec<Row> {
         rows_of(&[fake::file_changes()], /* width */ 110)
     }
@@ -2301,6 +2338,79 @@ mod tests {
     }
 
     #[test]
+    fn navigate_next_file_scrolls_the_name_of_the_next_file_to_the_top_margin() {
+        let rows = rows_of_a_long_commit();
+        let name_rows = file_name_row_indexes(&rows);
+        assert_eq!(
+            navigated(
+                &rows,
+                Action::NextFile,
+                None,
+                Viewport { cursor: name_rows[0], top: 0 }
+            ),
+            Viewport {
+                cursor: name_rows[1],
+                top: name_rows[1] - SCROLLOFF
+            }
+        );
+    }
+
+    #[test]
+    fn navigate_next_file_is_repeated() {
+        let rows = rows_of_a_long_commit();
+        let name_rows = file_name_row_indexes(&rows);
+        assert_eq!(
+            navigated(
+                &rows,
+                Action::NextFile,
+                /* count */ Some(2),
+                Viewport { cursor: name_rows[0], top: 0 }
+            )
+            .cursor,
+            name_rows[2]
+        );
+    }
+
+    #[test]
+    fn navigate_previous_file_scrolls_the_name_of_the_file_to_the_top_margin() {
+        let rows = rows_of_a_long_commit();
+        let name_rows = file_name_row_indexes(&rows);
+        // The blank row above the 3rd file is below the name of the 2nd one.
+        let below_the_second_file = Viewport {
+            cursor: name_rows[2] - 1,
+            top: name_rows[1],
+        };
+        assert_eq!(
+            navigated(&rows, Action::PreviousFile, None, below_the_second_file),
+            Viewport {
+                cursor: name_rows[1],
+                top: name_rows[1] - SCROLLOFF
+            }
+        );
+    }
+
+    #[test]
+    fn navigate_previous_file_is_repeated() {
+        let rows = rows_of_a_long_commit();
+        let name_rows = file_name_row_indexes(&rows);
+        // From the blank row above the 3rd file, the first one goes to the name of the 2nd file,
+        // the next one to the 1st file.
+        assert_eq!(
+            navigated(
+                &rows,
+                Action::PreviousFile,
+                /* count */ Some(2),
+                Viewport {
+                    cursor: name_rows[2] - 1,
+                    top: name_rows[1]
+                }
+            )
+            .cursor,
+            name_rows[0]
+        );
+    }
+
+    #[test]
     fn navigate_ignores_actions_that_are_not_movements() {
         let rows = rows_of_a_long_commit();
         let before = Viewport { cursor: 20, top: 10 };
@@ -2315,6 +2425,8 @@ mod tests {
             Action::Down,
             Action::Last,
             Action::NextRevision,
+            Action::NextFile,
+            Action::PreviousFile,
             Action::HalfPageDown,
         ] {
             let mut viewport = Viewport::default();
