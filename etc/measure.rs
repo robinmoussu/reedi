@@ -251,10 +251,12 @@ fn sources(performance: &Path, tree: &str, revision: Option<&str>) -> PathBuf {
     if !directory.exists() {
         fs::create_dir_all(&directory).unwrap();
         // The spaces ending file names are removed: cargo misreads such paths in its dep-info
-        // files, and would build the sources again each time.
+        // files, and would build the sources again each time. The files get the current time
+        // (`-m`) rather than the one of the commit: the revisions share their build artifacts,
+        // which cargo would otherwise reuse for a revision older than the last build.
         let export = |repository: &str, commit: &str, destination: &Path| {
             let command = format!(
-                "git -C {repository} archive {commit} | tar -x --transform='s/ $//' -C {}",
+                "git -C {repository} archive {commit} | tar -x -m --transform='s/ $//' -C {}",
                 destination.display()
             );
             output(Command::new("sh").args(["-c", &command]));
