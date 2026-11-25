@@ -5548,7 +5548,16 @@ mod tests {
         let rows = rows_of(&commits, area.width);
         let theme = Theme::monochrome();
         let mut sticky_file_name_cache = StickyFileNameCache::default();
-        for top in 0..rows.len() {
+        // The cache only depends on the sticky header: the top rows where it changes fill the
+        // cache, and the rows after them reuse it. The others reuse it like the latter.
+        let headers: Vec<_> = (0..rows.len())
+            .map(|top| sticky_header(&rows, viewport_on(top), usize::from(area.height)))
+            .collect();
+        let tops = (0..rows.len()).filter(|&top| {
+            let changed = |top: usize| top == 0 || headers[top] != headers[top - 1];
+            changed(top) || changed(top.saturating_sub(1))
+        });
+        for top in tops {
             let viewport = Viewport { top, cursor: top };
             let render = |cache: &mut StickyFileNameCache| {
                 render_rows_with(&revisions, &rows, area, viewport, &theme, cache)
