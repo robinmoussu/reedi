@@ -1,0 +1,9 @@
+CARGO ?= cargo
+
+.PHONY: build test
+
+build:
+	$(CARGO) build --release
+
+test:
+	$(CARGO) test

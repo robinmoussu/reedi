@@ -1,0 +1,13 @@
+CARGO ?= cargo
+PREFIX ?= /usr/local
+
+.PHONY: build test install
+
+build:
+	$(CARGO) build --release
+
+test:
+	$(CARGO) test
+
+install: build
+	install -D target/release/reedi $(DESTDIR)$(PREFIX)/bin/reedi

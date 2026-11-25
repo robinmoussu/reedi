@@ -590,34 +590,34 @@ version 0.0.14: line-diff, word-diff and syntax highlighting
    default background gets the cursor background; in the monochrome theme, only the characters that
    are not inverted are inverted
 
- - [ ] fake data update (new commits, displayed first):
-   - [ ] a commit for syntax highlighting:
-     - [ ] a Rust, a C++, a Python and a Markdown file, a file with an unknown extension (plain
+ - [x] fake data update (new commits, displayed first):
+   - [x] a commit for syntax highlighting:
+     - [x] a Rust, a C++, a Python and a Markdown file, a file with an unknown extension (plain
        text) and a `Makefile` (known file name without extension)
-     - [ ] in the C++ file, a multi-line comment (`/* … */`) with a very long text identical
+     - [x] in the C++ file, a multi-line comment (`/* … */`) with a very long text identical
        before and after, containing a change, with a hunk starting inside the comment
-     - [ ] in the C++ file, a `/*` line added above an unchanged line, so that this line is code
+     - [x] in the C++ file, a `/*` line added above an unchanged line, so that this line is code
        on the left and comment on the right
-   - [ ] a commit for moved lines:
-     - [ ] the lines `abcd` become `acbd`, with `b` modified inside
-     - [ ] the same, with `c` modified inside
-     - [ ] a block moved between two files where all lines are identical
-     - [ ] a block moved between two files where a single line is identical
-     - [ ] a moved block shorter than 20 alphanumeric characters (shown as removed/added)
-     - [ ] a duplicated block (one line on the left, two on the right), containing:
-       - [ ] a line where all three are identical
-       - [ ] a line where the two on the right are identical, but differ from the left one
-       - [ ] a line where the left one is identical to one of the right ones, but not the other
-     - [ ] a deduplicated block (two lines on the left, one on the right)
-     - [ ] non-trivial moved blocks, whose lines change like in a real move (prefix removed,
+   - [x] a commit for moved lines:
+     - [x] the lines `abcd` become `acbd`, with `b` modified inside
+     - [x] the same, with `c` modified inside
+     - [x] a block moved between two files where all lines are identical
+     - [x] a block moved between two files where a single line is identical
+     - [x] a moved block shorter than 20 alphanumeric characters (shown as removed/added)
+     - [x] a duplicated block (one line on the left, two on the right), containing:
+       - [x] a line where all three are identical
+       - [x] a line where the two on the right are identical, but differ from the left one
+       - [x] a line where the left one is identical to one of the right ones, but not the other
+     - [x] a deduplicated block (two lines on the left, one on the right)
+     - [x] non-trivial moved blocks, whose lines change like in a real move (prefix removed,
        indentation changed), each with and without light edits: from an inline script of an HTML
        file to a dedicated JavaScript file, and from a doc comment to a test file, in Rust and in
        Python
-   - [ ] a commit for word-level diff:
-     - [ ] a paired line with several changed words in each code file (Rust, C++ and Python)
-     - [ ] a reindented-only line
-     - [ ] a line where only inner spaces change
-     - [ ] a line where only an invisible character changes, whose text says so
+   - [x] a commit for word-level diff:
+     - [x] a paired line with several changed words in each code file (Rust, C++ and Python)
+     - [x] a reindented-only line
+     - [x] a line where only inner spaces change
+     - [x] a line where only an invisible character changes, whose text says so
 
  - [ ] moved line detection
  - [ ] duplicated moved lines

@@ -1,0 +1,6 @@
+Wrapping
+
+The long lines are wrapped at the width of their half of the screen.
+    The indentation of a line is kept on its continuation rows.
+A line is broken at the last space that fits.
+Only a space between two words can break a line.

@@ -1,0 +1,3 @@
+Invisible characters
+
+In this line, only the space after this colon: becomes a no-break space.

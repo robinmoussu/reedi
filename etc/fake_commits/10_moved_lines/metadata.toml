@@ -1,0 +1,14 @@
+# A commit for the moved lines: lines swapped inside a file (one of them modified), blocks moved
+# between files (identical, or with a single identical line), a block too short to be a move,
+# duplicated and deduplicated blocks, and moves changing the lines like real ones do: from an inline
+# script of an HTML file to a JavaScript file, and from doc comments to test files, in Rust and in
+# Python, each with and without light edits.
+hash = "2b7e4c9a0d5f18e36b2a7c4e9d0f5a183c6e7b42"
+parents = ["4d8a1f6c2e9b07d35a1c8e4f6b2d9a07c3e5f184"]
+author = "Tomás Ferreira"
+email = "tomas.ferreira@example.org"
+date = "2026-09-19 17:02:11 +0200"
+subject = "client: share the retry policy between the transports, and move the examples to the tests"
+body = """
+The HTTP and gRPC transports each get their own copy of the retry policy, the backoff gets its own
+module, and the examples of the documentation become tests, so that they run with the others."""

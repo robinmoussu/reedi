@@ -1,0 +1,11 @@
+# A commit for the word-level diff: a paired line with several changed words in each code file (Rust,
+# C++ and Python), a reindented-only line, a line where only inner spaces change, and a line where
+# only an invisible character changes.
+hash = "6b2e9f1d4a7c08e3b5f2a961d7c4e0b38a5f2d17"
+parents = ["2b7e4c9a0d5f18e36b2a7c4e9d0f5a183c6e7b42"]
+author = "Yara Haddad"
+email = "yara.haddad@example.org"
+date = "2026-09-21 09:46:28 +0200"
+subject = "wrap: break the long lines at the last space that fits, and keep their indentation"
+body = """
+The lines were broken at the last character that fits, even in the middle of a word."""

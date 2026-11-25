@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Review</title>
+    <script>
+      function highlightCurrentRow(rows, cursorIndex) {
+        rows.forEach((row) => row.classList.remove("current"));
+        rows[cursorIndex].classList.add("current");
+      }
+
+      function scrollToCurrentRow(rows, cursorIndex) {
+        const row = rows[cursorIndex];
+        row.scrollIntoView({ block: "nearest" });
+      }
+    </script>
+  </head>
+  <body>
+    <main id="rows"></main>
+  </body>
+</html>

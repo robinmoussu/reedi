@@ -1,0 +1,12 @@
+# A commit for the syntax highlighting: files of several languages (Rust, C++, Python, Markdown), a
+# file of an unknown extension (plain text), a `Makefile` (a known file name without extension), a
+# hunk starting inside a long C++ comment, and C++ lines that are code before and comment after.
+hash = "4d8a1f6c2e9b07d35a1c8e4f6b2d9a07c3e5f184"
+parents = ["9c2e7a4f1b6d83e05c9a2f7d4b1e6083a5c7d290"]
+author = "Inès Moreau"
+email = "ines.moreau@example.org"
+date = "2026-09-18 14:37:52 +0200"
+subject = "render: describe the canvas, and disable its resize until it keeps the wide characters"
+body = """
+Resizing split the wide characters in two halves: it is disabled until it handles them. The
+palette of the themes is now read from a file, and the report lists the slowest frames."""
