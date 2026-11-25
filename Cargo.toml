@@ -4,7 +4,7 @@ members = ["reedi-crossterm-compat", "reedi-gix-compat", "reediif"]
 exclude = ["modalkit"]
 
 [workspace.package]
-version = "0.0.13"
+version = "0.0.14"
 edition = "2024"
 rust-version = "1.100"
 

@@ -2708,7 +2708,7 @@ dependencies = [
 
 [[package]]
 name = "reedi"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "clap",
  "compact_str",
@@ -2741,14 +2741,14 @@ dependencies = [
 
 [[package]]
 name = "reedi-crossterm-compat"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "crossterm",
 ]
 
 [[package]]
 name = "reedi-gix-compat"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "gix",
  "gix-date",
@@ -2760,7 +2760,7 @@ dependencies = [
 
 [[package]]
 name = "reediif"
-version = "0.0.13"
+version = "0.0.14"
 dependencies = [
  "bstr",
  "foldhash",

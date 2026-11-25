@@ -572,13 +572,22 @@ version 0.0.13: performance measurement
   `just compare` first
 - [x] `etc/profiling.md` explains `just measure`, `just compare` and the hook
 
-version 0.0.x: line-diff, word-diff and syntax highlighting
------------------------------------------------------------
+version 0.0.14: line-diff, word-diff and syntax highlighting
+------------------------------------------------------------
 
- - timeouts are parameters, so that tests can trigger the fallback; a parsing error falls back the
-   same way as the timeout
- - line diff, word diff and syntax highlight are computed once, when the diffs are built (not when
-   resizing)
+ - a file whose syntax highlighting fails has no syntax colors
+ - on the cursor row, the background colors added by the following tasks (moved and move-copy
+   lines, word-level diff) are kept, like those of the removed and added lines
+ - styles are checked by unit tests, for the light and dark themes; snapshots stay text only, and
+   the fake data is reviewed with `cargo run`
+
+ - [ ] Implement `f`/`F`
+
+ - [ ] Implement `ctrl+l`
+
+ - [ ] on the cursor row, each character with a background color (removed or added line) keeps
+   it, and each character with the default background gets the cursor background; in the
+   monochrome theme, only the characters that are not inverted are inverted
 
  - [ ] fake data update (new commits, displayed first):
    - [ ] a commit for syntax highlighting:
@@ -604,7 +613,7 @@ version 0.0.x: line-diff, word-diff and syntax highlighting
        file to a dedicated JavaScript file, and from a doc comment to a test file, in Rust and in
        Python
    - [ ] a commit for word-level diff:
-     - [ ] a paired line with several changed words in each code file
+     - [ ] a paired line with several changed words in each code file (Rust, C++ and Python)
      - [ ] a reindented-only line
      - [ ] a line where only inner spaces change
      - [ ] a line where only an invisible character changes, whose text says so
@@ -615,21 +624,19 @@ version 0.0.x: line-diff, word-diff and syntax highlighting
  - [ ] match expected colorscheme (to review after the implementation):
    - moved line: `#1f1d4d` (dark), `#e0e0ff` (light)
    - move-copy (italic): `#14132f` (dark), `#f0f0ff` (light)
- - [ ] add test for max time budget per commit
 
  - [ ] word-level diff
  - [ ] match expected colorscheme (to review after the implementation):
    - removed word: `#901011` (dark), `#ffc0c0` (light)
    - added word: `#006000` (dark), `#a0efa0` (light)
    - moved word: `#4545ab` (dark), `#c0c0ff` (light)
- - [ ] invisible characters replacements keep their own style
- - [ ] test for max time budget per commit include word-level diff
+ - [ ] the replacements of invisible characters keep their own style (their foreground color and
+   modifiers, on the background of the emphasis)
 
- - [ ] per language syntax highlighting
+ - [ ] per language syntax highlighting (both versions of each file are highlighted whole)
  - [ ] use only foreground color, not style, not background
  - [ ] only the lines of the hunks have syntax highlighting (all lines included unmodified)
  - [ ] the `monochrome` theme has no syntax colors
- - [ ] add test for max time budget per file
 
 version 0.0.x: merge and merge-conflict
 ---------------------------------------

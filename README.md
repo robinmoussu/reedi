@@ -38,13 +38,6 @@ Performance:
   - 1 second max to open, ideally the first full screen drawn in less than 200ms
   - 500ms max to refresh the screen (including when scrolling or after complex actions), ideally
     less than 200ms
-- line-diff (move excluded, so only removed/added) doesn’t have timeout, but is expected to be fast
-  and is computed first
-- move detection + word diff have a common timeout of 1s max per revision
-  - if move detection hit timeout, removed/added is used as fallback
-  - if word-diff hit timeout, the whole line will use the same result as the line-diff
-- a full-file syntax highlight limit of 500ms per file before fallback (per hunk syntax color,
-  with a 50ms timeout per hunk, then no syntax highlight)
 
 ```
 $hash $commit_subject $author $date ($tags, $branches)
@@ -197,6 +190,7 @@ Review mode:
 - `g`/`G` move the cursor to first/last row
 - `J`/`K` or `ctrl+down`/`ctrl+up` jump to the next/previous revision (and move the cursor row to
   the top of the screen)
+- `f`/`F` jump to the next/previous file (and move the cursor row to the top of the screen)
 - `[`/`]` jumps to the next/previous merge conflict
 
 - `ctrl+e`/`ctrl+y` or mouse wheel move the screen and the cursor one line down/up, so that the
@@ -472,7 +466,7 @@ Settings
   - dark: `Monokai Extended`
   - light: `GitHub`
   - monochrome: black and white only
-- matching pair similarity:
+- maximum distance of a matching pair (from 0, identical, to 1, nothing in common):
   - within a file: 0.6
   - within a revision: 0.5
 - embedded bidi support for RTL language on terminal that do not support it: auto (default), enable
@@ -497,6 +491,7 @@ background of that line.
 Word-level diff:
 - All words of a non-matching pair (so pure deletion, and pure addition) have word-level diff
   coloration
+- Whitespace changes (indentation, spaces between words) are word-level diffs too
 
 Moved lines:
 - leading and trailing whitespace is ignored when computing move (but are still displayed as
@@ -509,8 +504,10 @@ Moved lines:
   - if the inside of b is modified, and not c, then c will always be seen as unmodified and
     vice-versa
 - Two lines are considered for move-detection only if:
-  - it's in a block of at least 20 alphanumeric characters of consecutive lines (like git)
+  - they are in a block of at least 20 alphanumeric characters (like git), a block being the
+    consecutive moved lines sharing a letter (see below), counted on the left side
   - either:
+    - they are identical (ignoring leading and trailing whitespace)
     - both lines are in the same file
     - their respective lines immediately above or below are either:
       - an exact match
@@ -530,8 +527,8 @@ Moved lines:
     the move-copy colorscheme
 
 Duplicated moved lines:
-- If moved lines have multiple valid matches, this means that there is a duplication (or
-  deduplication, or both)
+- If moved lines have multiple valid matches (identical or close enough), this means that there is
+  a duplication (or deduplication, or both)
 - For each line, on the copy side, each matching moved line is displayed (in the order of the
   original), and only the first one gets its letter
 - The copy side is deduplicated
@@ -607,6 +604,9 @@ Line-level diff:
 
 Word-level diff:
 - light/dark themes use bold + another shade of the same background color
+- moved words (in moved and move-copy lines) use another shade of blue
+- the replacement characters of invisible characters keep their color and modifiers, on the
+  background of the emphasis
 - monochrome uses underline
 
 Syntax highlighting:
@@ -615,4 +615,5 @@ Syntax highlighting:
   file name is longer than 4 bytes, the whole file name then the extension are looked up as an
   extension. The content of the file is never inspected. If nothing matches, the file is plain
   text (no highlighting).
+- A file whose highlighting fails has no syntax colors
 
