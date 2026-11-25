@@ -1,12 +1,15 @@
 //! Pairing of the removed and added lines of a hunk, similar to what `delta` does: a removed line
 //! is displayed next to an added line only if they are similar enough.
 
-use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::iter;
+use std::ops::Range;
 use std::sync::LazyLock;
 
 use foldhash::HashMap;
+use gix_imara_diff::Algorithm;
+use gix_imara_diff::Diff;
+use gix_imara_diff::Token;
 
 use regex::Regex;
 use unicode_segmentation::UnicodeSegmentation;
@@ -18,11 +21,6 @@ use crate::model::LineKind;
 
 /// Lines are split into words (matching this regex), and the characters between them.
 static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\w+").expect("the regex is valid"));
-
-const DELETION_COST: usize = 2;
-const INSERTION_COST: usize = 2;
-/// Extra cost for starting a new group of deleted or inserted tokens.
-const INITIAL_MISMATCH_PENALTY: usize = 1;
 
 /// A row of a hunk: the indexes (in [`Hunk::lines`]) of the lines displayed in each half.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -126,8 +124,7 @@ fn pair_modified(
     pairs
 }
 
-/// The tokens of `line`, aligned by [`operations()`]: its words, and each grapheme cluster between
-/// them, after one (or two, if the line doesn't start with a word) empty tokens.
+/// The tokens of `line`: its words, and each grapheme cluster between them.
 fn tokenize(line: &str) -> Vec<&str> {
     if line.is_ascii() && !line.contains('\r') {
         ascii_tokens(line)
@@ -139,11 +136,6 @@ fn tokenize(line: &str) -> Vec<&str> {
 /// [`tokenize()`] for any line.
 fn unicode_tokens(line: &str) -> Vec<&str> {
     let words: Vec<_> = WORD.find_iter(line).collect();
-    let second_empty = if words.first().is_some_and(|word| word.start() == 0) || line.is_empty() {
-        None
-    } else {
-        Some("")
-    };
     let ends = iter::once(0).chain(words.iter().map(|word| word.end()));
     let starts = words
         .iter()
@@ -153,15 +145,14 @@ fn unicode_tokens(line: &str) -> Vec<&str> {
         .iter()
         .map(|word| Some(word.as_str()))
         .chain(iter::once(None));
-    let tokens = ends
-        .zip(starts)
+    ends.zip(starts)
         .zip(words)
         .flat_map(|((end, start), word)| {
             line[end..start]
                 .graphemes(/* is_extended */ true)
                 .chain(word)
-        });
-    iter::once("").chain(second_empty).chain(tokens).collect()
+        })
+        .collect()
 }
 
 /// [`tokenize()`] for an ASCII line without carriage return, in which the words are made of
@@ -169,13 +160,8 @@ fn unicode_tokens(line: &str) -> Vec<&str> {
 fn ascii_tokens(line: &str) -> Vec<&str> {
     let bytes = line.as_bytes();
     let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    let second_empty = if bytes.first().is_none_or(|&byte| is_word(byte)) {
-        None
-    } else {
-        Some("")
-    };
     let mut start = 0;
-    let tokens = iter::from_fn(|| {
+    iter::from_fn(|| {
         let first = *bytes.get(start)?;
         let len = if is_word(first) {
             bytes[start..]
@@ -188,121 +174,8 @@ fn ascii_tokens(line: &str) -> Vec<&str> {
         let token = &line[start..start + len];
         start += len;
         Some(token)
-    });
-    iter::once("").chain(second_empty).chain(tokens).collect()
-}
-
-/// An operation transforming a sequence of tokens into another one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Operation {
-    /// The token is in both sequences.
-    NoOp,
-    Deletion,
-    Insertion,
-}
-
-/// A cell of the Needleman-Wunsch / Wagner-Fischer table. The cell it comes from is deduced from
-/// its operation (it is the first cell for the cells of the first row and of the first column).
-#[derive(Debug, Clone, Copy)]
-struct Cell {
-    cost: u32,
-    operation: Operation,
-}
-
-/// The operations transforming `x` into `y`, with the minimal cost (in which consecutive
-/// deletions or insertions cost less), each one with the number of consecutive tokens it applies
-/// to.
-fn operations<T: PartialEq>(x: &[T], y: &[T]) -> Vec<(Operation, usize)> {
-    thread_local! {
-        /// The table of the last call, kept to reuse its allocation.
-        static TABLE: RefCell<Vec<Cell>> = const { RefCell::new(Vec::new()) };
-    }
-    TABLE.with_borrow_mut(|table| operations_in(x, y, table))
-}
-
-/// [`operations()`], computed in `table`, whose previous content is ignored.
-fn operations_in<T: PartialEq>(x: &[T], y: &[T], table: &mut Vec<Cell>) -> Vec<(Operation, usize)> {
-    // `x` is along the top of the table, `y` along the left side. The cell of `x[i]` and `y[j]` is
-    // in the column `i + 1` and the row `j + 1`.
-    let columns = x.len() + 1;
-    let index = |i: usize, j: usize| j * columns + i;
-    let cost = |cost: usize| u32::try_from(cost).expect("the cost fits in u32");
-    table.clear();
-    table.resize(
-        columns * (y.len() + 1),
-        Cell { cost: 0, operation: Operation::NoOp },
-    );
-    for i in 1..columns {
-        table[index(i, 0)] = Cell {
-            cost: cost(i * DELETION_COST + INITIAL_MISMATCH_PENALTY),
-            operation: Operation::Deletion,
-        };
-    }
-    for j in 1..=y.len() {
-        table[index(0, j)] = Cell {
-            cost: cost(j * INSERTION_COST + INITIAL_MISMATCH_PENALTY),
-            operation: Operation::Insertion,
-        };
-    }
-    let mismatch_cost = |parent: Cell, mismatch_cost: usize| {
-        let penalty = if parent.operation == Operation::NoOp {
-            INITIAL_MISMATCH_PENALTY
-        } else {
-            0
-        };
-        parent.cost + cost(mismatch_cost + penalty)
-    };
-    // Row by row, so that the cells read are close to each other in memory.
-    y.iter().enumerate().for_each(|(j, y_j)| {
-        x.iter().enumerate().for_each(|(i, x_i)| {
-            let (left, diagonal, up) = (
-                table[index(i, j + 1)],
-                table[index(i, j)],
-                table[index(i + 1, j)],
-            );
-            // If several candidates have the same cost, the first one is chosen. Insertions and
-            // deletions are considered before matches, to group the modifications together.
-            let insertion = mismatch_cost(up, INSERTION_COST);
-            let deletion = mismatch_cost(left, DELETION_COST);
-            let no_op = if x_i == y_j { diagonal.cost } else { u32::MAX };
-            table[index(i + 1, j + 1)] = if insertion <= deletion && insertion <= no_op {
-                Cell {
-                    cost: insertion,
-                    operation: Operation::Insertion,
-                }
-            } else if deletion <= no_op {
-                Cell {
-                    cost: deletion,
-                    operation: Operation::Deletion,
-                }
-            } else {
-                Cell { cost: no_op, operation: Operation::NoOp }
-            };
-        });
-    });
-    let parent = |cell_index: usize| {
-        let (i, j) = (cell_index % columns, cell_index / columns);
-        if i == 0 || j == 0 {
-            return 0;
-        }
-        match table[cell_index].operation {
-            Operation::Insertion => index(i, j - 1),
-            Operation::Deletion => index(i - 1, j),
-            Operation::NoOp => index(i - 1, j - 1),
-        }
-    };
-    // The operations are read backwards, up to the first cell whose parent is the first one.
-    let mut cell_index = index(x.len(), y.len());
-    let mut operations = vec![table[cell_index].operation];
-    while parent(cell_index) != 0 {
-        cell_index = parent(cell_index);
-        operations.push(table[cell_index].operation);
-    }
-    operations.reverse();
-    operations
-        .chunk_by(|a, b| a == b)
-        .map(|group| (group[0], group.len()))
-        .collect()
+    })
+    .collect()
 }
 
 /// The distance between `before` and `after`, between 0 (identical) and 1 (nothing in common).
@@ -338,7 +211,7 @@ fn prepared(line: &str, tab_width: usize) -> String {
 struct Tokenized<'a> {
     tokens: Vec<&'a str>,
     /// The tokens, interned: equal tokens have the same id.
-    ids: Vec<u32>,
+    ids: Vec<Token>,
     /// Width of the tokens without whitespace, which the distance never trims.
     nonblank_width: usize,
     /// The id and the width of each token, and whether it has whitespace, sorted by id.
@@ -360,6 +233,7 @@ fn tokenized<'a>(text: &'a str, ids: &mut HashMap<&'a str, u32>) -> Tokenized<'a
         .zip(&token_ids)
         .map(|(token, id)| (*id, token.width(), token.chars().any(char::is_whitespace)))
         .collect();
+    let token_ids = token_ids.into_iter().map(Token).collect();
     sorted.sort_unstable();
     let nonblank_width = sorted
         .iter()
@@ -412,47 +286,36 @@ fn is_similar(x: &Tokenized, y: &Tokenized, max_distance: f64) -> bool {
 }
 
 /// The [`distance()`] between the lines tokenized as `x` and `y`.
+///
+/// The kept tokens are found by `gix-imara-diff`, with the Myers algorithm, like the lines of the
+/// hunks.
 fn tokens_distance(x: &Tokenized, y: &Tokenized) -> f64 {
     let width = |tokens: &[&str]| tokens.concat().trim().width();
-    let operations = operations(&x.ids, &y.ids);
-    let (x, y) = (&x.tokens, &y.tokens);
-    let (_, _, changed, total) = operations.into_iter().fold(
-        (0, 0, 0, 0),
-        |(x_offset, y_offset, changed, total), (operation, tokens_count)| match operation {
-            Operation::Deletion => {
-                let width = width(&x[x_offset..x_offset + tokens_count]);
+    let mut diff = Diff::default();
+    // `num_tokens` is only used by the histogram algorithm.
+    diff.compute_with(Algorithm::Myers, &x.ids, &y.ids, /* num_tokens */ 0);
+    let (kept_start, changed, kept) =
+        diff.hunks()
+            .fold((0, 0, 0), |(kept_start, changed, kept), hunk| {
+                let (before, after) = (indexes(&hunk.before), indexes(&hunk.after));
                 (
-                    x_offset + tokens_count,
-                    y_offset,
-                    changed + width,
-                    total + width,
+                    before.end,
+                    changed + width(&x.tokens[before.clone()]) + width(&y.tokens[after]),
+                    kept + width(&x.tokens[kept_start..before.start]),
                 )
-            }
-            Operation::Insertion => {
-                let width = width(&y[y_offset..y_offset + tokens_count]);
-                (
-                    x_offset,
-                    y_offset + tokens_count,
-                    changed + width,
-                    total + width,
-                )
-            }
-            Operation::NoOp => {
-                let width = width(&x[x_offset..x_offset + tokens_count]);
-                (
-                    x_offset + tokens_count,
-                    y_offset + tokens_count,
-                    changed,
-                    total + 2 * width,
-                )
-            }
-        },
-    );
+            });
+    let kept = kept + width(&x.tokens[kept_start..]);
+    let total = changed + 2 * kept;
     if total > 0 {
         changed as f64 / total as f64
     } else {
         0.0
     }
+}
+
+/// The indexes of the tokens of a range of `gix-imara-diff`.
+fn indexes(range: &Range<u32>) -> Range<usize> {
+    range.start as usize..range.end as usize
 }
 
 #[cfg(test)]
@@ -491,9 +354,9 @@ mod tests {
 
     #[test]
     fn tokens_are_words_and_grapheme_clusters() {
-        assert_eq!(tokenize("ab cd\n"), ["", "ab", " ", "cd", "\n"]);
-        assert_eq!(tokenize("  a.é\n"), ["", "", " ", " ", "a", ".", "é", "\n"]);
-        assert_eq!(tokenize("!\n"), ["", "", "!", "\n"]);
+        assert_eq!(tokenize("ab cd\n"), ["ab", " ", "cd", "\n"]);
+        assert_eq!(tokenize("  a.é\n"), [" ", " ", "a", ".", "é", "\n"]);
+        assert_eq!(tokenize("!\n"), ["!", "\n"]);
     }
 
     #[test]
