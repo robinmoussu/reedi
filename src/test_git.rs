@@ -1,12 +1,13 @@
 //! Runs the real `git`, to validate that what is documented as done "like git" is.
 
-use std::cell::Cell;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Output;
+use std::sync::atomic::AtomicI64;
+use std::sync::atomic::Ordering;
 
 use gix::date::Time;
 use gix::date::time::format;
@@ -84,7 +85,7 @@ pub struct Git {
     /// `LC_ALL`.
     locale: String,
     /// The number of commits made by [`Git::commit_all()`], which sets their dates.
-    commit_all_count: Cell<i64>,
+    commit_all_count: AtomicI64,
 }
 
 impl Git {
@@ -106,7 +107,7 @@ impl Git {
             directory,
             now: now.clone(),
             locale: locale.to_string(),
-            commit_all_count: Cell::new(0),
+            commit_all_count: AtomicI64::new(0),
         };
         assert!(git.run(&["init", "--quiet"]).status.success());
         git
@@ -299,8 +300,7 @@ impl Git {
     pub fn commit_all(&self, message: &[u8]) -> String {
         self.stdout_of(&["add", "--all"]);
         self.write(COMMIT_MESSAGE_FILE, message);
-        let count = self.commit_all_count.get() + 1;
-        self.commit_all_count.set(count);
+        let count = self.commit_all_count.fetch_add(1, Ordering::Relaxed) + 1;
         let date = format!("@{} +0000", self.now.timestamp().as_second() + count);
         let output = self
             .command(&[

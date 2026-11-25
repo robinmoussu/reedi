@@ -13,10 +13,12 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::fs::File;
 use std::ops::Range;
 use std::ops::RangeInclusive;
-use std::thread;
 use std::time::Duration;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
 use rand::RngExt;
 use rand::SeedableRng;
@@ -33,11 +35,17 @@ pub const CHANGED_LINES_COUNTS: RangeInclusive<usize> = 750..=1200;
 
 /// The seed of the random generator, so that the repository is the same each time.
 const SEED: u64 = 14;
-/// How long after its files the index is written again, so that their timestamps are older than
-/// it. A file whose timestamp isn't older than the index might have changed since it was indexed
-/// ("racy git"): every load would read and hash it, unlike in a repository whose files were not
-/// just written.
-const INDEX_REFRESH_DELAY: Duration = Duration::from_secs(1);
+/// The date of the files written by the first step of the generation (the base commit), in
+/// seconds since the Unix epoch: 2001-01-01. Each step dates its files [`STEP_INTERVAL`] after the
+/// previous one.
+///
+/// The files are dated in the past so that they are older than the index: a file whose timestamp
+/// isn't older than the index might have changed since it was indexed ("racy git"), so every load
+/// would read and hash it, unlike in a repository whose files were not just written. Each step has
+/// its own date, so that `git add` never misses a rewritten file because its size and date are the
+/// ones it recorded.
+const FIRST_STEP_DATE: Duration = Duration::from_secs(978_307_200);
+const STEP_INTERVAL: Duration = Duration::from_secs(2);
 /// The changed lines counted by the generator for each revision. Above most of
 /// [`CHANGED_LINES_COUNTS`], since `git` finds a shorter diff than the generated changes (hunks
 /// overlapping in a revision, removed and added lines that happen to be equal).
@@ -282,14 +290,15 @@ impl Uncommitted {
 }
 
 /// Generate the repository in `git`: a base commit, which is the upstream of `BRANCH`,
-/// [`REVISIONS_COUNT`] revisions on top of it, and the `uncommitted` changes, then refresh its
-/// index [`INDEX_REFRESH_DELAY`] later.
+/// [`REVISIONS_COUNT`] revisions on top of it, and the `uncommitted` changes, each step dating its
+/// files (see [`FIRST_STEP_DATE`]).
 pub fn generate(git: &Git, uncommitted: Uncommitted) {
     let mut rng = ChaCha8Rng::seed_from_u64(SEED);
     let vocabulary = vocabulary(&mut rng);
     let mut generator = Generator { rng, vocabulary, files: BTreeMap::new() };
     generator.base_files();
-    generator.write_all(git);
+    let step_date = |step_index: u32| UNIX_EPOCH + FIRST_STEP_DATE + STEP_INTERVAL * step_index;
+    generator.write_all(git, step_date(0));
     git.commit_all(b"Base");
     git.set_upstream_at_head();
     let mut guaranteed_changes = vec![Vec::new(); REVISIONS_COUNT];
@@ -299,7 +308,8 @@ pub fn generate(git: &Git, uncommitted: Uncommitted) {
     }
     for (revision_index, guaranteed_changes) in guaranteed_changes.iter().enumerate() {
         let changes = generator.revision(guaranteed_changes);
-        generator.apply(git, &changes);
+        let step_index = u32::try_from(revision_index + 1).expect("few revisions");
+        generator.apply(git, &changes, step_date(step_index));
         let words = generator.vocabulary.clone();
         let message = format!(
             "Revision {revision_index}: {}\n\n{}\n",
@@ -308,9 +318,10 @@ pub fn generate(git: &Git, uncommitted: Uncommitted) {
         );
         git.commit_all(message.as_bytes());
     }
+    let staged_step_index = u32::try_from(REVISIONS_COUNT + 1).expect("few revisions");
     if uncommitted.has_index() {
         let changes = generator.revision(&[]);
-        generator.apply(git, &changes);
+        generator.apply(git, &changes, step_date(staged_step_index));
         changes
             .removed_paths
             .iter()
@@ -320,11 +331,8 @@ pub fn generate(git: &Git, uncommitted: Uncommitted) {
     if uncommitted.has_working_directory() {
         // Unstaged, the new file is untracked.
         let changes = generator.revision(&[GuaranteedChange::NewFile]);
-        generator.apply(git, &changes);
+        generator.apply(git, &changes, step_date(staged_step_index + 1));
     }
-    thread::sleep(INDEX_REFRESH_DELAY);
-    // `-q`: the unstaged changes don't make it fail.
-    git.stdout_of(&["update-index", "-q", "--refresh"]);
 }
 
 /// [`VOCABULARY_SIZE`] distinct words made of [`SYLLABLES`], sorted.
@@ -1109,7 +1117,8 @@ impl Generator {
         }
     }
 
-    fn write(&self, git: &Git, path: &str) {
+    /// Write the file at `path`, dated `date`.
+    fn write(&self, git: &Git, path: &str, date: SystemTime) {
         match &self.files[path] {
             Content::Text(text_file) => {
                 let text = text_file
@@ -1121,10 +1130,17 @@ impl Generator {
             }
             Content::Binary(bytes) => git.write(path, bytes),
         }
+        File::options()
+            .write(true)
+            .open(git.path().join(path))
+            .unwrap()
+            .set_modified(date)
+            .unwrap();
     }
 
-    /// Write the files that `changes` write, and remove those they remove, in the working tree.
-    fn apply(&self, git: &Git, changes: &Changes) {
+    /// Write the files that `changes` write, dated `date`, and remove those they remove, in the
+    /// working tree.
+    fn apply(&self, git: &Git, changes: &Changes, date: SystemTime) {
         changes
             .removed_paths
             .iter()
@@ -1132,11 +1148,14 @@ impl Generator {
         changes
             .written_paths
             .iter()
-            .for_each(|path| self.write(git, path));
+            .for_each(|path| self.write(git, path, date));
     }
 
-    fn write_all(&self, git: &Git) {
-        self.files.keys().for_each(|path| self.write(git, path));
+    /// Write all the files, dated `date`.
+    fn write_all(&self, git: &Git, date: SystemTime) {
+        self.files
+            .keys()
+            .for_each(|path| self.write(git, path, date));
     }
 }
 
@@ -1212,7 +1231,11 @@ enum Edit {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::LazyLock;
+    use std::sync::OnceLock;
+
     use super::*;
+    use crate::test_git::Directory;
 
     /// The stdout of `git log --reverse $format @{upstream}..`, split by revision: each revision
     /// is preceded by a line containing only `REVISION`.
@@ -1230,13 +1253,39 @@ mod tests {
             .collect()
     }
 
-    fn generated() -> Git {
+    /// The generated repositories, by kind of uncommitted changes (in the order of
+    /// [`Uncommitted::ALL`]), shared by the tests: generating one is slow, and it is the same each
+    /// time. Since statics are never dropped, they are in a persistent directory, in which each
+    /// test run generates them again.
+    static GENERATED: [OnceLock<Git>; Uncommitted::ALL.len()] =
+        [const { OnceLock::new() }; Uncommitted::ALL.len()];
+
+    fn generated() -> &'static Git {
         generated_with(Uncommitted::None)
     }
 
-    fn generated_with(uncommitted: Uncommitted) -> Git {
+    fn generated_with(uncommitted: Uncommitted) -> &'static Git {
+        let index = Uncommitted::ALL
+            .iter()
+            .position(|kind| *kind == uncommitted)
+            .expect("all the kinds are listed");
+        GENERATED[index].get_or_init(|| {
+            let path = std::env::temp_dir()
+                .join("reedi-tests")
+                .join(uncommitted.name());
+            if path.exists() {
+                std::fs::remove_dir_all(&path).unwrap();
+            }
+            let git = Git::on_branch_in(Directory::Persistent(path));
+            generate(&git, uncommitted);
+            git
+        })
+    }
+
+    /// A repository without uncommitted changes, generated for the caller only.
+    fn newly_generated() -> Git {
         let git = Git::on_branch();
-        generate(&git, uncommitted);
+        generate(&git, Uncommitted::None);
         git
     }
 
@@ -1262,8 +1311,8 @@ mod tests {
     fn uncommitted_changes_are_staged_unstaged_and_untracked_as_asked() {
         Uncommitted::ALL.iter().for_each(|uncommitted| {
             let git = generated_with(*uncommitted);
-            let staged_count = changed_lines_count(&git, &["--cached"]);
-            let unstaged_count = changed_lines_count(&git, &[]);
+            let staged_count = changed_lines_count(git, &["--cached"]);
+            let unstaged_count = changed_lines_count(git, &[]);
             let untracked_paths = git.stdout_of(&["ls-files", "--others", "--exclude-standard"]);
             let expected_count = |is_expected| {
                 if is_expected {
@@ -1314,7 +1363,7 @@ mod tests {
     #[test]
     fn each_revision_changes_about_1000_lines() {
         let git = generated();
-        let numstats = log_by_revision(&git, &["--numstat", "-M"]);
+        let numstats = log_by_revision(git, &["--numstat", "-M"]);
         assert_eq!(numstats.len(), REVISIONS_COUNT);
         for numstat in numstats {
             let changed_lines_count = numstat
@@ -1336,8 +1385,8 @@ mod tests {
     #[test]
     fn revisions_add_delete_rename_and_change_a_binary_file() {
         let git = generated();
-        let statuses = log_by_revision(&git, &["--name-status", "-M"]).concat();
-        let numstats = log_by_revision(&git, &["--numstat", "-M"]).concat();
+        let statuses = log_by_revision(git, &["--name-status", "-M"]).concat();
+        let numstats = log_by_revision(git, &["--numstat", "-M"]).concat();
         ["A\t", "D\t", "R"].iter().for_each(|status| {
             assert!(
                 statuses.lines().any(|line| line.starts_with(status)),
@@ -1353,7 +1402,34 @@ mod tests {
     /// Consecutive removed, or consecutive added, lines of a file.
     struct Run {
         path: String,
-        lines: Vec<String>,
+        lines: Vec<RunLine>,
+    }
+
+    /// A line of a [`Run`], with what comparing it needs, computed once: each line is compared
+    /// with many others.
+    struct RunLine {
+        text: String,
+        /// See [`normalized()`].
+        normalized: String,
+        /// The words of [`Self::normalized`], sorted.
+        words: Vec<String>,
+    }
+
+    impl RunLine {
+        fn new(text: &str) -> Self {
+            let normalized = normalized(text).to_string();
+            let mut words: Vec<String> = normalized
+                .split(|character: char| !character.is_alphanumeric())
+                .filter(|word| !word.is_empty())
+                .map(str::to_string)
+                .collect();
+            words.sort_unstable();
+            Self {
+                text: text.to_string(),
+                normalized,
+                words,
+            }
+        }
     }
 
     /// The runs of removed lines, and the runs of added lines, of `patch` (made with
@@ -1387,7 +1463,10 @@ mod tests {
             if previous_kind != kind {
                 runs.push(Run { path: path.clone(), lines: Vec::new() });
             }
-            runs.last_mut().unwrap().lines.push(line[1..].to_string());
+            runs.last_mut()
+                .unwrap()
+                .lines
+                .push(RunLine::new(&line[1..]));
             previous_kind = kind;
         }
         (removed_runs, added_runs)
@@ -1404,27 +1483,33 @@ mod tests {
     }
 
     /// Whether `removed` and `added` differ, but share at least half of the words of the longest.
-    fn lightly_edited(removed: &str, added: &str) -> bool {
-        let words = |line: &str| {
-            line.split(|character: char| !character.is_alphanumeric())
-                .filter(|word| !word.is_empty())
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        };
-        let (removed_words, mut added_words) = (words(removed), words(added));
-        let longest_count = removed_words.len().max(added_words.len());
-        let common_count = removed_words
-            .iter()
-            .filter(|word| {
-                let position = added_words
-                    .iter()
-                    .position(|added_word| added_word == *word);
-                position
-                    .map(|position| added_words.swap_remove(position))
-                    .is_some()
-            })
-            .count();
-        removed != added && 2 * common_count >= longest_count
+    fn lightly_edited(removed: &RunLine, added: &RunLine) -> bool {
+        let longest_count = removed.words.len().max(added.words.len());
+        // The words of both lines, counted as many times as they are in both: the sorted lists
+        // are merged.
+        let (mut removed_words, mut added_words) = (
+            removed.words.iter().peekable(),
+            added.words.iter().peekable(),
+        );
+        let mut common_count = 0;
+        while let (Some(removed_word), Some(added_word)) =
+            (removed_words.peek(), added_words.peek())
+        {
+            match removed_word.cmp(added_word) {
+                std::cmp::Ordering::Less => {
+                    removed_words.next();
+                }
+                std::cmp::Ordering::Greater => {
+                    added_words.next();
+                }
+                std::cmp::Ordering::Equal => {
+                    common_count += 1;
+                    removed_words.next();
+                    added_words.next();
+                }
+            }
+        }
+        removed.normalized != added.normalized && 2 * common_count >= longest_count
     }
 
     /// A block of lines removed from `from` and added to `to` by the same revision, in the same
@@ -1454,22 +1539,22 @@ mod tests {
                     .collect::<Vec<_>>();
                 line_pairs
                     .split(|(removed_line, added_line)| {
-                        normalized(removed_line) != normalized(added_line)
-                            && !lightly_edited(normalized(removed_line), normalized(added_line))
+                        removed_line.normalized != added_line.normalized
+                            && !lightly_edited(removed_line, added_line)
                     })
                     .filter(|segment| segment.len() >= MIN_MOVED_LINES_COUNT)
                     .filter_map(|segment| {
                         let identical_count = segment
                             .iter()
                             .filter(|(removed_line, added_line)| {
-                                !removed_line.trim().is_empty()
-                                    && normalized(removed_line) == normalized(added_line)
+                                !removed_line.text.trim().is_empty()
+                                    && removed_line.normalized == added_line.normalized
                             })
                             .count();
                         let edited_count = segment
                             .iter()
                             .filter(|(removed_line, added_line)| {
-                                normalized(removed_line) != normalized(added_line)
+                                removed_line.normalized != added_line.normalized
                             })
                             .count();
                         if identical_count <= edited_count {
@@ -1484,8 +1569,8 @@ mod tests {
                                 Edit::Light
                             },
                             reshaped: segment.iter().any(|(removed_line, added_line)| {
-                                normalized(removed_line) == normalized(added_line)
-                                    && removed_line != added_line
+                                removed_line.normalized == added_line.normalized
+                                    && removed_line.text != added_line.text
                             }),
                         })
                     })
@@ -1495,6 +1580,10 @@ mod tests {
     }
 
     /// The moved blocks of all the revisions.
+    /// The moved blocks of the generated repository, shared by the tests: computing them is slow,
+    /// and the repository is the same each time.
+    static MOVED_BLOCKS: LazyLock<Vec<MovedBlock>> = LazyLock::new(|| moved_blocks(generated()));
+
     fn moved_blocks(git: &Git) -> Vec<MovedBlock> {
         log_by_revision(git, &["-p", "-M", "--unified=0"])
             .iter()
@@ -1534,16 +1623,14 @@ mod tests {
 
     #[test]
     fn revisions_move_blocks_within_a_file() {
-        let blocks = moved_blocks(&generated());
-        assert_moved_with_and_without_light_edits(&blocks, |block| {
+        assert_moved_with_and_without_light_edits(&MOVED_BLOCKS, |block| {
             block.from == block.to && !block.reshaped
         });
     }
 
     #[test]
     fn revisions_move_blocks_between_files() {
-        let blocks = moved_blocks(&generated());
-        assert_moved_with_and_without_light_edits(&blocks, |block| {
+        assert_moved_with_and_without_light_edits(&MOVED_BLOCKS, |block| {
             block.from != block.to
                 && extension(&block.from) == extension(&block.to)
                 && !block.reshaped
@@ -1552,8 +1639,7 @@ mod tests {
 
     #[test]
     fn revisions_move_inline_scripts_of_html_files_to_javascript_files() {
-        let blocks = moved_blocks(&generated());
-        assert_moved_with_and_without_light_edits(&blocks, |block| {
+        assert_moved_with_and_without_light_edits(&MOVED_BLOCKS, |block| {
             extension(&block.from) == Language::Html.extension()
                 && extension(&block.to) == Language::JavaScript.extension()
                 && block.reshaped
@@ -1562,11 +1648,10 @@ mod tests {
 
     #[test]
     fn revisions_move_doc_comments_to_test_files() {
-        let blocks = moved_blocks(&generated());
         [Language::Rust, Language::Python]
             .iter()
             .for_each(|language| {
-                assert_moved_with_and_without_light_edits(&blocks, |block| {
+                assert_moved_with_and_without_light_edits(&MOVED_BLOCKS, |block| {
                     extension(&block.from) == language.extension()
                         && !block.from.starts_with(TESTS_DIRECTORY)
                         && extension(&block.to) == language.extension()
@@ -1591,6 +1676,9 @@ mod tests {
 
     #[test]
     fn repository_is_the_same_each_time() {
-        assert_eq!(generated().hash_of("HEAD"), generated().hash_of("HEAD"));
+        assert_eq!(
+            newly_generated().hash_of("HEAD"),
+            newly_generated().hash_of("HEAD")
+        );
     }
 }
