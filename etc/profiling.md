@@ -49,7 +49,9 @@ with both staged and unstaged changes. On each of them:
 - `reedi`, on 200×50 and 48×24 terminals, opened, then 1000 `j` (every key drawn,
   `--draw-every-key`), then `q`, 5 runs, of which the median is kept: instructions, CPU time, wall time, peak memory (GNU `time`), time to the first
   full screen and longest refresh (`--timing`);
-- the benchmarks, reading the repository from `$REEDI_PERFORMANCE_REPOSITORY`.
+- the benchmarks, reading the repository from `$REEDI_PERFORMANCE_REPOSITORY`: the time of their
+  fastest sample, which varies less than their median, their median allocations, and the fewest
+  instructions executed by one of their calls, with those of the threads it starts.
 
 The results of each repository are saved in `target/performance/<key>.json`, with their identity:
 the source (the tree of the revision, or of the tracked files of the working tree: amending only
@@ -59,9 +61,11 @@ that identity, so that a revision is measured once per repository, and `just com
 parts of the identities that differ.
 
 `just compare` warns when a measure degrades by more than its threshold (instructions: 1 %; CPU
-time, wall time, peak memory and the median time of a benchmark: 5 %) or exceeds a target of the
+time, wall time, peak memory and the fastest time of a benchmark: 5 %) or exceeds a target of the
 README (500 MB, 1 s to open, 200 ms to the first full screen, 500 ms to refresh), and then exits
-with an error.
+with an error. Since times vary between runs of the same binary, a time that degrades by more than
+its threshold only gets a note, without the error, if it degrades by at most 5 ms, or if the
+instructions of its scenario or benchmark degrade by at most 1 %.
 
 `just measure` and `just compare` run the cargo scripts `etc/measure.rs` and `etc/compare.rs`, which
 need a nightly toolchain (`-Zscript`), and build them in `target/scripts`. Their tests run with

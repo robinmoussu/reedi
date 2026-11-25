@@ -17,7 +17,10 @@ serde_json = "1.0.154"
 //!
 //! Print which parts of the identities differ, a table of the measures, and a warning for each
 //! measure that degrades by more than its threshold and for each target of the README that is
-//! exceeded, in which case the exit status is 1.
+//! exceeded, in which case the exit status is 1. A time that degrades by more than its threshold
+//! only gets a note if the difference is at most `MIN_TIME_DIFFERENCE_S`, or, in a scenario or a
+//! bench that counts instructions, if they don't degrade by more than their threshold: times vary
+//! between runs of the same binary.
 
 use std::fs;
 use std::io;
@@ -35,15 +38,51 @@ use serde_json::Value;
 /// The script measuring a revision, relative to the working tree.
 const MEASURE_SCRIPT: &str = "etc/measure.rs";
 
-/// The degradation of a measure above which a warning is printed, as a fraction of its base value.
-const THRESHOLDS: [(&str, f64); 5] = [
-    ("instructions", 0.01),
-    ("cpu_time_s", 0.05),
-    ("wall_time_s", 0.05),
-    ("peak_memory_kb", 0.05),
-    // The median time of a bench, a wall time.
-    ("median_s", 0.05),
+const INSTRUCTIONS_THRESHOLD: f64 = 0.01;
+
+/// The degradation of a measure above which a remark is printed, as a fraction of its base value,
+/// and what the measure is.
+const THRESHOLDS: [(&str, f64, Kind); 5] = [
+    ("instructions", INSTRUCTIONS_THRESHOLD, Kind::Stable),
+    ("cpu_time_s", 0.05, Kind::Time),
+    ("wall_time_s", 0.05, Kind::Time),
+    ("peak_memory_kb", 0.05, Kind::Stable),
+    // The fastest time of a bench, a wall time.
+    ("fastest_s", 0.05, Kind::Time),
 ];
+
+/// The difference of a time, in seconds, up to which its degradation only gets a note.
+const MIN_TIME_DIFFERENCE_S: f64 = 0.005;
+
+/// Whether a measure varies between runs of the same binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Stable,
+    /// A time, in seconds, which varies.
+    Time,
+}
+
+/// What is printed after a measure.
+#[derive(Debug, PartialEq)]
+enum Remark {
+    /// A broken threshold or an exceeded target, which makes the exit status 1.
+    Warning(String),
+    /// A time degraded by more than its threshold, by too little to make the exit status 1.
+    Note(String),
+}
+
+impl Remark {
+    /// Whether the remark makes the exit status 1.
+    fn blocks(&self) -> bool {
+        matches!(self, Remark::Warning(_))
+    }
+
+    fn text(&self) -> &str {
+        match self {
+            Remark::Warning(text) | Remark::Note(text) => text,
+        }
+    }
+}
 
 /// The scenario that only opens `reedi` then quits, whose wall time is the time to open.
 const OPEN_SCENARIO: &str = "open";
@@ -181,11 +220,23 @@ fn print_comparison(base: &Value, new: &Value) -> bool {
     for (group, new_measures) in &new_groups {
         println!("\n{group:<24} {:>14} {:>14} {:>9}", "base", "new", "diff");
         let base_measures = base_groups.get(group);
+        let base_value_of =
+            |measure: &str| base_measures.and_then(|measures| measures[measure].as_f64());
+        let instructions_difference = difference(
+            base_value_of("instructions"),
+            new_measures["instructions"].as_f64(),
+        );
         for (measure, new_value) in new_measures.as_object().unwrap_or(&empty) {
-            let base_value = base_measures.and_then(|measures| measures[measure].as_f64());
+            let base_value = base_value_of(measure);
             let new_value = new_value.as_f64();
-            let warnings = warnings(group, measure, base_value, new_value);
-            broken |= !warnings.is_empty();
+            let remarks = remarks(
+                group,
+                measure,
+                base_value,
+                new_value,
+                instructions_difference,
+            );
+            broken |= remarks.iter().any(Remark::blocks);
             println!(
                 "{measure:<24} {:>14} {:>14} {:>9}  {}",
                 formatted(base_value),
@@ -194,7 +245,11 @@ fn print_comparison(base: &Value, new: &Value) -> bool {
                     "{:+.1} %",
                     difference * 100.0
                 )),
-                warnings.join(", ")
+                remarks
+                    .iter()
+                    .map(Remark::text)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
         }
     }
@@ -243,20 +298,17 @@ fn difference(base: Option<f64>, new: Option<f64>) -> Option<f64> {
     }
 }
 
-/// The warnings of `measure` of `group` going from `base` to `new`: its threshold broken, and the
-/// target it exceeds.
-fn warnings(group: &str, measure: &str, base: Option<f64>, new: Option<f64>) -> Vec<String> {
-    let threshold = THRESHOLDS
-        .iter()
-        .find(|(name, _)| *name == measure)
-        .map(|(_, threshold)| *threshold);
-    let degradation = match (threshold, difference(base, new)) {
-        (Some(threshold), Some(difference)) if difference > threshold => Some(format!(
-            "WARNING: degraded by more than {:.0} %",
-            threshold * 100.0
-        )),
-        _ => None,
-    };
+/// The remarks on `measure` of `group` going from `base` to `new`: its threshold broken, and the
+/// target it exceeds. `instructions_difference` is the relative difference of the instructions of
+/// `group`, if it counts them.
+fn remarks(
+    group: &str,
+    measure: &str,
+    base: Option<f64>,
+    new: Option<f64>,
+    instructions_difference: Option<f64>,
+) -> Vec<Remark> {
+    let degradation = degradation(measure, base, new, instructions_difference);
     let is_open = group.split(' ').any(|word| word == OPEN_SCENARIO);
     let exceeded = TARGETS
         .iter()
@@ -264,8 +316,42 @@ fn warnings(group: &str, measure: &str, base: Option<f64>, new: Option<f64>) -> 
             *name == measure && (*scenarios == Scenarios::All || is_open)
         })
         .find(|(_, target, _)| new.is_some_and(|new| new > *target))
-        .map(|(_, target, _)| format!("WARNING: above the target of the README ({target})"));
+        .map(|(_, target, _)| {
+            Remark::Warning(format!(
+                "WARNING: above the target of the README ({target})"
+            ))
+        });
     degradation.into_iter().chain(exceeded).collect()
+}
+
+/// The remark on `measure` going from `base` to `new`, if it degrades by more than its threshold.
+/// `instructions_difference` is the relative difference of the instructions of its scenario, if it
+/// counts them.
+fn degradation(
+    measure: &str,
+    base: Option<f64>,
+    new: Option<f64>,
+    instructions_difference: Option<f64>,
+) -> Option<Remark> {
+    let &(_, threshold, kind) = THRESHOLDS.iter().find(|(name, _, _)| *name == measure)?;
+    let (base, new) = base.zip(new)?;
+    if !difference(Some(base), Some(new)).is_some_and(|difference| difference > threshold) {
+        return None;
+    }
+    let text = format!("degraded by more than {:.0} %", threshold * 100.0);
+    let stable_instructions =
+        instructions_difference.is_some_and(|difference| difference <= INSTRUCTIONS_THRESHOLD);
+    Some(match kind {
+        Kind::Time if new - base <= MIN_TIME_DIFFERENCE_S => Remark::Note(format!(
+            "note: {text} (less than {} ms)",
+            MIN_TIME_DIFFERENCE_S * 1000.0
+        )),
+        Kind::Time if stable_instructions => Remark::Note(format!(
+            "note: {text} (instructions within {:.0} %)",
+            INSTRUCTIONS_THRESHOLD * 100.0
+        )),
+        Kind::Time | Kind::Stable => Remark::Warning(format!("WARNING: {text}")),
+    })
 }
 
 fn formatted(value: Option<f64>) -> String {
@@ -282,54 +368,188 @@ mod tests {
 
     use super::*;
 
+    fn warning(text: &str) -> Remark {
+        Remark::Warning(text.to_string())
+    }
+
+    fn note(text: &str) -> Remark {
+        Remark::Note(text.to_string())
+    }
+
     #[test]
     fn instructions_warn_above_1_percent() {
-        assert!(warnings("200x50 scroll", "instructions", Some(100.0), Some(100.5)).is_empty());
+        assert!(
+            remarks(
+                "200x50 scroll",
+                "instructions",
+                Some(100.0),
+                Some(100.5),
+                None
+            )
+            .is_empty()
+        );
         assert_eq!(
-            warnings("200x50 scroll", "instructions", Some(100.0), Some(102.0)).len(),
+            remarks(
+                "200x50 scroll",
+                "instructions",
+                Some(100.0),
+                Some(102.0),
+                None
+            )
+            .len(),
             1
         );
     }
 
     #[test]
     fn times_warn_above_5_percent() {
-        assert!(warnings("200x50 scroll", "cpu_time_s", Some(1.0), Some(1.04)).is_empty());
+        // A bench, which doesn't count instructions, with differences above
+        // `MIN_TIME_DIFFERENCE_S`.
+        let remarks = |new| {
+            remarks(
+                "bench startup 80x24",
+                "fastest_s",
+                Some(1.0),
+                Some(new),
+                None,
+            )
+        };
+        assert!(remarks(1.04).is_empty());
         assert_eq!(
-            warnings("200x50 scroll", "cpu_time_s", Some(1.0), Some(1.06)).len(),
-            1
+            remarks(1.06),
+            [warning("WARNING: degraded by more than 5 %")]
         );
     }
 
     #[test]
+    fn times_only_get_a_note_if_they_degrade_by_at_most_5_ms() {
+        // A bench, which doesn't count instructions, degraded by 100 %.
+        assert_eq!(
+            remarks(
+                "bench frame 80x24",
+                "fastest_s",
+                Some(0.0004),
+                Some(0.0008),
+                None
+            ),
+            [note("note: degraded by more than 5 % (less than 5 ms)")]
+        );
+        assert_eq!(
+            remarks(
+                "bench frame 80x24",
+                "fastest_s",
+                Some(0.010),
+                Some(0.020),
+                None
+            ),
+            [warning("WARNING: degraded by more than 5 %")]
+        );
+    }
+
+    #[test]
+    fn times_only_get_a_note_if_the_instructions_degrade_by_at_most_1_percent() {
+        // 60 ms more, above `MIN_TIME_DIFFERENCE_S`.
+        let remarks = |instructions_difference| {
+            remarks(
+                "200x50 scroll",
+                "cpu_time_s",
+                Some(1.0),
+                Some(1.06),
+                Some(instructions_difference),
+            )
+        };
+        assert_eq!(
+            remarks(0.01),
+            [note(
+                "note: degraded by more than 5 % (instructions within 1 %)"
+            )]
+        );
+        assert_eq!(
+            remarks(0.02),
+            [warning("WARNING: degraded by more than 5 %")]
+        );
+    }
+
+    #[test]
+    fn times_degraded_by_at_most_5_ms_only_get_a_note_even_if_the_instructions_degrade() {
+        // 10 % and 0.5 ms more, with instructions degraded by 2 %.
+        assert_eq!(
+            remarks(
+                "200x50 scroll",
+                "wall_time_s",
+                Some(0.005),
+                Some(0.0055),
+                Some(0.02)
+            ),
+            [note("note: degraded by more than 5 % (less than 5 ms)")]
+        );
+    }
+
+    #[test]
+    fn measures_that_are_not_times_warn_even_if_the_instructions_dont_degrade() {
+        assert_eq!(
+            remarks(
+                "200x50 scroll",
+                "peak_memory_kb",
+                Some(100.0),
+                Some(110.0),
+                Some(0.0)
+            ),
+            [warning("WARNING: degraded by more than 5 %")]
+        );
+    }
+
+    #[test]
+    fn only_warnings_block() {
+        assert!(warning("WARNING: degraded by more than 5 %").blocks());
+        assert!(!note("note: degraded by more than 5 % (less than 5 ms)").blocks());
+    }
+
+    #[test]
     fn improvements_dont_warn() {
-        assert!(warnings("200x50 scroll", "instructions", Some(100.0), Some(50.0)).is_empty());
+        assert!(
+            remarks(
+                "200x50 scroll",
+                "instructions",
+                Some(100.0),
+                Some(50.0),
+                None
+            )
+            .is_empty()
+        );
     }
 
     #[test]
     fn missing_measures_dont_warn() {
-        assert!(warnings("200x50 scroll", "instructions", None, Some(100.0)).is_empty());
+        assert!(remarks("200x50 scroll", "instructions", None, Some(100.0), None).is_empty());
         assert_eq!(difference(None, Some(1.0)), None);
     }
 
     #[test]
     fn zero_base_has_no_difference() {
         assert_eq!(difference(Some(0.0), Some(1.0)), None);
-        assert!(warnings("200x50 scroll", "instructions", Some(0.0), Some(1.0)).is_empty());
+        assert!(remarks("200x50 scroll", "instructions", Some(0.0), Some(1.0), None).is_empty());
     }
 
     #[test]
     fn targets_warn_even_without_base() {
-        let warnings = warnings("200x50 scroll", "first_full_screen_ms", None, Some(250.0));
-        assert_eq!(warnings.len(), 1);
+        let remarks = remarks(
+            "200x50 scroll",
+            "first_full_screen_ms",
+            None,
+            Some(250.0),
+            None,
+        );
+        assert_eq!(remarks.len(), 1);
     }
 
     #[test]
     fn time_to_open_is_only_the_wall_time_of_opening() {
         assert_eq!(
-            warnings("200x50 open", "wall_time_s", None, Some(1.5)).len(),
+            remarks("200x50 open", "wall_time_s", None, Some(1.5), None).len(),
             1
         );
-        assert!(warnings("200x50 scroll", "wall_time_s", None, Some(1.5)).is_empty());
+        assert!(remarks("200x50 scroll", "wall_time_s", None, Some(1.5), None).is_empty());
     }
 
     #[test]

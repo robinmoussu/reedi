@@ -405,9 +405,11 @@ fn benches(sources: &Path, repository: &Path) -> Map<String, Value> {
     parse_benches(&table).unwrap_or_else(|error| panic!("{error}"))
 }
 
-/// The median time, allocations count and allocated bytes of each bench of the `table` divan
-/// prints. divan has no machine-readable output: fails if the columns of the table are not the
-/// expected ones, rather than returning wrong numbers.
+/// The fastest time, median allocations count and median allocated bytes of each bench of the
+/// `table` divan prints, and the instructions of the `bench <bench> instructions <count>` lines the
+/// benches print after it. The fastest time varies less between runs than the median: the other
+/// processes only make a sample slower. divan has no machine-readable output: fails if the columns
+/// of the table are not the expected ones, rather than returning wrong numbers.
 fn parse_benches(table: &str) -> Result<Map<String, Value>, String> {
     let mut lines = table.lines().skip_while(|line| !line.contains("fastest"));
     let header = lines.next().ok_or("no divan table")?;
@@ -422,6 +424,11 @@ fn parse_benches(table: &str) -> Result<Map<String, Value>, String> {
     let mut bench = String::new();
     let mut expected = Expected::Row;
     for line in lines {
+        if let Some((bench, instructions)) = line.rsplit_once(" instructions ") {
+            let instructions = instructions.parse::<f64>().map_err(|_| line)?;
+            benches.get_mut(bench).ok_or(line)?["instructions"] = json!(instructions);
+            continue;
+        }
         let tree_drawn = line.trim_start_matches(['│', ' ']);
         let is_row = tree_drawn.starts_with(['├', '╰']);
         let is_nested = is_row && tree_drawn.len() != line.len();
@@ -442,7 +449,7 @@ fn parse_benches(table: &str) -> Result<Map<String, Value>, String> {
                 expected = Expected::Row;
             }
             Expected::Row if is_row => {
-                let name = first.split_whitespace().next().unwrap_or("");
+                let (name, fastest) = first.split_once(' ').unwrap_or((first, ""));
                 if median.is_empty() {
                     parent = name;
                     continue;
@@ -452,8 +459,8 @@ fn parse_benches(table: &str) -> Result<Map<String, Value>, String> {
                 } else {
                     format!("bench {name}")
                 };
-                let median_time = quantity(median, SECONDS).ok_or(line)?;
-                benches.insert(bench.clone(), json!({"median_s": median_time}));
+                let fastest_time = quantity(fastest.trim(), SECONDS).ok_or(line)?;
+                benches.insert(bench.clone(), json!({"fastest_s": fastest_time}));
             }
             Expected::Row => {}
         }
@@ -523,19 +530,42 @@ performance             fastest       │ slowest       │ median        │ me
 ";
 
     #[test]
-    fn benches_are_read_from_the_median_column() {
+    fn bench_times_are_the_fastest_and_allocations_the_median() {
         let benches = parse_benches(TABLE).unwrap();
         assert_eq!(
             Value::Object(benches),
             json!({
                 "bench displayed_revisions":
-                    {"median_s": 0.08528, "allocations": 21653.0, "allocated_bytes": 31.05e6},
+                    {"fastest_s": 0.08192, "allocations": 21653.0, "allocated_bytes": 31.05e6},
+                // Divided, like `quantity()` does.
                 "bench frame 80x24":
-                    {"median_s": 573.1e-6, "allocations": 53.0, "allocated_bytes": 277.3e3},
+                    {"fastest_s": 354.1 / 1e6, "allocations": 53.0, "allocated_bytes": 277.3e3},
                 "bench startup 200x50":
-                    {"median_s": 2.497, "allocations": 4952692.0, "allocated_bytes": 847.4e6},
+                    {"fastest_s": 2.373, "allocations": 4952692.0, "allocated_bytes": 847.4e6},
             })
         );
+    }
+
+    /// The lines the benches print after `TABLE`, for 2 of its 3 benches.
+    const INSTRUCTIONS: &str = "\
+bench displayed_revisions instructions 1000
+bench frame 80x24 instructions 20
+";
+
+    #[test]
+    fn instructions_are_read_from_the_lines_after_the_table() {
+        let benches = parse_benches(&format!("{TABLE}{INSTRUCTIONS}")).unwrap();
+        assert_eq!(
+            benches["bench displayed_revisions"]["instructions"],
+            json!(1000.0)
+        );
+        assert_eq!(benches["bench frame 80x24"]["instructions"], json!(20.0));
+        assert_eq!(benches["bench startup 200x50"].get("instructions"), None);
+    }
+
+    #[test]
+    fn instructions_of_a_bench_missing_from_the_table_are_an_error() {
+        assert!(parse_benches(&format!("{TABLE}bench rewrap 80 instructions 10\n")).is_err());
     }
 
     #[test]

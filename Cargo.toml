@@ -64,6 +64,10 @@ reediif = { path = "reediif", features = ["test-support"] }
 tempfile = "3.27.0"
 unicode-bidi = "0.3.18"
 
+# Counts the instructions executed by the benches.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+perf-event2 = "0.7.4"
+
 # The dependencies (gix, icu, …) are too slow to be used unoptimized, even while developing.
 [profile.dev.package."*"]
 opt-level = 3
