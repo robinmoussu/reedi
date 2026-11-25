@@ -192,7 +192,15 @@ fn source_tree(revision: Option<&str>) -> String {
 
 /// The identity of the repository at `path`: everything that changes what `reedi` displays.
 fn repository_identity(path: &Path) -> Value {
-    let git_in = |args: &[&str]| output(Command::new("git").current_dir(path).args(args));
+    // The index of the repository being committed to, set by git for its hooks, is ignored.
+    let git_in = |args: &[&str]| {
+        output(
+            Command::new("git")
+                .current_dir(path)
+                .env_remove("GIT_INDEX_FILE")
+                .args(args),
+        )
+    };
     let config = git_in(&["config", "--list", "--local"]);
     let config_hash = output(
         Command::new("sh")
@@ -310,6 +318,8 @@ fn run(
     let status = Command::new("script")
         .args(["--quiet", "--return", "--command", &command, "/dev/null"])
         .current_dir(repository)
+        // The index of the repository being committed to, set by git for its hooks, is ignored.
+        .env_remove("GIT_INDEX_FILE")
         .env("XDG_CONFIG_HOME", config)
         // So that `perf` writes its numbers with a decimal point, not with a comma like the
         // separator of its fields.
