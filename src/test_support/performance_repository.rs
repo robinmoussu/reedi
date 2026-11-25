@@ -15,6 +15,8 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::ops::Range;
 use std::ops::RangeInclusive;
+use std::thread;
+use std::time::Duration;
 
 use rand::RngExt;
 use rand::SeedableRng;
@@ -31,6 +33,11 @@ pub const CHANGED_LINES_COUNTS: RangeInclusive<usize> = 750..=1200;
 
 /// The seed of the random generator, so that the repository is the same each time.
 const SEED: u64 = 14;
+/// How long after its files the index is written again, so that their timestamps are older than
+/// it. A file whose timestamp isn't older than the index might have changed since it was indexed
+/// ("racy git"): every load would read and hash it, unlike in a repository whose files were not
+/// just written.
+const INDEX_REFRESH_DELAY: Duration = Duration::from_secs(1);
 /// The changed lines counted by the generator for each revision. Above most of
 /// [`CHANGED_LINES_COUNTS`], since `git` finds a shorter diff than the generated changes (hunks
 /// overlapping in a revision, removed and added lines that happen to be equal).
@@ -275,7 +282,8 @@ impl Uncommitted {
 }
 
 /// Generate the repository in `git`: a base commit, which is the upstream of `BRANCH`,
-/// [`REVISIONS_COUNT`] revisions on top of it, and the `uncommitted` changes.
+/// [`REVISIONS_COUNT`] revisions on top of it, and the `uncommitted` changes, then refresh its
+/// index [`INDEX_REFRESH_DELAY`] later.
 pub fn generate(git: &Git, uncommitted: Uncommitted) {
     let mut rng = ChaCha8Rng::seed_from_u64(SEED);
     let vocabulary = vocabulary(&mut rng);
@@ -314,6 +322,9 @@ pub fn generate(git: &Git, uncommitted: Uncommitted) {
         let changes = generator.revision(&[GuaranteedChange::NewFile]);
         generator.apply(git, &changes);
     }
+    thread::sleep(INDEX_REFRESH_DELAY);
+    // `-q`: the unstaged changes don't make it fail.
+    git.stdout_of(&["update-index", "-q", "--refresh"]);
 }
 
 /// [`VOCABULARY_SIZE`] distinct words made of [`SYLLABLES`], sorted.
@@ -1275,6 +1286,29 @@ mod tests {
                 "{uncommitted:?}: untracked files: {untracked_paths:?}"
             );
         });
+    }
+
+    #[test]
+    fn indexed_files_are_older_than_the_index() {
+        let git = generated_with(Uncommitted::Both);
+        let index_seconds = std::fs::metadata(git.path().join(".git/index"))
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let entries = git.stdout_of(&["ls-files", "--debug"]);
+        let mtimes_seconds = entries
+            .lines()
+            .filter_map(|line| line.trim_start().strip_prefix("mtime: "))
+            .map(|mtime| mtime.split(':').next().unwrap().parse::<u64>().unwrap())
+            .collect::<Vec<_>>();
+        assert!(!mtimes_seconds.is_empty());
+        assert!(
+            mtimes_seconds.iter().all(|&mtime| mtime < index_seconds),
+            "index at {index_seconds}, files at {mtimes_seconds:?}"
+        );
     }
 
     #[test]
