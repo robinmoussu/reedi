@@ -43,8 +43,9 @@ const MEASURED_REPOSITORIES: [Uncommitted; 2] = [Uncommitted::None, Uncommitted:
 const TERMINALS: [(u16, u16); 2] = [(200, 50), (48, 24)];
 /// The number of runs of each measure, of which the median is kept.
 const RUNS_COUNT: usize = 5;
-/// The number of `j` pressed after opening, each of them drawn.
-const SCROLLED_ROWS_COUNT: usize = 1000;
+/// The number of half screens the screen scrolls after the cursor went down the whole screen, one
+/// `j` per row, each of them drawn: 2.5 screens.
+const SCROLLED_HALF_SCREENS_COUNT: usize = 5;
 /// The file whose hash is part of the identity of the results.
 const MEASUREMENT_SOURCE: &str = "etc/measure.rs";
 
@@ -249,9 +250,11 @@ fn sources(performance: &Path, tree: &str, revision: Option<&str>) -> PathBuf {
     let directory = performance.join("src").join(tree);
     if !directory.exists() {
         fs::create_dir_all(&directory).unwrap();
+        // The spaces ending file names are removed: cargo misreads such paths in its dep-info
+        // files, and would build the sources again each time.
         let export = |repository: &str, commit: &str, destination: &Path| {
             let command = format!(
-                "git -C {repository} archive {commit} | tar -x -C {}",
+                "git -C {repository} archive {commit} | tar -x --transform='s/ $//' -C {}",
                 destination.display()
             );
             output(Command::new("sh").args(["-c", &command]));
@@ -297,7 +300,8 @@ fn binary(performance: &Path, tree: &str, sources: &Path) -> PathBuf {
 }
 
 /// The measures of a run of `binary` in `repository`, on a terminal of size `(width, height)`,
-/// scrolling [`SCROLLED_ROWS_COUNT`] rows then quitting.
+/// moving the cursor down the screen, scrolling [`SCROLLED_HALF_SCREENS_COUNT`] half screens, then
+/// quitting.
 fn run(
     binary: &Path,
     repository: &Path,
@@ -305,7 +309,11 @@ fn run(
     (width, height): (u16, u16),
 ) -> BTreeMap<&'static str, Option<f64>> {
     let [stat, memory, timing] = [(); 3].map(|()| tempfile::NamedTempFile::new().unwrap());
-    let keys = format!("{}q", "j".repeat(SCROLLED_ROWS_COUNT));
+    let height = usize::from(height);
+    let keys = format!(
+        "{}q",
+        "j".repeat(height + height * SCROLLED_HALF_SCREENS_COUNT / 2)
+    );
     let command = format!(
         "stty cols {width} rows {height}; perf stat -x, -e instructions:u,task-clock -o {} -- \
          /usr/bin/time -f %M -o {} {} --send-keys {keys} --draw-every-key --timing {}",
