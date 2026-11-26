@@ -75,6 +75,10 @@ or exceeds a target of the README (500 MB, 1 s to open, 200 ms to the first full
 refresh), and then exits with an error. Since times vary between runs of the same binary, a time
 that degrades by more than its threshold only gets a note, without the error, if it degrades by at
 most 5 ms, or if the instructions of its scenario, benchmark or test suite degrade by at most 1 %.
+On a terminal, the lines of the warnings are red, and those of the measures that improve by more
+than their threshold green. The lines of the notes are yellow, with their difference red, and a time
+that improves by as little as a degradation that would only get a note only has its difference
+green.
 
 `just measure` and `just compare` run the cargo scripts `etc/measure.rs` and `etc/compare.rs`, which
 need a nightly toolchain (`-Zscript`), and build them in `target/scripts`. Their tests run with

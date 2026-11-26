@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
 serde_json = "1.0.154"
+thousands = "0.2.0"
 ---
 //! `etc/compare.rs [base]`: display the performance differences between the working tree and
 //! `base` (default: `HEAD`), with the results saved by `etc/measure.rs`: the working tree is
@@ -24,6 +25,7 @@ serde_json = "1.0.154"
 
 use std::fs;
 use std::io;
+use std::io::IsTerminal;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
@@ -34,6 +36,9 @@ use clap::Parser;
 
 use serde_json::Map;
 use serde_json::Value;
+use thousands::Separable;
+use thousands::SeparatorPolicy;
+use thousands::policies::COMMA_SEPARATOR;
 
 /// The script measuring a revision, relative to the working tree.
 const MEASURE_SCRIPT: &str = "etc/measure.rs";
@@ -52,6 +57,12 @@ const THRESHOLDS: [(&str, f64, Kind); 6] = [
     // The wall time of the test suite.
     ("total_s", 0.05, Kind::Time),
 ];
+
+/// The thousands separators of the whole numbers, like the counts of instructions.
+const THOUSANDS_SEPARATOR: SeparatorPolicy = SeparatorPolicy {
+    separator: "'",
+    ..COMMA_SEPARATOR
+};
 
 /// The difference of a time, in seconds, up to which its degradation only gets a note.
 const MIN_TIME_DIFFERENCE_S: f64 = 0.005;
@@ -215,6 +226,7 @@ fn print_comparison(base: &Value, new: &Value) -> bool {
     let differences = identity_differences(&base["identity"], &new["identity"], "");
     println!("identity differs in: {}", differences.join(", "));
     let mut broken = false;
+    let is_colored = io::stdout().is_terminal();
     let empty = Map::new();
     let groups =
         |measurements: &Value| measurements["groups"].as_object().unwrap_or(&empty).clone();
@@ -239,19 +251,46 @@ fn print_comparison(base: &Value, new: &Value) -> bool {
                 instructions_difference,
             );
             broken |= remarks.iter().any(Remark::blocks);
-            println!(
-                "{measure:<24} {:>14} {:>14} {:>9}  {}",
-                formatted(base_value),
-                formatted(new_value),
+            let colors = if is_colored {
+                colors(
+                    &remarks,
+                    change(
+                        measure,
+                        base_value,
+                        new_value,
+                        instructions_difference,
+                        Direction::Improvement,
+                    ),
+                )
+            } else {
+                Colors::default()
+            };
+            let line_start = colors.line.map_or("", Color::escape_sequence);
+            let difference = format!(
+                "{:>9}",
                 difference(base_value, new_value).map_or("–".to_string(), |difference| format!(
                     "{:+.1} %",
                     difference * 100.0
-                )),
+                ))
+            );
+            let difference = match colors.difference {
+                // The color of the line goes on after the difference.
+                Some(color) => format!(
+                    "{}{difference}{COLOR_RESET}{line_start}",
+                    color.escape_sequence()
+                ),
+                None => difference,
+            };
+            println!(
+                "{line_start}{measure:<24} {:>14} {:>14} {difference}  {}{}",
+                formatted(base_value),
+                formatted(new_value),
                 remarks
                     .iter()
                     .map(Remark::text)
                     .collect::<Vec<_>>()
-                    .join(", ")
+                    .join(", "),
+                if colors.line.is_some() { COLOR_RESET } else { "" }
             );
         }
     }
@@ -335,30 +374,135 @@ fn degradation(
     new: Option<f64>,
     instructions_difference: Option<f64>,
 ) -> Option<Remark> {
-    let &(_, threshold, kind) = THRESHOLDS.iter().find(|(name, _, _)| *name == measure)?;
-    let (base, new) = base.zip(new)?;
-    if !difference(Some(base), Some(new)).is_some_and(|difference| difference > threshold) {
-        return None;
-    }
+    let change = change(
+        measure,
+        base,
+        new,
+        instructions_difference,
+        Direction::Degradation,
+    )?;
+    let &(_, threshold, _) = THRESHOLDS.iter().find(|(name, _, _)| *name == measure)?;
     let text = format!("degraded by more than {:.0} %", threshold * 100.0);
-    let stable_instructions =
-        instructions_difference.is_some_and(|difference| difference <= INSTRUCTIONS_THRESHOLD);
-    Some(match kind {
-        Kind::Time if new - base <= MIN_TIME_DIFFERENCE_S => Remark::Note(format!(
+    Some(match change {
+        Change::WithinNoise(Noise::SmallTimeDifference) => Remark::Note(format!(
             "note: {text} (less than {} ms)",
             MIN_TIME_DIFFERENCE_S * 1000.0
         )),
-        Kind::Time if stable_instructions => Remark::Note(format!(
+        Change::WithinNoise(Noise::StableInstructions) => Remark::Note(format!(
             "note: {text} (instructions within {:.0} %)",
             INSTRUCTIONS_THRESHOLD * 100.0
         )),
-        Kind::Time | Kind::Stable => Remark::Warning(format!("WARNING: {text}")),
+        Change::Real => Remark::Warning(format!("WARNING: {text}")),
     })
 }
 
+/// Which way a measure changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    Degradation,
+    Improvement,
+}
+
+/// A change of a measure by more than its threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Change {
+    Real,
+    /// A change of a time that can be explained by its variations between runs.
+    WithinNoise(Noise),
+}
+
+/// Why a change of a time can be explained by its variations between runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Noise {
+    /// The difference is at most [`MIN_TIME_DIFFERENCE_S`].
+    SmallTimeDifference,
+    /// The instructions of its scenario don't change by more than their threshold the same way.
+    StableInstructions,
+}
+
+/// The change of `measure` from `base` to `new` in `direction`, if it's by more than its threshold.
+/// `instructions_difference` is the relative difference of the instructions of its scenario, if it
+/// counts them.
+fn change(
+    measure: &str,
+    base: Option<f64>,
+    new: Option<f64>,
+    instructions_difference: Option<f64>,
+    direction: Direction,
+) -> Option<Change> {
+    let &(_, threshold, kind) = THRESHOLDS.iter().find(|(name, _, _)| *name == measure)?;
+    let (base, new) = base.zip(new)?;
+    // The changes in `direction` are positive.
+    let sign = match direction {
+        Direction::Degradation => 1.0,
+        Direction::Improvement => -1.0,
+    };
+    if !difference(Some(base), Some(new)).is_some_and(|difference| difference * sign > threshold) {
+        return None;
+    }
+    let stable_instructions = instructions_difference
+        .is_some_and(|difference| difference * sign <= INSTRUCTIONS_THRESHOLD);
+    Some(match kind {
+        Kind::Time if (new - base) * sign <= MIN_TIME_DIFFERENCE_S => {
+            Change::WithinNoise(Noise::SmallTimeDifference)
+        }
+        Kind::Time if stable_instructions => Change::WithinNoise(Noise::StableInstructions),
+        Kind::Time | Kind::Stable => Change::Real,
+    })
+}
+
+/// The colors of the line of a measure.
+#[derive(Debug, Default, PartialEq)]
+struct Colors {
+    line: Option<Color>,
+    /// The color of the difference, inside the line.
+    difference: Option<Color>,
+}
+
+/// The colors of the line of a measure with `remarks` and `improvement`: red for a warning, yellow
+/// for a note with the difference in red, green for an improvement, and only the difference in
+/// green for an improvement within the noise, which would get a note as a degradation.
+fn colors(remarks: &[Remark], improvement: Option<Change>) -> Colors {
+    let (line, difference) = if remarks.iter().any(Remark::blocks) {
+        (Some(Color::Red), None)
+    } else if !remarks.is_empty() {
+        (Some(Color::Yellow), Some(Color::Red))
+    } else {
+        match improvement {
+            Some(Change::Real) => (Some(Color::Green), None),
+            Some(Change::WithinNoise(_)) => (None, Some(Color::Green)),
+            None => (None, None),
+        }
+    };
+    Colors { line, difference }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Color {
+    Red,
+    Yellow,
+    Green,
+}
+
+impl Color {
+    /// The escape sequence that starts writing in the color on a terminal.
+    fn escape_sequence(self) -> &'static str {
+        match self {
+            Color::Red => "\x1b[31m",
+            Color::Yellow => "\x1b[33m",
+            Color::Green => "\x1b[32m",
+        }
+    }
+}
+
+/// The escape sequence that ends writing in a color on a terminal.
+const COLOR_RESET: &str = "\x1b[0m";
+
+/// `value` with 3 decimals, or with thousands separators if it's a whole number, like the counts of
+/// instructions.
 fn formatted(value: Option<f64>) -> String {
     match value {
-        Some(value) if value.fract() == 0.0 => format!("{value}"),
+        Some(value) if value.fract() == 0.0 => value.separate_by_policy(THOUSANDS_SEPARATOR),
         Some(value) => format!("{value:.3}"),
         None => "–".to_string(),
     }
@@ -499,6 +643,90 @@ mod tests {
             ),
             [warning("WARNING: degraded by more than 5 %")]
         );
+    }
+
+    #[test]
+    fn measures_better_by_more_than_their_threshold_improve() {
+        let improvement = |new| {
+            change(
+                "instructions",
+                Some(100.0),
+                Some(new),
+                None,
+                Direction::Improvement,
+            )
+        };
+        assert_eq!(improvement(98.0), Some(Change::Real));
+        assert_eq!(improvement(99.5), None);
+    }
+
+    #[test]
+    fn time_improvements_with_stable_instructions_are_within_the_noise() {
+        // 60 ms less, above `MIN_TIME_DIFFERENCE_S`.
+        let improvement = |instructions_difference| {
+            change(
+                "cpu_time_s",
+                Some(1.0),
+                Some(0.94),
+                Some(instructions_difference),
+                Direction::Improvement,
+            )
+        };
+        assert_eq!(improvement(-0.02), Some(Change::Real));
+        assert_eq!(
+            improvement(-0.01),
+            Some(Change::WithinNoise(Noise::StableInstructions))
+        );
+    }
+
+    #[test]
+    fn time_improvements_of_at_most_5_ms_are_within_the_noise() {
+        // The fastest time of a bench, which doesn't count instructions, 50 % but 0.5 ms less.
+        assert_eq!(
+            change(
+                "fastest_s",
+                Some(0.001),
+                Some(0.0005),
+                None,
+                Direction::Improvement
+            ),
+            Some(Change::WithinNoise(Noise::SmallTimeDifference))
+        );
+    }
+
+    #[test]
+    fn warnings_are_red_and_improvements_green() {
+        let warning = warning("WARNING: degraded by more than 5 %");
+        assert_eq!(
+            colors(&[warning], None),
+            Colors { line: Some(Color::Red), difference: None }
+        );
+        assert_eq!(
+            colors(&[], Some(Change::Real)),
+            Colors { line: Some(Color::Green), difference: None }
+        );
+        assert_eq!(colors(&[], None), Colors::default());
+    }
+
+    #[test]
+    fn changes_within_the_noise_only_color_their_difference_as_a_change() {
+        let note = note("note: degraded by more than 5 % (less than 5 ms)");
+        assert_eq!(
+            colors(&[note], None),
+            Colors { line: Some(Color::Yellow), difference: Some(Color::Red) }
+        );
+        assert_eq!(
+            colors(&[], Some(Change::WithinNoise(Noise::SmallTimeDifference))),
+            Colors { line: None, difference: Some(Color::Green) }
+        );
+    }
+
+    #[test]
+    fn whole_numbers_get_thousands_separators() {
+        assert_eq!(formatted(Some(28041752537.0)), "28'041'752'537");
+        assert_eq!(formatted(Some(956521.0)), "956'521");
+        assert_eq!(formatted(Some(53.0)), "53");
+        assert_eq!(formatted(Some(0.083)), "0.083");
     }
 
     #[test]
