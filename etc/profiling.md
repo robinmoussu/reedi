@@ -57,6 +57,11 @@ changes, and with both staged and unstaged changes. On each of them:
   fastest sample, which varies less than their median, their median allocations, and the fewest
   instructions executed by one of their calls, with those of the threads it starts.
 
+With the first repository only, since they don't use it, the tests of the revision are also run,
+after being built so that the build isn't timed. Their binaries run one after another under a single
+`perf stat`, without cargo, whose own work would be counted: the wall time and the instructions of
+the test suite are saved. The doc-tests aren't run.
+
 The results of each repository are saved in `target/performance/<key>.json`, with their identity:
 the source (the tree of the revision, or of the tracked files of the working tree: amending only
 the message of a commit keeps it), the repository (`HEAD`, `@{upstream}`, the index, the working
@@ -65,11 +70,11 @@ that identity, so that a revision is measured once per repository, and `just com
 parts of the identities that differ.
 
 `just compare` warns when a measure degrades by more than its threshold (instructions: 1 %; CPU
-time, wall time, peak memory and the fastest time of a benchmark: 5 %) or exceeds a target of the
-README (500 MB, 1 s to open, 200 ms to the first full screen, 500 ms to refresh), and then exits
-with an error. Since times vary between runs of the same binary, a time that degrades by more than
-its threshold only gets a note, without the error, if it degrades by at most 5 ms, or if the
-instructions of its scenario or benchmark degrade by at most 1 %.
+time, wall time, peak memory, the fastest time of a benchmark and the time of the test suite: 5 %)
+or exceeds a target of the README (500 MB, 1 s to open, 200 ms to the first full screen, 500 ms to
+refresh), and then exits with an error. Since times vary between runs of the same binary, a time
+that degrades by more than its threshold only gets a note, without the error, if it degrades by at
+most 5 ms, or if the instructions of its scenario, benchmark or test suite degrade by at most 1 %.
 
 `just measure` and `just compare` run the cargo scripts `etc/measure.rs` and `etc/compare.rs`, which
 need a nightly toolchain (`-Zscript`), and build them in `target/scripts`. Their tests run with

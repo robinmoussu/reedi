@@ -36,6 +36,9 @@ const PERFORMANCE_DIRECTORY: &str = "target/performance";
 /// The target directory of `just perf`: same profile and `RUSTFLAGS`, so that its cache is shared.
 const PROFILING_TARGET_DIRECTORY: &str = "target/frame-pointers";
 const PROFILING_RUSTFLAGS: &str = "-C force-frame-pointers=yes";
+/// Where the tests of the measured revisions are built, apart from their binaries, which use
+/// another profile.
+const TESTS_TARGET_DIRECTORY: &str = "target/performance/tests";
 /// The repositories measured: without uncommitted changes, and with both staged and unstaged
 /// changes.
 const MEASURED_REPOSITORIES: [Uncommitted; 2] = [Uncommitted::None, Uncommitted::Both];
@@ -109,6 +112,11 @@ fn main() {
         }
         eprintln!("benchmarking {}", uncommitted.name());
         groups.extend(benches(&sources, &repository));
+        // The tests don't use the generated repositories: they run once, with the first one.
+        if uncommitted == MEASURED_REPOSITORIES[0] {
+            eprintln!("testing");
+            groups.extend(tests(&sources));
+        }
         let results = json!({
             "identity": identity,
             "repository": uncommitted.name(),
@@ -341,17 +349,7 @@ fn run(
     let wall_time = start.elapsed();
     assert!(status.success(), "{command} failed");
     let stat = fs::read_to_string(stat.path()).unwrap();
-    let counter = |event: &str| {
-        stat.lines().find_map(|line| {
-            let fields = line.split(',').collect::<Vec<_>>();
-            let is_event = fields.get(2).is_some_and(|name| name.starts_with(event));
-            if is_event {
-                fields[0].parse::<f64>().ok()
-            } else {
-                None
-            }
-        })
-    };
+    let counter = |event: &str| counter(&stat, event);
     let memory = fs::read_to_string(memory.path()).unwrap();
     let timing: Value = serde_json::from_str(&fs::read_to_string(timing.path()).unwrap()).unwrap();
     let longest_refresh = timing["refresh_ms"]
@@ -377,6 +375,19 @@ fn run(
         ),
         ("longest_refresh_ms", longest_refresh),
     ])
+}
+
+/// The value of the counter of `event` in the `stat` written by `perf stat -x,`.
+fn counter(stat: &str, event: &str) -> Option<f64> {
+    stat.lines().find_map(|line| {
+        let fields = line.split(',').collect::<Vec<_>>();
+        let is_event = fields.get(2).is_some_and(|name| name.starts_with(event));
+        if is_event {
+            fields[0].parse::<f64>().ok()
+        } else {
+            None
+        }
+    })
 }
 
 /// The median of each measure of `runs`, ignoring the runs without it.
@@ -413,6 +424,82 @@ fn benches(sources: &Path, repository: &Path) -> Map<String, Value> {
             .env("CARGO_TARGET_DIR", PROFILING_TARGET_DIRECTORY),
     );
     parse_benches(&table).unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// The group of the tests of `sources`: the wall time and the instructions of the test suite. The
+/// tests are built first, so that the build isn't timed, then their binaries run under a single
+/// `perf stat`, without cargo, whose own work would be counted.
+fn tests(sources: &Path) -> Map<String, Value> {
+    let build = output(
+        Command::new("cargo")
+            .args([
+                "test",
+                "--workspace",
+                "--features",
+                "reedi/test-support",
+                "--no-run",
+                "--message-format=json",
+                "--manifest-path",
+            ])
+            .arg(sources.join("Cargo.toml"))
+            .env("CARGO_TARGET_DIR", TESTS_TARGET_DIRECTORY),
+    );
+    let binaries = test_binaries(&build).unwrap_or_else(|error| panic!("{error}"));
+    let stat = tempfile::NamedTempFile::new().unwrap();
+    let mut command = Command::new("perf");
+    command
+        .args(["stat", "-x,", "-e", "instructions:u", "-o"])
+        .arg(stat.path())
+        .args([
+            "--",
+            "sh",
+            "-c",
+            // Each binary runs in the directory of its package, like cargo runs it.
+            r#"
+            while [ $# -gt 0 ]; do
+                (cd "$1" && "$2") || exit 1
+                shift 2
+            done
+            "#,
+            "sh",
+        ])
+        .args(binaries.iter().flat_map(|(directory, binary)| [directory, binary]))
+        // So that `perf` writes its numbers with a decimal point.
+        .env("LC_ALL", "C")
+        .stdout(Stdio::null());
+    let start = Instant::now();
+    let status = command.status().unwrap();
+    let wall_time = start.elapsed();
+    assert!(status.success(), "{command:?} failed");
+    let stat = fs::read_to_string(stat.path()).unwrap();
+    Map::from_iter([(
+        "tests".to_string(),
+        json!({
+            "total_s": wall_time.as_secs_f64(),
+            "instructions": counter(&stat, "instructions"),
+        }),
+    )])
+}
+
+/// The directory of the package and the path of each test binary of the `build` messages of
+/// `cargo test --no-run --message-format=json`.
+fn test_binaries(build: &str) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+    let binaries = build
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|message| {
+            message["reason"] == "compiler-artifact" && message["profile"]["test"] == true
+        })
+        .filter_map(|artifact| {
+            let binary = artifact["executable"].as_str()?;
+            let manifest = Path::new(artifact["manifest_path"].as_str()?);
+            Some((manifest.parent()?.to_path_buf(), PathBuf::from(binary)))
+        })
+        .collect::<Vec<_>>();
+    if binaries.is_empty() {
+        return Err("no test binary built".to_string());
+    }
+    Ok(binaries)
 }
 
 /// The fastest time, median allocations count and median allocated bytes of each bench of the
@@ -576,6 +663,24 @@ bench frame 80x24 instructions 20
     #[test]
     fn instructions_of_a_bench_missing_from_the_table_are_an_error() {
         assert!(parse_benches(&format!("{TABLE}bench rewrap 80 instructions 10\n")).is_err());
+    }
+
+    /// The messages of a build of a library, its test binary, and the end of the build.
+    const BUILD: &str = r#"
+{"reason":"compiler-artifact","manifest_path":"/reedi/reediif/Cargo.toml","profile":{"test":false},"executable":null}
+{"reason":"compiler-artifact","manifest_path":"/reedi/reediif/Cargo.toml","profile":{"test":true},"executable":"/reedi/target/debug/deps/reediif-0123"}
+{"reason":"build-finished","success":true}
+"#;
+
+    #[test]
+    fn test_binaries_are_listed_with_the_directory_of_their_package() {
+        assert_eq!(
+            test_binaries(BUILD).unwrap(),
+            [(
+                PathBuf::from("/reedi/reediif"),
+                PathBuf::from("/reedi/target/debug/deps/reediif-0123")
+            )]
+        );
     }
 
     #[test]

@@ -42,13 +42,15 @@ const INSTRUCTIONS_THRESHOLD: f64 = 0.01;
 
 /// The degradation of a measure above which a remark is printed, as a fraction of its base value,
 /// and what the measure is.
-const THRESHOLDS: [(&str, f64, Kind); 5] = [
+const THRESHOLDS: [(&str, f64, Kind); 6] = [
     ("instructions", INSTRUCTIONS_THRESHOLD, Kind::Stable),
     ("cpu_time_s", 0.05, Kind::Time),
     ("wall_time_s", 0.05, Kind::Time),
     ("peak_memory_kb", 0.05, Kind::Stable),
     // The fastest time of a bench, a wall time.
     ("fastest_s", 0.05, Kind::Time),
+    // The wall time of the test suite.
+    ("total_s", 0.05, Kind::Time),
 ];
 
 /// The difference of a time, in seconds, up to which its degradation only gets a note.
